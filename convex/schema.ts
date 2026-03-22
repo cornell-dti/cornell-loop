@@ -24,6 +24,7 @@ export default defineSchema({
 
     title: v.string(),
     description: v.string(),
+    aiDescription: v.string(), // condensed 1 sentence ai-generated description
     eventType: v.union(
       v.literal("event"), // one-time event
       v.literal("opportunity"), // internship, job, program, application
