@@ -33,9 +33,22 @@ export default defineSchema({
       v.literal("info"), // announcements with no clear CTA, catch-all
     ),
 
-    // ex. WICC x Jane Street, AppDev x Ramp, etc. 
-    hostClub: v.string(), // primary org (maps to a clubs table eventually)
-    coHosts: v.array(v.string()), // ["Ramp"], [] if none
+    // ex. WICC x Jane Street, AppDev x Ramp, WICC x AppDev
+    hosts: v.array(
+      v.object({
+        name: v.string(),
+        kind: v.union(
+          v.literal("club"),
+          v.literal("company"),
+          v.literal("external_org"),
+        ),
+        role: v.union(
+          v.literal("primary"),
+          v.literal("cohost"),
+          v.literal("sponsor"),
+        ),
+      }),
+    ),
 
     dates: v.array(
       v.object({
@@ -108,6 +121,5 @@ export default defineSchema({
   })
     .index("by_listserv", ["listserv"])
     .index("by_section", ["listservSection"])
-    .index("by_event_type", ["eventType"])
-    .index("by_host", ["hostClub"]),
+    .index("by_event_type", ["eventType"]),
 });

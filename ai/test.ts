@@ -6,8 +6,11 @@ import { eventSummaryPrompt } from "./prompts/eventSummary"
 
 type Event = {
   listserv: string
-  hostClub: string
-  coHosts?: string[]
+  hosts: Array<{
+    name: string
+    kind: "cornell_club" | "company" | "external_org"
+    role: "primary" | "cohost" | "sponsor"
+  }>
   title: string
   description: string
   dates?: Array<{ timestamp: number; type: string }>
@@ -29,7 +32,7 @@ function primaryDateISO(event: Event): string {
 }
 
 function toWeeklyPromptEvent(event: Event) {
-  const hostParts = [event.hostClub, ...(event.coHosts ?? [])].filter(s => s.trim().length > 0)
+  const hostParts = event.hosts.map(h => h.name).filter(s => s.trim().length > 0)
   const host = hostParts.join(" & ")
 
   return {
@@ -44,8 +47,12 @@ function toWeeklyPromptEvent(event: Event) {
 }
 
 function toClubPromptEvent(event: Event) {
+  const primaryClub = event.hosts.find(
+    h => h.kind === "cornell_club" && h.role === "primary",
+  )?.name ?? event.hosts.find(h => h.kind === "cornell_club")?.name ?? "Unknown"
+
   return {
-    club: event.hostClub,
+    club: primaryClub,
     listserv: event.listserv,
     title: event.title,
     description: event.description,
@@ -68,7 +75,9 @@ async function run() {
   console.log(weeklySummary)
 
   // Example: summarize what ACSU does based on its hosted events
-  const acsuEvents = events.filter(e => e.hostClub === "ACSU")
+  const acsuEvents = events.filter(e =>
+    e.hosts.some(h => h.kind === "cornell_club" && h.name === "ACSU"),
+  )
   const acsuPromptEvents = acsuEvents.map(toClubPromptEvent)
 
   const clubPrompt = clubSummaryPrompt(acsuPromptEvents)

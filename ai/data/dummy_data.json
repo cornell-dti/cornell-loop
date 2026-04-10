@@ -6,8 +6,9 @@
     "title": "ACSU Student Faculty Luncheon",
     "description": "ACSU is hosting its Spring Student Faculty Luncheon on Friday, March 13 from 12:15 to 1:15 PM in CIS 250 (Young Conference Room). Join us for an informal lunch with CS professors and fellow students to ask questions about classes, research, and career paths in a low-stakes setting. RSVP is required because space is limited, and lunch will be provided for confirmed attendees.",
     "eventType": "event",
-    "hostClub": "ACSU",
-    "coHosts": [],
+    "hosts": [
+      { "name": "ACSU", "kind": "club", "role": "primary" }
+    ],
     "dates": [{ "timestamp": 1773360000000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -29,8 +30,9 @@
     "title": "1:1 Faculty Coffee Chat Week",
     "description": "Talk with 10+ faculty members this week through ACSU's 1:1 Faculty Coffee Chat Week. Students can add their name to a shared signup sheet and pick flexible timeslots to discuss research opportunities, graduate school, industry careers, or general academic advice. Participating departments include BEE, ChemE, CIS, BME, and MAE, and chats are intentionally informal so first-time attendees are welcome.",
     "eventType": "event",
-    "hostClub": "ACSU",
-    "coHosts": [],
+    "hosts": [
+      { "name": "ACSU", "kind": "club", "role": "primary" }
+    ],
     "dates": [{ "timestamp": 1773014400000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -50,8 +52,10 @@
     "title": "AppDev x Ramp - HACK→HIRED",
     "description": "Ramp and Cornell AppDev are teaming up for a one-day AI-focused hackathon where participants build tools that save people time in their daily workflows. The event includes workshops on Cursor and Vercel, team support, peer plus judge evaluation, and meals/snacks throughout the day. Top projects receive prize gift cards, and first-place winners are considered for recruiter interviews for a fall software engineering internship.",
     "eventType": "hackathon",
-    "hostClub": "Cornell AppDev",
-    "coHosts": ["Ramp"],
+    "hosts": [
+      { "name": "Cornell AppDev", "kind": "club", "role": "primary" },
+      { "name": "Ramp", "kind": "company", "role": "cohost" }
+    ],
     "dates": [{ "timestamp": 1773446400000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -71,8 +75,10 @@
     "title": "Citadel Global Quantitative Strategies Tech Talk",
     "description": "Citadel's Global Quantitative Strategies (GQS) team is hosting an in-person tech talk for Cornell students in quantitative disciplines. Speakers, including Cornell alumni, will explain how skills from research and advanced coursework translate to quantitative finance roles and real-world trading systems. The session includes business context, technical discussion, and career Q&A, with advance RSVP required for attendance.",
     "eventType": "info",
-    "hostClub": "Citadel",
-    "coHosts": ["GQS"],
+    "hosts": [
+      { "name": "Citadel", "kind": "company", "role": "primary" },
+      { "name": "GQS", "kind": "external_org", "role": "cohost" }
+    ],
     "dates": [{ "timestamp": 1773705600000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -93,8 +99,9 @@
     "title": "Cracking Your Career (CYC)",
     "description": "WICC's Cracking Your Career (CYC) is a multi-session program designed to help students navigate pathways in computing careers. Sessions cover interview preparation, resume strategy, networking, and how to stand out when applying to internships and full-time roles. Participants can ask practical questions, connect with peers, and build a clearer plan for upcoming recruiting cycles.",
     "eventType": "courses",
-    "hostClub": "WICC",
-    "coHosts": [],
+    "hosts": [
+      { "name": "WICC", "kind": "club", "role": "primary" }
+    ],
     "dates": [{ "timestamp": 1772496000000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -115,8 +122,10 @@
     "title": "WICC x MathWorks MATLAB Challenge",
     "description": "WICC and MathWorks are hosting a hands-on MATLAB challenge where students work through guided technical problems using MATLAB and MATLAB Copilot. The event combines applied problem solving with mentorship from organizers and includes time to learn about internship and full-time opportunities at MathWorks. Attendees can expect swag, prizes for top performers, and networking with peers interested in technical computing.",
     "eventType": "courses",
-    "hostClub": "WICC",
-    "coHosts": ["MathWorks"],
+    "hosts": [
+      { "name": "WICC", "kind": "club", "role": "primary" },
+      { "name": "MathWorks", "kind": "company", "role": "cohost" }
+    ],
     "dates": [{ "timestamp": 1773619200000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -137,8 +146,10 @@
     "title": "WICC x Jane Street Tech Talks",
     "description": "WICC x Jane Street Tech Talks features a software engineering presentation on building predictable communication systems at scale. The speaker will cover how state machines and transaction logs support reliability, and how Jane Street's low-latency messaging infrastructure is designed for performance in distributed systems. Students can register in advance, and selected attendees receive event details, food, and swag.",
     "eventType": "info",
-    "hostClub": "WICC",
-    "coHosts": ["Jane Street"],
+    "hosts": [
+      { "name": "WICC", "kind": "club", "role": "primary" },
+      { "name": "Jane Street", "kind": "company", "role": "cohost" }
+    ],
     "dates": [{ "timestamp": 1773792000000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -159,8 +170,9 @@
     "title": "HackDartmouth XI",
     "description": "HackDartmouth XI is Dartmouth's annual 24-hour hackathon where students form teams and build projects around this year's Lost in Space theme. The weekend includes workshops, social activities, mentor support, and opportunities for beginners and experienced hackers to collaborate. Participants compete for prize tracks and gain exposure to industry sponsors while expanding technical and teamwork skills.",
     "eventType": "hackathon",
-    "hostClub": "HackDartmouth",
-    "coHosts": [],
+    "hosts": [
+      { "name": "HackDartmouth", "kind": "external_org", "role": "primary" }
+    ],
     "dates": [{ "timestamp": 1775865600000, "type": "single" }],
     "isRecurring": false,
     "location": {
@@ -180,8 +192,9 @@
     "title": "Jane Street FOCUS Program",
     "description": "Jane Street's FOCUS Program invites first-year undergraduates who have faced barriers to advanced STEM opportunities to a multi-day experience in New York City. Participants attend classes and discussions led by teams across trading, software development, and strategy/product while learning what day-to-day work looks like at the firm. Selected students receive travel, housing, meals, and structured networking throughout the program.",
     "eventType": "opportunity",
-    "hostClub": "Jane Street",
-    "coHosts": [],
+    "hosts": [
+      { "name": "Jane Street", "kind": "company", "role": "primary" }
+    ],
     "dates": [{ "timestamp": 1779148800000, "type": "single" }],
     "isRecurring": false,
     "location": {
