@@ -29,10 +29,10 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import StarIcon from '../assets/star.svg?react';
-import { Tag } from './Tags';
-import { DateBadge } from './DateBadge';
+import type { ComponentPropsWithoutRef } from "react";
+import StarIcon from "../assets/star.svg?react";
+import { Tag } from "./Tags";
+import { DateBadge } from "./DateBadge";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ export interface Club {
   notificationCount?: number;
 }
 
-export interface SearchPanelProps extends ComponentPropsWithoutRef<'aside'> {
+export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
   /** Grouped RSVP events. Groups are rendered in the order they are supplied. */
   rsvpGroups?: RsvpGroup[];
   /** Subscribed clubs shown in a wrap grid. */
@@ -94,7 +94,7 @@ export interface SearchResultGroup {
   items: SearchResultItem[];
 }
 
-export interface SearchResultListProps extends ComponentPropsWithoutRef<'div'> {
+export interface SearchResultListProps extends ComponentPropsWithoutRef<"div"> {
   groups?: SearchResultGroup[];
   /** When provided, a "Show more" link is rendered at the bottom. */
   showMoreLabel?: string;
@@ -104,25 +104,25 @@ export interface SearchResultListProps extends ComponentPropsWithoutRef<'div'> {
 // ─── Shared typography class strings ──────────────────────────────────────────
 
 const BODY2_SEMIBOLD =
-  'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-semibold " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY2_REGULAR =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY3 =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
-  'tracking-[var(--letter-spacing-body3)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] " +
+  "tracking-[var(--letter-spacing-body3)]";
 
 const SECTION_TITLE =
-  'font-[family-name:var(--font-body)] font-bold ' +
-  'text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] ' +
-  'tracking-[var(--letter-spacing-body1)] ' +
-  'text-[var(--color-neutral-900)] whitespace-nowrap';
+  "font-[family-name:var(--font-body)] font-bold " +
+  "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
+  "tracking-[var(--letter-spacing-body1)] " +
+  "text-[color:var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── RsvpEventRow ─────────────────────────────────────────────────────────────
 
@@ -136,20 +136,22 @@ function RsvpEventRow({ event }: { event: RsvpEvent }) {
      */
     <div
       className={[
-        'flex gap-[var(--space-3)] items-center w-full',
-        'p-[var(--space-1-5)]',
-        'rounded-[var(--radius-input)]',
-        'bg-[var(--color-surface)]',
-        'cursor-pointer',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
-      ].join(' ')}
+        "flex w-full items-center gap-[var(--space-3)]",
+        "p-[var(--space-1-5)]",
+        "rounded-[var(--radius-input)]",
+        "bg-[var(--color-surface)]",
+        "cursor-pointer",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
+      ].join(" ")}
     >
       <DateBadge day={event.day} month={event.month} />
 
-      <div className="flex-1 min-w-0 flex flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
+      <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
         <p
-          className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-900)] w-full'}
+          className={
+            BODY2_SEMIBOLD + " w-full text-[color:var(--color-neutral-900)]"
+          }
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           {event.title}
@@ -157,7 +159,10 @@ function RsvpEventRow({ event }: { event: RsvpEvent }) {
 
         {event.description && (
           <p
-            className={BODY3 + ' text-[var(--color-neutral-700)] w-full line-clamp-2'}
+            className={
+              BODY3 +
+              " line-clamp-2 w-full text-[color:var(--color-neutral-700)]"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {event.description}
@@ -181,10 +186,10 @@ function ClubItem({ club }: { club: Club }) {
      */
     <div
       className={[
-        'flex flex-col gap-[var(--space-1-5)] items-center justify-center',
-        'cursor-pointer',
-        'hover:opacity-80 transition-opacity duration-150',
-      ].join(' ')}
+        "flex flex-col items-center justify-center gap-[var(--space-1-5)]",
+        "cursor-pointer",
+        "transition-opacity duration-150 hover:opacity-80",
+      ].join(" ")}
     >
       {/*
        * Avatar + badge wrapper.
@@ -196,10 +201,10 @@ function ClubItem({ club }: { club: Club }) {
         {/* Circle avatar — overflow-hidden ONLY wraps the image/initials */}
         <div
           className={[
-            'rounded-full overflow-hidden',
-            'size-[var(--size-club-avatar)]',
-            'bg-[var(--color-surface-subtle)]',
-          ].join(' ')}
+            "overflow-hidden rounded-full",
+            "size-[var(--size-club-avatar)]",
+            "bg-[var(--color-surface-subtle)]",
+          ].join(" ")}
         >
           {club.avatarUrl ? (
             <img
@@ -211,10 +216,10 @@ function ClubItem({ club }: { club: Club }) {
             /* Initials fallback */
             <span
               className={
-                'size-full flex items-center justify-center ' +
-                'bg-[var(--color-secondary-400)] ' +
-                'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[var(--font-size-body2)] text-[var(--color-secondary-900)]'
+                "flex size-full items-center justify-center " +
+                "bg-[var(--color-secondary-400)] " +
+                "font-[family-name:var(--font-body)] font-semibold " +
+                "text-[length:var(--font-size-body2)] text-[color:var(--color-secondary-900)]"
               }
             >
               {club.name.charAt(0).toUpperCase()}
@@ -235,15 +240,15 @@ function ClubItem({ club }: { club: Club }) {
         {count > 0 && (
           <span
             className={[
-              'absolute top-[-2px] right-[-2px]',
-              'inline-flex items-center justify-center',
-              'min-w-[var(--space-4)] h-[var(--space-4)]',
-              'px-[var(--space-1)]',
-              'rounded-full',
-              'bg-[var(--color-primary-700)]',
-              'font-[family-name:var(--font-body)] font-normal leading-none',
-              'text-[length:var(--font-size-badge)] text-[var(--color-white)]',
-            ].join(' ')}
+              "absolute top-[-2px] right-[-2px]",
+              "inline-flex items-center justify-center",
+              "h-[var(--space-4)] min-w-[var(--space-4)]",
+              "px-[var(--space-1)]",
+              "rounded-full",
+              "bg-[var(--color-primary-700)]",
+              "font-[family-name:var(--font-body)] leading-none font-normal",
+              "text-[length:var(--font-size-badge)] text-[color:var(--color-white)]",
+            ].join(" ")}
             aria-label={`${count} notifications`}
           >
             {count}
@@ -254,9 +259,9 @@ function ClubItem({ club }: { club: Club }) {
       {/* Club name label */}
       <span
         className={
-          'font-[family-name:var(--font-body)] font-medium ' +
-          'text-[var(--font-size-body2)] leading-[1.5] ' +
-          'text-[var(--color-text-secondary)] whitespace-nowrap'
+          "font-[family-name:var(--font-body)] font-medium " +
+          "text-[length:var(--font-size-body2)] leading-[1.5] " +
+          "whitespace-nowrap text-[color:var(--color-text-secondary)]"
         }
       >
         {club.name}
@@ -277,30 +282,35 @@ export function SearchPanel({
     <aside
       aria-label="Search panel"
       className={[
-        'flex flex-col gap-[var(--space-6)]',
+        "flex flex-col gap-[var(--space-6)]",
         /* Figma: w-334px; use the token so callers can override via className */
-        'w-[var(--search-panel-width)]',
-        'bg-[var(--color-surface)]',
+        "w-[var(--search-panel-width)]",
+        "bg-[var(--color-surface)]",
         /* Figma: 1px left border, #ececec ≈ --color-border (Neutral/300) */
-        'border-l border-[var(--color-border)]',
-        'px-[var(--space-6)] py-[var(--space-8)]',
+        "border-l border-[var(--color-border)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Your RSVPs ── */}
       {rsvpGroups.length > 0 && (
-        <section className="flex flex-col gap-[var(--space-3)] w-full">
+        <section className="flex w-full flex-col gap-[var(--space-3)]">
           <h2 className={SECTION_TITLE}>Your RSVPs</h2>
 
-          <div className="flex flex-col gap-[var(--space-2)] w-full">
+          <div className="flex w-full flex-col gap-[var(--space-2)]">
             {rsvpGroups.map((group) => (
-              <div key={group.period} className="flex flex-col gap-[var(--space-2)]">
+              <div
+                key={group.period}
+                className="flex flex-col gap-[var(--space-2)]"
+              >
                 {/* Period label — e.g. "Today" / "This week" */}
                 <p
-                  className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-900)]'}
+                  className={
+                    BODY2_SEMIBOLD + " text-[color:var(--color-neutral-900)]"
+                  }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
                   {group.period}
@@ -317,11 +327,11 @@ export function SearchPanel({
 
       {/* ── Your Clubs ── */}
       {clubs.length > 0 && (
-        <section className="flex flex-col gap-[var(--space-3)] w-full">
+        <section className="flex w-full flex-col gap-[var(--space-3)]">
           <h2 className={SECTION_TITLE}>Your Clubs</h2>
 
           {/* Wrap grid — Figma: gap-[16px] flex-wrap */}
-          <div className="flex flex-wrap gap-[var(--space-4)] items-start">
+          <div className="flex flex-wrap items-start gap-[var(--space-4)]">
             {clubs.map((club) => (
               <ClubItem key={club.id} club={club} />
             ))}
@@ -346,18 +356,18 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
      */
     <div
       className={[
-        'flex flex-col gap-[var(--space-1)] w-full',
-        'rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]',
-        'cursor-pointer',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
-      ].join(' ')}
+        "flex w-full flex-col gap-[var(--space-1)]",
+        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
+        "cursor-pointer",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
+      ].join(" ")}
     >
       {/* Event title — truncated at one line */}
       <p
         className={
           BODY2_SEMIBOLD +
-          ' text-[var(--color-neutral-700)] truncate w-full'
+          " w-full truncate text-[color:var(--color-neutral-700)]"
         }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
@@ -368,7 +378,10 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
       <div className="flex items-center gap-[var(--space-3)]">
         <div className="flex items-center gap-[var(--space-2)]">
           <span
-            className={BODY2_REGULAR + ' text-[var(--color-text-secondary)] whitespace-nowrap'}
+            className={
+              BODY2_REGULAR +
+              " whitespace-nowrap text-[color:var(--color-text-secondary)]"
+            }
           >
             {item.orgName}
           </span>
@@ -381,11 +394,11 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
           {item.hasIndicator && (
             <span
               className={[
-                'inline-flex items-center justify-center',
-                'rounded-full p-[var(--space-1)]',
-                'size-[var(--space-3)]',
-                'bg-[var(--color-neutral-600)]',
-              ].join(' ')}
+                "inline-flex items-center justify-center",
+                "rounded-full p-[var(--space-1)]",
+                "size-[var(--space-3)]",
+                "bg-[var(--color-neutral-600)]",
+              ].join(" ")}
               aria-hidden="true"
             >
               <StarIcon className="size-full" />
@@ -393,9 +406,7 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
           )}
         </div>
 
-        {item.tagLabel && (
-          <Tag color="blue">{item.tagLabel}</Tag>
-        )}
+        {item.tagLabel && <Tag color="blue">{item.tagLabel}</Tag>}
       </div>
     </div>
   );
@@ -403,7 +414,7 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
 
 export function SearchResultList({
   groups = [],
-  showMoreLabel = 'Show more',
+  showMoreLabel = "Show more",
   onShowMore,
   className,
   ...rest
@@ -418,15 +429,15 @@ export function SearchResultList({
      */
     <div
       className={[
-        'flex flex-col gap-[var(--space-3)]',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'px-[var(--space-4)] py-[var(--space-3)]',
+        "flex flex-col gap-[var(--space-3)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--radius-card)]",
+        "px-[var(--space-4)] py-[var(--space-3)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       role="listbox"
       aria-label="Search results"
       {...rest}
@@ -435,7 +446,9 @@ export function SearchResultList({
         <div key={group.period} className="flex flex-col gap-[var(--space-2)]">
           {/* Period label */}
           <p
-            className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-900)]'}
+            className={
+              BODY2_SEMIBOLD + " text-[color:var(--color-neutral-900)]"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {group.period}
@@ -458,12 +471,12 @@ export function SearchResultList({
           type="button"
           onClick={onShowMore}
           className={[
-            'self-start',
+            "self-start",
             BODY2_REGULAR,
-            'text-[var(--color-link)]',
-            'hover:underline',
-            'cursor-pointer transition-[text-decoration] duration-150',
-          ].join(' ')}
+            "text-[color:var(--color-link)]",
+            "hover:underline",
+            "cursor-pointer transition-[text-decoration] duration-150",
+          ].join(" ")}
         >
           {showMoreLabel}
         </button>

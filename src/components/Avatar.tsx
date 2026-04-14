@@ -13,14 +13,37 @@
  *
  * Image fallback:
  *   When an avatar item has no `src`, profile.svg from src/assets is shown on a
- *   Neutral/100 background.  The icon is normalised to ~Neutral/900 via the
+ *   colour derived deterministically from the avatar name using design-system
+ *   palette tokens.  The icon is normalised to ~Neutral/900 via the
  *   --filter-icon-nav CSS custom property defined in tokens.css.
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import ProfileIcon from '../assets/profile.svg?react';
+import ProfileIcon from "../assets/profile-avatar.svg?react";
+
+// ─── Fallback colour palette ─────────────────────────────────────────────────
+// Deterministic pastel backgrounds for avatars without an image, drawn from
+// design-system token values to keep things visually cohesive.
+
+const FALLBACK_PALETTE: { bg: string; fg: string }[] = [
+  { bg: "var(--color-primary-500)", fg: "var(--color-primary-800)" }, // peach / dark orange
+  { bg: "var(--color-secondary-400)", fg: "var(--color-secondary-700)" }, // light blue / navy
+  { bg: "var(--color-primary-400)", fg: "var(--color-primary-700)" }, // warm cream / brand orange
+  { bg: "var(--color-secondary-300)", fg: "var(--color-secondary-600)" }, // pale blue / medium blue
+  { bg: "var(--color-primary-600)", fg: "var(--color-primary-900)" }, // salmon / deep brown
+  { bg: "var(--color-secondary-500)", fg: "var(--color-secondary-900)" }, // sky blue / dark navy
+];
+
+/** Simple string hash → palette index so the same name always gets the same colour. */
+function fallbackColorsForName(name: string): { bg: string; fg: string } {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  return FALLBACK_PALETTE[Math.abs(hash) % FALLBACK_PALETTE.length];
+}
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -60,12 +83,12 @@ function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
     <span
       className={[
         /* shape */
-        'relative inline-flex shrink-0 items-center justify-center',
-        'rounded-full overflow-hidden',
+        "relative inline-flex shrink-0 items-center justify-center",
+        "overflow-hidden rounded-full",
         /* size: 32 px = --space-8 */
-        'size-[var(--space-8)]',
-        /* fallback background */
-        'bg-[var(--color-surface-subtle)]',
+        "size-[var(--space-8)]",
+        /* fallback background — overridden inline when no src is provided */
+        item.src ? "bg-[var(--color-surface-subtle)]" : "",
         /*
          * Stacked ring + overlap:
          *   ring-2 ring-[var(--color-surface)] → 2 px white ring between circles
@@ -74,12 +97,17 @@ function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
          *   using ml here on 2nd+ avatars is equivalent with no container padding needed.
          */
         stacked
-          ? 'ring-2 ring-[var(--color-surface)] [margin-left:calc(-1*var(--space-2))]'
-          : '',
+          ? "[margin-left:calc(-1*var(--space-2))] ring-2 ring-[var(--color-surface)]"
+          : "",
       ]
         .filter(Boolean)
-        .join(' ')}
-      style={zIndex !== undefined ? { zIndex } : undefined}
+        .join(" ")}
+      style={{
+        ...(zIndex !== undefined ? { zIndex } : {}),
+        ...(!item.src
+          ? { backgroundColor: fallbackColorsForName(item.name).bg }
+          : {}),
+      }}
     >
       {item.src ? (
         <img
@@ -91,11 +119,12 @@ function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
         /*
          * Fallback: profile.svg rendered inline via SVGR.
          * Sized to --space-5 (20 px) inside the 32 px circle.
-         * --filter-icon-nav normalises the hardcoded SVG stroke to ~Neutral/900.
+         * Color is a darker shade from the same palette as the background.
          */
         <ProfileIcon
           aria-hidden="true"
-          className="size-[var(--space-5)] [filter:var(--filter-icon-nav)]"
+          className="size-[var(--space-5)]"
+          style={{ color: fallbackColorsForName(item.name).fg }}
         />
       )}
     </span>
@@ -117,12 +146,12 @@ export function Avatar({ avatars, className }: AvatarProps) {
      */
     <div
       className={[
-        'flex items-center gap-[var(--space-2)]',
-        'px-[var(--space-1-5)]',
+        "flex items-center gap-[var(--space-2)]",
+        "px-[var(--space-1-5)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
     >
       {/* ── Circle(s) ── */}
       <div className="flex items-center">
@@ -146,16 +175,16 @@ export function Avatar({ avatars, className }: AvatarProps) {
        */}
       <div
         className={[
-          'flex items-center',
-          isMultiple ? 'gap-[var(--space-1)]' : '',
-          'font-[family-name:var(--font-body)] font-semibold',
-          'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
-          'tracking-[var(--letter-spacing-body2)]',
-          'text-[var(--color-neutral-700)]',
-          'whitespace-nowrap',
+          "flex items-center",
+          isMultiple ? "gap-[var(--space-1)]" : "",
+          "font-[family-name:var(--font-body)] font-semibold",
+          "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+          "tracking-[var(--letter-spacing-body2)]",
+          "text-[color:var(--color-neutral-700)]",
+          "whitespace-nowrap",
         ]
           .filter(Boolean)
-          .join(' ')}
+          .join(" ")}
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {avatars.map((avatar, i) => (

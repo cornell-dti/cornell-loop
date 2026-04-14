@@ -21,12 +21,12 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
+import type { ComponentPropsWithoutRef } from "react";
 // Note: the file uses an underscore (loop_logo.svg), not a hyphen.
-import LoopLogo from '../../assets/loop_logo.svg?react';
+import LoopLogo from "../../assets/loop_logo.svg?react";
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export interface LoopSummaryProps extends ComponentPropsWithoutRef<'section'> {
+export interface LoopSummaryProps extends ComponentPropsWithoutRef<"section"> {
   /** The summary text body. */
   summary: string;
   /**
@@ -47,18 +47,18 @@ export function LoopSummary({
   return (
     <section
       className={[
-        'flex flex-col gap-[var(--space-2)]',
-        'px-[var(--space-6)] py-[var(--space-4)]',
-        'rounded-[var(--radius-card)]',
-        'bg-[var(--color-surface)]',
+        "flex flex-col gap-[var(--space-2)]",
+        "px-[var(--space-6)] py-[var(--space-4)]",
+        "rounded-[var(--radius-card)]",
+        "bg-[var(--color-surface)]",
         /* Figma: Primary/600 (#ffa26b) border — visually distinguishes summary cards */
-        'border border-[var(--color-primary-600)]',
+        "border border-[var(--color-primary-600)]",
         /* Figma: Shadow 2 — subtle elevation */
-        'shadow-[var(--shadow-2)]',
+        "shadow-[var(--shadow-2)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Header: logo + title ── */}
@@ -68,23 +68,23 @@ export function LoopSummary({
           <img
             src={logoSrc}
             alt="Loop"
-            className="shrink-0 size-[var(--space-4)]"
+            className="size-[var(--space-4)] shrink-0"
           />
         ) : (
           /* Default: loop_logo.svg rendered inline via SVGR */
           <LoopLogo
             aria-hidden="true"
-            className="shrink-0 size-[var(--space-4)]"
+            className="size-[var(--space-4)] shrink-0"
           />
         )}
 
         {/* Title — Figma: DM Sans Bold 18px, Primary/900 (#592100) */}
         <h3
           className={
-            'font-[family-name:var(--font-body)] font-bold ' +
-            'text-[var(--font-size-body1)] leading-[var(--line-height-body1)] ' +
-            'tracking-[var(--letter-spacing-body1)] ' +
-            'text-[var(--color-primary-900)] whitespace-nowrap'
+            "font-[family-name:var(--font-body)] font-bold " +
+            "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+            "tracking-[var(--letter-spacing-body1)] " +
+            "whitespace-nowrap text-[color:var(--color-primary-900)]"
           }
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
@@ -95,10 +95,10 @@ export function LoopSummary({
       {/* ── Body text — Figma: DM Sans Regular 14px, Neutral/700 ── */}
       <p
         className={
-          'font-[family-name:var(--font-body)] font-normal ' +
-          'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-          'tracking-[var(--letter-spacing-body2)] ' +
-          'text-[var(--color-neutral-700)]'
+          "font-[family-name:var(--font-body)] font-normal " +
+          "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+          "tracking-[var(--letter-spacing-body2)] " +
+          "text-[color:var(--color-neutral-700)]"
         }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
