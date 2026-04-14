@@ -21,7 +21,7 @@
  */
 
 import type { ComponentPropsWithoutRef } from "react";
-import CloseIcon from "../assets/close_tags.svg?react";
+import { X } from "lucide-react";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -117,13 +117,13 @@ export function Tag({
             "focus-visible:outline-[var(--color-neutral-700)]"
           }
         >
-          <CloseIcon
+          <X
             aria-hidden="true"
+            size={12}
             className={
-              "size-[var(--space-3)] " +
-              "[filter:var(--filter-icon-close-default)] " +
-              "group-hover:[filter:var(--filter-icon-close-hover)] " +
-              "transition-[filter] duration-150"
+              "text-[color:var(--color-neutral-700)] " +
+              "group-hover:text-[color:var(--color-black)] " +
+              "transition-colors duration-150"
             }
           />
         </button>

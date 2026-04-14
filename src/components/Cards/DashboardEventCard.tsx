@@ -21,9 +21,7 @@
 import { useState, type ComponentPropsWithoutRef } from "react";
 import { Tag } from "../Tags";
 import type { TagColor } from "../Tags";
-import CalendarIcon from "../../assets/calendar.svg?react";
-import LocationPinIcon from "../../assets/location-pin.svg?react";
-import ExternalLinkIcon from "../../assets/external-link.svg?react";
+import { Calendar, ExternalLink, MapPin } from "lucide-react";
 import { Bookmark } from "../Bookmark";
 
 // ─── Shared types (re-exported for use by DashboardPost) ─────────────────────
@@ -121,12 +119,13 @@ export function DashboardEventCard({
               onClick={onShare}
               className="group flex cursor-pointer items-center justify-center"
             >
-              <ExternalLinkIcon
+              <ExternalLink
                 aria-hidden="true"
+                size={20}
                 className={
-                  "size-[var(--space-5)] " +
-                  "group-hover:[filter:var(--filter-icon-close-default)] " +
-                  "transition-[filter] duration-150"
+                  "text-[color:var(--color-neutral-500)] " +
+                  "group-hover:text-[color:var(--color-neutral-700)] " +
+                  "transition-colors duration-150"
                 }
               />
             </button>
@@ -163,9 +162,10 @@ export function DashboardEventCard({
         {/* calendar.svg & location-pin.svg use stroke="#495057" (Neutral/700) natively — no filter. */}
         <div className="flex items-center gap-[var(--space-6)]">
           <div className="flex shrink-0 items-center gap-[var(--space-2)]">
-            <CalendarIcon
+            <Calendar
               aria-hidden="true"
-              className="size-[var(--space-4)] shrink-0"
+              size={16}
+              className="shrink-0 text-[color:var(--color-neutral-700)]"
             />
             <span
               className={
@@ -179,9 +179,10 @@ export function DashboardEventCard({
           </div>
 
           <div className="flex shrink-0 items-center gap-[var(--space-2)]">
-            <LocationPinIcon
+            <MapPin
               aria-hidden="true"
-              className="size-[var(--space-4)] shrink-0"
+              size={16}
+              className="shrink-0 text-[color:var(--color-neutral-700)]"
             />
             <span
               className={

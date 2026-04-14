@@ -23,7 +23,7 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import NewspaperIcon from "../assets/newspaper-outline.svg?react";
+import { Newspaper } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -113,7 +113,11 @@ export function DateBadge({
          * Figma: size-[29.737px], approximated as 1.875rem (≈ 30px).
          */
         <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <NewspaperIcon aria-hidden="true" className="size-[1.875rem]" />
+          <Newspaper
+            aria-hidden="true"
+            size={30}
+            className="text-[color:var(--color-neutral-900)]"
+          />
         </div>
       )}
     </div>
