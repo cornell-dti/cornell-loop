@@ -7,25 +7,24 @@
 
 import { useState } from 'react';
 
-import { Button }       from '../components/Button';
-import { Toggle }       from '../components/Toggle';
-import { Tag }          from '../components/Tags';
-import { SearchBar }    from '../components/SearchBar';
-import { Avatar }       from '../components/Avatar';
-import { SideBar }      from '../components/SideBar';
-import type { SideBarItemId } from '../components/SideBar';
-import { LoopLogo }     from '../components/Logo';
-
-import { DashboardEventCard }  from '../components/Cards/DashboardEventCard';
-import { DashboardPost }       from '../components/Cards/DashboardPost';
-import { LoopSummary }         from '../components/Cards/LoopSummary';
 import {
+  Button,
+  Toggle,
+  Tag,
+  SearchBar,
+  Avatar,
+  SideBar,
+  LoopLogo,
+  DashboardEventCard,
+  DashboardPost,
+  LoopSummary,
   DateBadge,
   ExtensionEventRow,
   ExtensionEventCard,
-} from '../components/Cards/ExtensionEventCard';
-
-import { SearchPanel, SearchResultList } from '../components/SearchPanel';
+  SearchPanel,
+  SearchResultList,
+} from '@app/ui';
+import type { SideBarItemId } from '@app/ui';
 
 // ─── Page-internal layout helpers ─────────────────────────────────────────────
 // These are NOT new design-system components — they are private page layout
