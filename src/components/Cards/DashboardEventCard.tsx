@@ -18,14 +18,14 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import { Tag } from '../Tags';
-import type { TagColor } from '../Tags';
-import CalendarIcon       from '../../assets/calendar.svg?react';
-import LocationPinIcon    from '../../assets/location-pin.svg?react';
-import ExternalLinkIcon   from '../../assets/external-link.svg?react';
-import BookmarkIcon       from '../../assets/bookmark.svg?react';
-import BookmarkFilledIcon from '../../assets/bookmark-filled.svg?react';
+import type { ComponentPropsWithoutRef } from "react";
+import { Tag } from "../Tags";
+import type { TagColor } from "../Tags";
+import CalendarIcon from "../../assets/calendar.svg?react";
+import LocationPinIcon from "../../assets/location-pin.svg?react";
+import ExternalLinkIcon from "../../assets/external-link.svg?react";
+import BookmarkIcon from "../../assets/bookmark.svg?react";
+import BookmarkFilledIcon from "../../assets/bookmark-filled.svg?react";
 
 // ─── Shared types (re-exported for use by DashboardPost) ─────────────────────
 
@@ -38,13 +38,13 @@ export interface TagItem {
 // ─── Shared class strings ─────────────────────────────────────────────────────
 
 const BODY2_CLASSES =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export interface DashboardEventCardProps extends ComponentPropsWithoutRef<'article'> {
+export interface DashboardEventCardProps extends ComponentPropsWithoutRef<"article"> {
   title: string;
   datetime: string;
   location: string;
@@ -89,28 +89,27 @@ export function DashboardEventCard({
   return (
     <article
       className={[
-        'flex flex-col gap-[var(--space-3)]',
-        'bg-[var(--color-surface)] border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'p-[var(--space-4)]',
+        "flex flex-col gap-[11px]",
+        "border border-[var(--color-border)] bg-[var(--color-surface)]",
+        "rounded-[var(--radius-card)]",
+        "p-[var(--space-4)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Section 1: title row + meta row ── */}
-      <div className="flex flex-col gap-[var(--space-1)] w-full">
-
+      <div className="flex w-full flex-col gap-[var(--space-1)]">
         {/* Title row: title text | share + bookmark icons | RSVP button */}
-        <div className="flex items-center gap-[var(--space-3)] w-full">
+        <div className="flex w-full items-center gap-[var(--space-3)]">
           <h3
             className={
-              'flex-1 min-w-0 ' +
-              'font-[family-name:var(--font-body)] font-bold ' +
-              'text-[var(--font-size-body1)] leading-[var(--line-height-body1)] ' +
-              'tracking-[var(--letter-spacing-body1)] ' +
-              'text-[var(--color-neutral-700)]'
+              "min-w-0 flex-1 " +
+              "font-[family-name:var(--font-body)] font-bold " +
+              "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+              "tracking-[var(--letter-spacing-body1)] " +
+              "text-[color:var(--color-neutral-700)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -118,7 +117,7 @@ export function DashboardEventCard({
           </h3>
 
           {/* Action icons */}
-          <div className="flex items-center gap-[var(--space-2)] py-[var(--space-1)] shrink-0">
+          <div className="flex shrink-0 items-center gap-[10px] py-[var(--space-1)]">
             {/*
              * Share — external-link.svg: stroke="#ADB5BD" (Neutral/500, muted by default).
              * On hover, --filter-icon-close-default darkens it to ~Neutral/700 (#495057).
@@ -132,9 +131,9 @@ export function DashboardEventCard({
               <ExternalLinkIcon
                 aria-hidden="true"
                 className={
-                  'size-full ' +
-                  'group-hover:[filter:var(--filter-icon-close-default)] ' +
-                  'transition-[filter] duration-150'
+                  "size-full " +
+                  "group-hover:[filter:var(--filter-icon-close-default)] " +
+                  "transition-[filter] duration-150"
                 }
               />
             </button>
@@ -148,23 +147,20 @@ export function DashboardEventCard({
              */}
             <button
               type="button"
-              aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark event'}
+              aria-label={bookmarked ? "Remove bookmark" : "Bookmark event"}
               aria-pressed={bookmarked}
               onClick={onBookmark}
               className="group size-[var(--space-4)] cursor-pointer"
             >
               {bookmarked ? (
-                <BookmarkFilledIcon
-                  aria-hidden="true"
-                  className="size-full"
-                />
+                <BookmarkFilledIcon aria-hidden="true" className="size-full" />
               ) : (
                 <BookmarkIcon
                   aria-hidden="true"
                   className={
-                    'size-full ' +
-                    'group-hover:[filter:var(--filter-icon-close-default)] ' +
-                    'transition-[filter] duration-150'
+                    "size-full " +
+                    "group-hover:[filter:var(--filter-icon-close-default)] " +
+                    "transition-[filter] duration-150"
                   }
                 />
               )}
@@ -182,18 +178,17 @@ export function DashboardEventCard({
             type="button"
             onClick={onRsvp}
             className={[
-              'shrink-0 inline-flex items-center justify-center',
-              'px-[var(--space-4)] py-[var(--space-1-5)]',
-              'rounded-[var(--radius-card)]',
-              'border border-[var(--color-border)]',
-              'bg-[var(--color-surface)]',
+              "inline-flex shrink-0 items-center justify-center",
+              "px-[var(--space-4)] py-[var(--space-1-5)]",
+              "rounded-[var(--radius-card)]",
+              "border border-[var(--color-border)]",
+              "bg-[var(--color-surface)]",
               BODY2_CLASSES,
-              'text-[var(--color-black)]',
-              'cursor-pointer whitespace-nowrap',
-              'hover:bg-[var(--color-surface-subtle)]',
-              'transition-colors duration-150',
-            ]
-              .join(' ')}
+              "text-[color:var(--color-black)]",
+              "cursor-pointer whitespace-nowrap",
+              "hover:bg-[var(--color-surface-subtle)]",
+              "transition-colors duration-150",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             RSVP
@@ -203,26 +198,32 @@ export function DashboardEventCard({
         {/* Meta row: datetime + location */}
         {/* calendar.svg & location-pin.svg use stroke="#495057" (Neutral/700) natively — no filter. */}
         <div className="flex items-center gap-[var(--space-6)]">
-          <div className="flex items-center gap-[var(--space-2)] shrink-0">
+          <div className="flex shrink-0 items-center gap-[var(--space-2)]">
             <CalendarIcon
               aria-hidden="true"
-              className="shrink-0 size-[var(--space-4)]"
+              className="size-[var(--space-4)] shrink-0"
             />
             <span
-              className={BODY2_CLASSES + ' text-[var(--color-neutral-700)] whitespace-nowrap'}
+              className={
+                BODY2_CLASSES +
+                " whitespace-nowrap text-[color:var(--color-neutral-700)]"
+              }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {datetime}
             </span>
           </div>
 
-          <div className="flex items-center gap-[var(--space-2)] shrink-0">
+          <div className="flex shrink-0 items-center gap-[var(--space-2)]">
             <LocationPinIcon
               aria-hidden="true"
-              className="shrink-0 size-[var(--space-4)]"
+              className="size-[var(--space-4)] shrink-0"
             />
             <span
-              className={BODY2_CLASSES + ' text-[var(--color-neutral-700)] whitespace-nowrap'}
+              className={
+                BODY2_CLASSES +
+                " whitespace-nowrap text-[color:var(--color-neutral-700)]"
+              }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {location}
@@ -236,11 +237,11 @@ export function DashboardEventCard({
         <p
           className={[
             BODY2_CLASSES,
-            'text-[var(--color-neutral-700)]',
-            descriptionTruncated ? 'line-clamp-3 overflow-hidden' : '',
+            "text-[color:var(--color-neutral-700)]",
+            descriptionTruncated ? "line-clamp-3 overflow-hidden" : "",
           ]
             .filter(Boolean)
-            .join(' ')}
+            .join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           {description}
@@ -251,14 +252,13 @@ export function DashboardEventCard({
             type="button"
             onClick={onShowMore}
             className={[
-              'self-start whitespace-nowrap cursor-pointer',
+              "cursor-pointer self-start whitespace-nowrap",
               BODY2_CLASSES,
               /* Figma value #767676; approximated with --color-text-secondary (Neutral/600 #616972) */
-              'text-[var(--color-text-secondary)]',
-              'hover:text-[var(--color-neutral-700)]',
-              'transition-colors duration-150',
-            ]
-              .join(' ')}
+              "text-[color:var(--color-text-secondary)]",
+              "hover:text-[color:var(--color-neutral-700)]",
+              "transition-colors duration-150",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Show more
@@ -268,9 +268,9 @@ export function DashboardEventCard({
 
       {/* ── Section 3: tags ── */}
       {tags.length > 0 && (
-        <div className="flex flex-wrap gap-[var(--space-2)] items-center">
+        <div className="flex flex-wrap items-center gap-[10px]">
           {tags.map((tag, i) => (
-            <Tag key={i} color={tag.color ?? 'neutral'}>
+            <Tag key={i} color={tag.color ?? "neutral"}>
               {tag.label}
             </Tag>
           ))}

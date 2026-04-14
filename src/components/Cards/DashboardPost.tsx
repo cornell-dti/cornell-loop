@@ -22,9 +22,9 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import { DashboardEventCard } from './DashboardEventCard';
-import type { DashboardEventCardProps, TagItem } from './DashboardEventCard';
-import StarIcon from '../../assets/star.svg?react';
+import { DashboardEventCard } from "./DashboardEventCard";
+import type { DashboardEventCardProps, TagItem } from "./DashboardEventCard";
+import StarIcon from "../../assets/star.svg?react";
 
 export type { TagItem };
 
@@ -49,7 +49,7 @@ export interface DashboardPostProps {
   description: string;
   descriptionTruncated?: boolean;
   onShowMore?: () => void;
-  tags?: DashboardEventCardProps['tags'];
+  tags?: DashboardEventCardProps["tags"];
   onRsvp?: () => void;
   onShare?: () => void;
   onBookmark?: () => void;
@@ -59,9 +59,9 @@ export interface DashboardPostProps {
 // ─── Shared body-2 class string ───────────────────────────────────────────────
 
 const BODY2 =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -95,19 +95,14 @@ export function DashboardPost({
 
   return (
     <div
-      className={[
-        'flex flex-col gap-[var(--space-3)]',
-        className,
-      ]
+      className={["flex flex-col gap-[var(--space-3)]", className]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
     >
       {/* ── Post header ── */}
       <div className="flex items-center gap-[var(--space-3)]">
-
         {/* Left: avatar stack + org names + indicator badge */}
         <div className="flex items-center gap-[var(--space-2)]">
-
           {/* Stacked avatars — overlap with negative margin on all but first */}
           {organizations.length > 0 && (
             <div className="flex items-center">
@@ -115,15 +110,15 @@ export function DashboardPost({
                 <span
                   key={i}
                   className={[
-                    'relative inline-flex shrink-0 items-center justify-center',
-                    'rounded-full overflow-hidden',
-                    'size-[var(--space-8)]',
+                    "relative inline-flex shrink-0 items-center justify-center",
+                    "overflow-hidden rounded-full",
+                    "size-[var(--space-8)]",
                     /* White ring to create visual separation between overlapping avatars */
-                    'ring-2 ring-[var(--color-surface)]',
-                    i > 0 ? '[margin-left:calc(-1*var(--space-2))]' : '',
+                    "ring-2 ring-[var(--color-surface)]",
+                    i > 0 ? "[margin-left:calc(-1*var(--space-2))]" : "",
                   ]
                     .filter(Boolean)
-                    .join(' ')}
+                    .join(" ")}
                   style={{ zIndex: organizations.length - i }}
                 >
                   {org.avatarUrl ? (
@@ -136,11 +131,11 @@ export function DashboardPost({
                     /* Fallback: initial letter badge using secondary palette */
                     <span
                       className={
-                        'size-full flex items-center justify-center ' +
-                        'bg-[var(--color-secondary-400)] ' +
-                        'font-[family-name:var(--font-body)] font-semibold ' +
-                        'text-[var(--font-size-body3)] ' +
-                        'text-[var(--color-secondary-900)]'
+                        "flex size-full items-center justify-center " +
+                        "bg-[var(--color-secondary-400)] " +
+                        "font-[family-name:var(--font-body)] font-semibold " +
+                        "text-[length:var(--font-size-body3)] " +
+                        "text-[color:var(--color-secondary-900)]"
                       }
                     >
                       {org.name.charAt(0).toUpperCase()}
@@ -154,14 +149,14 @@ export function DashboardPost({
           {/* Org names — Figma: DM Sans SemiBold 14px, Neutral/700 */}
           <span
             className={
-              'font-[family-name:var(--font-body)] font-semibold ' +
-              'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-              'tracking-[var(--letter-spacing-body2)] ' +
-              'text-[var(--color-neutral-700)] whitespace-nowrap'
+              "font-[family-name:var(--font-body)] font-semibold " +
+              "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+              "tracking-[var(--letter-spacing-body2)] " +
+              "whitespace-nowrap text-[color:var(--color-neutral-700)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            {organizations.map((o) => o.name).join(', ')}
+            {organizations.map((o) => o.name).join(", ")}
           </span>
 
           {/*
@@ -171,11 +166,11 @@ export function DashboardPost({
            */}
           <span
             className={
-              'inline-flex items-center justify-center ' +
-              'rounded-full p-[var(--space-1)] ' +
-              'size-[var(--space-3)] ' +
-              'bg-[var(--color-neutral-600)] ' +
-              'text-[var(--color-white)]'
+              "inline-flex items-center justify-center " +
+              "rounded-full p-[var(--space-1)] " +
+              "size-[var(--space-3)] " +
+              "bg-[var(--color-neutral-600)] " +
+              "text-[color:var(--color-white)]"
             }
             aria-hidden="true"
           >
@@ -187,13 +182,15 @@ export function DashboardPost({
         <div className="flex items-center gap-[var(--space-2)]">
           {/* Bullet — Figma: Neutral/500 */}
           <span
-            className="text-[var(--color-neutral-500)] text-[var(--font-size-body3)] leading-[1.5]"
+            className="text-[length:var(--font-size-body3)] leading-[1.5] text-[color:var(--color-neutral-500)]"
             aria-hidden="true"
           >
             •
           </span>
           <span
-            className={BODY2 + ' text-[var(--color-neutral-600)] whitespace-nowrap'}
+            className={
+              BODY2 + " whitespace-nowrap text-[color:var(--color-neutral-600)]"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {postedAt}
