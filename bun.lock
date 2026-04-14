@@ -4,7 +4,12 @@
   "workspaces": {
     "": {
       "name": "cornell-loop",
+    },
+    "apps/dashboard": {
+      "name": "@app/dashboard",
+      "version": "0.0.0",
       "dependencies": {
+        "@app/ui": "workspace:*",
         "@auth/core": "0.37.0",
         "@convex-dev/auth": "^0.0.91",
         "convex": "^1.32.0",
@@ -29,8 +34,25 @@
         "vite": "^7.3.1",
       },
     },
+    "shared/ui": {
+      "name": "@app/ui",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/react": "^19.2.7",
+        "react": "^19.2.0",
+        "typescript": "~5.9.3",
+        "vite-plugin-svgr": "^5.2.0",
+      },
+      "peerDependencies": {
+        "react": ">=18",
+      },
+    },
   },
   "packages": {
+    "@app/dashboard": ["@app/dashboard@workspace:apps/dashboard"],
+
+    "@app/ui": ["@app/ui@workspace:shared/ui"],
+
     "@auth/core": ["@auth/core@0.37.0", "", { "dependencies": { "@panva/hkdf": "^1.2.1", "@types/cookie": "0.6.0", "cookie": "0.7.1", "jose": "^5.9.3", "oauth4webapi": "^3.0.0", "preact": "10.11.3", "preact-render-to-string": "5.2.3" }, "peerDependencies": { "@simplewebauthn/browser": "^9.0.1", "@simplewebauthn/server": "^9.0.2", "nodemailer": "^6.8.0" }, "optionalPeers": ["@simplewebauthn/browser", "@simplewebauthn/server", "nodemailer"] }, "sha512-LybAgfFC5dta3Mu3al0UbnzMGVBpZRqLMvvXupQOfETtPNlL7rXgTO13EVRTCdvPqMQrVYjODUDvgVfQM1M3Qg=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
