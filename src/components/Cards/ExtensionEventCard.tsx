@@ -38,8 +38,8 @@
  */
 
 import type { ComponentPropsWithoutRef } from "react";
-import BookmarkIcon from "../../assets/bookmark.svg?react";
-import BookmarkFilledIcon from "../../assets/bookmark-filled.svg?react";
+import { fallbackColorsForName } from "../../utils/fallbackColors";
+import { Bookmark } from "../Bookmark";
 import { DateBadge } from "../DateBadge";
 import type { ThumbnailVariant } from "../DateBadge";
 export type { ThumbnailVariant, DateBadgeProps } from "../DateBadge";
@@ -155,37 +155,14 @@ export function ExtensionEventRow({
         )}
       </div>
 
-      {/*
-       * Bookmark button — switches SVG based on `bookmarked` prop.
-       * Same pattern as DashboardEventCard:
-       *   false → BookmarkIcon       (stroke="#ADB5BD", gray outline)
-       *   true  → BookmarkFilledIcon (fill="#EB7128",   orange filled)
-       * On hover when unsaved: --filter-icon-close-default darkens to ~Neutral/700.
-       * Source: Figma Icons section — Bookmark icon states (node 493:1041)
-       */}
-      <button
-        type="button"
-        aria-label={bookmarked ? "Remove bookmark" : "Bookmark event"}
-        aria-pressed={bookmarked}
-        onClick={(e) => {
+      <Bookmark
+        bookmarked={bookmarked}
+        onToggle={(e) => {
           e.stopPropagation();
           onBookmark?.();
         }}
-        className="group size-[var(--space-6)] shrink-0 cursor-pointer"
-      >
-        {bookmarked ? (
-          <BookmarkFilledIcon aria-hidden="true" className="size-full" />
-        ) : (
-          <BookmarkIcon
-            aria-hidden="true"
-            className={
-              "size-full " +
-              "group-hover:[filter:var(--filter-icon-close-default)] " +
-              "transition-[filter] duration-150"
-            }
-          />
-        )}
-      </button>
+        iconClassName="size-[var(--space-6)]"
+      />
     </div>
   );
 }
@@ -260,14 +237,16 @@ export function ExtensionEventCard({
               className="size-full object-cover"
             />
           ) : (
-            /* Initials fallback */
             <span
               className={
                 "flex size-full items-center justify-center " +
-                "bg-[var(--color-secondary-400)] " +
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[length:var(--font-size-body3)] text-[color:var(--color-secondary-900)]"
+                "text-[length:var(--font-size-body3)]"
               }
+              style={{
+                backgroundColor: fallbackColorsForName(orgName).bg,
+                color: fallbackColorsForName(orgName).fg,
+              }}
             >
               {orgName.charAt(0).toUpperCase()}
             </span>
