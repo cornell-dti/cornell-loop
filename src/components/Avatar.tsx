@@ -22,28 +22,7 @@
  */
 
 import ProfileIcon from "../assets/profile-avatar.svg?react";
-
-// ─── Fallback colour palette ─────────────────────────────────────────────────
-// Deterministic pastel backgrounds for avatars without an image, drawn from
-// design-system token values to keep things visually cohesive.
-
-const FALLBACK_PALETTE: { bg: string; fg: string }[] = [
-  { bg: "var(--color-primary-500)", fg: "var(--color-primary-800)" }, // peach / dark orange
-  { bg: "var(--color-secondary-400)", fg: "var(--color-secondary-700)" }, // light blue / navy
-  { bg: "var(--color-primary-400)", fg: "var(--color-primary-700)" }, // warm cream / brand orange
-  { bg: "var(--color-secondary-300)", fg: "var(--color-secondary-600)" }, // pale blue / medium blue
-  { bg: "var(--color-primary-600)", fg: "var(--color-primary-900)" }, // salmon / deep brown
-  { bg: "var(--color-secondary-500)", fg: "var(--color-secondary-900)" }, // sky blue / dark navy
-];
-
-/** Simple string hash → palette index so the same name always gets the same colour. */
-function fallbackColorsForName(name: string): { bg: string; fg: string } {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  }
-  return FALLBACK_PALETTE[Math.abs(hash) % FALLBACK_PALETTE.length];
-}
+import { fallbackColorsForName } from "../utils/fallbackColors";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -68,17 +47,20 @@ export interface AvatarProps {
 
 interface AvatarCircleProps {
   item: AvatarItem;
-  /**
-   * When true the circle gets the white 2 px ring separator and a negative
-   * left margin for stacking (Figma: mr-[-8px] pattern on every avatar after
-   * the first, implemented here as margin-left for cleaner DOM flow).
-   */
-  stacked?: boolean;
+  /** Show the white 2 px ring (all avatars in a multi-stack). */
+  showRing?: boolean;
+  /** Apply negative left margin for overlap (2nd+ avatars only). */
+  overlap?: boolean;
   /** CSS z-index so earlier avatars render on top of later ones. */
   zIndex?: number;
 }
 
-function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
+function AvatarCircle({
+  item,
+  showRing = false,
+  overlap = false,
+  zIndex,
+}: AvatarCircleProps) {
   return (
     <span
       className={[
@@ -89,16 +71,11 @@ function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
         "size-[var(--space-8)]",
         /* fallback background — overridden inline when no src is provided */
         item.src ? "bg-[var(--color-surface-subtle)]" : "",
-        /*
-         * Stacked ring + overlap:
-         *   ring-2 ring-[var(--color-surface)] → 2 px white ring between circles
-         *   [margin-left:calc(-1*var(--space-2))] → −8 px overlap
-         *   Figma uses mr-[-8px] on all avatars + pr-[8px] on the container;
-         *   using ml here on 2nd+ avatars is equivalent with no container padding needed.
-         */
-        stacked
-          ? "[margin-left:calc(-1*var(--space-2))] ring-2 ring-[var(--color-surface)]"
-          : "",
+        /* White outline on every avatar in a stack so overlapping neighbours show a border.
+         * Uses outline instead of ring to avoid clipping with overflow-hidden. */
+        showRing ? "outline-2 outline-[var(--color-surface)]" : "",
+        /* Negative margin for overlap on 2nd+ avatars */
+        overlap ? "[margin-left:calc(-1*var(--space-2))]" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -159,7 +136,8 @@ export function Avatar({ avatars, className }: AvatarProps) {
           <AvatarCircle
             key={i}
             item={avatar}
-            stacked={isMultiple && i > 0}
+            showRing={isMultiple}
+            overlap={isMultiple && i > 0}
             /* Higher index = lower z-index so first avatar sits on top */
             zIndex={avatars.length - i}
           />
@@ -181,7 +159,7 @@ export function Avatar({ avatars, className }: AvatarProps) {
           "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
           "tracking-[var(--letter-spacing-body2)]",
           "text-[color:var(--color-neutral-700)]",
-          "whitespace-nowrap",
+          "pointer-events-none whitespace-nowrap select-none",
         ]
           .filter(Boolean)
           .join(" ")}

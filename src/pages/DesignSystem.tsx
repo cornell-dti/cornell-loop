@@ -18,6 +18,7 @@ import { LoopLogo } from "../components/Logo";
 
 import { DashboardEventCard } from "../components/Cards/DashboardEventCard";
 import { DashboardPost } from "../components/Cards/DashboardPost";
+import type { Organization } from "../components/Cards/DashboardPost";
 import { LoopSummary } from "../components/Cards/LoopSummary";
 import {
   DateBadge,
@@ -265,9 +266,24 @@ const SAMPLE_EVENT_PROPS = {
   tags: SAMPLE_TAGS,
 };
 
-const SAMPLE_ORGS = [
-  { name: "CDS", avatarUrl: undefined },
-  { name: "Cornell AI", avatarUrl: undefined },
+const SAMPLE_ORGS: Organization[] = [
+  {
+    name: "CDS",
+    following: true,
+    description:
+      "Cornell Data Science builds ML tools and hosts workshops for the Cornell community.",
+    tags: [
+      { label: "For you", color: "blue" as const },
+      { label: "Data Science" },
+    ],
+  },
+  {
+    name: "Cornell AI",
+    following: false,
+    description:
+      "Student-run club exploring artificial intelligence research and applications.",
+    tags: [{ label: "Tech" }, { label: "Research" }],
+  },
 ];
 
 const SAMPLE_EXT_EVENTS = [
@@ -359,6 +375,9 @@ const SAMPLE_RESULT_GROUPS = [
 export default function DesignSystem() {
   const [sidebarActive, setSidebarActive] = useState<SideBarItemId>("home");
   const [bookmarked, setBookmarked] = useState(false);
+  const [following, setFollowing] = useState(true);
+  const [cdsFollowing, setCdsFollowing] = useState(true);
+  const [cornellAiFollowing, setCornellAiFollowing] = useState(false);
   const [toggleCompact, setToggleCompact] = useState("Feed");
   const [toggleDefault, setToggleDefault] = useState("Feed");
 
@@ -686,7 +705,7 @@ export default function DesignSystem() {
           <div className="w-[28rem]">
             <DashboardEventCard
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated
+              truncateDescription
               bookmarked={false}
             />
           </div>
@@ -696,7 +715,6 @@ export default function DesignSystem() {
           <div className="w-[28rem]">
             <DashboardEventCard
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated={false}
               bookmarked={bookmarked}
               onBookmark={() => setBookmarked((b) => !b)}
             />
@@ -708,13 +726,54 @@ export default function DesignSystem() {
           11. CARDS — DashboardPost
          ════════════════════════════════════════ */}
       <DS_Section id="dashboard-post" title="Cards — Dashboard Post">
-        <DS_Row label="With org header (avatar stack + indicator badge)">
+        <DS_Row label="With org header (avatar stack + following badge)">
           <div className="w-[28rem]">
             <DashboardPost
-              organizations={SAMPLE_ORGS}
+              organizations={SAMPLE_ORGS.map((org) =>
+                org.name === "CDS"
+                  ? {
+                      ...org,
+                      following: cdsFollowing,
+                      onToggleFollow: () => setCdsFollowing((f) => !f),
+                    }
+                  : org.name === "Cornell AI"
+                    ? {
+                        ...org,
+                        following: cornellAiFollowing,
+                        onToggleFollow: () => setCornellAiFollowing((f) => !f),
+                      }
+                    : org,
+              )}
               postedAt="Mar 12"
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated
+              truncateDescription
+              bookmarked={bookmarked}
+              onBookmark={() => setBookmarked((b) => !b)}
+            />
+          </div>
+        </DS_Row>
+
+        <DS_Row label="Single org (following) with hover card">
+          <div className="w-[28rem]">
+            <DashboardPost
+              organizations={[
+                {
+                  name: "IEEE",
+                  following,
+                  description:
+                    "Community of electrical and computer engineers at Cornell.",
+                  tags: [
+                    { label: "For you", color: "blue" as const },
+                    { label: "Tech" },
+                  ],
+                  onToggleFollow: () => setFollowing((f) => !f),
+                },
+              ]}
+              postedAt="Mar 12"
+              {...SAMPLE_EVENT_PROPS}
+              truncateDescription
+              bookmarked={bookmarked}
+              onBookmark={() => setBookmarked((b) => !b)}
             />
           </div>
         </DS_Row>

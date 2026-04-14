@@ -32,6 +32,7 @@
 import type { ComponentPropsWithoutRef } from "react";
 import StarIcon from "../assets/star.svg?react";
 import { Tag } from "./Tags";
+import { fallbackColorsForName } from "../utils/fallbackColors";
 import { DateBadge } from "./DateBadge";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -177,32 +178,25 @@ function RsvpEventRow({ event }: { event: RsvpEvent }) {
 
 function ClubItem({ club }: { club: Club }) {
   const count = club.notificationCount ?? 0;
+  const fallback = fallbackColorsForName(club.name);
 
   return (
-    /*
-     * Interactive states:
-     *   Normal → full opacity
-     *   Hover  → 80% opacity (subtle fade-down affordance)
-     */
     <div
       className={[
-        "flex flex-col items-center justify-center gap-[var(--space-1-5)]",
+        "flex w-full items-center gap-[var(--space-3)]",
+        "p-[var(--space-1-5)]",
+        "rounded-[var(--radius-input)]",
         "cursor-pointer",
-        "transition-opacity duration-150 hover:opacity-80",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
       ].join(" ")}
     >
-      {/*
-       * Avatar + badge wrapper.
-       * `relative` here (NOT on the overflow-hidden circle) so the badge
-       * is not clipped. Figma (node 506:9897) places the badge as a sibling
-       * of the avatar img div, inside the outer relative container.
-       */}
+      {/* Avatar + badge wrapper */}
       <div className="relative shrink-0">
-        {/* Circle avatar — overflow-hidden ONLY wraps the image/initials */}
         <div
           className={[
             "overflow-hidden rounded-full",
-            "size-[var(--size-club-avatar)]",
+            "size-[var(--space-8)]",
             "bg-[var(--color-surface-subtle)]",
           ].join(" ")}
         >
@@ -213,37 +207,26 @@ function ClubItem({ club }: { club: Club }) {
               className="size-full object-cover"
             />
           ) : (
-            /* Initials fallback */
             <span
               className={
                 "flex size-full items-center justify-center " +
-                "bg-[var(--color-secondary-400)] " +
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[length:var(--font-size-body2)] text-[color:var(--color-secondary-900)]"
+                "text-[length:var(--font-size-body3)]"
               }
+              style={{ backgroundColor: fallback.bg, color: fallback.fg }}
             >
               {club.name.charAt(0).toUpperCase()}
             </span>
           )}
         </div>
 
-        {/*
-         * Notification badge — sibling of the avatar circle, NOT inside
-         * overflow-hidden so it renders outside the clipped boundary.
-         *
-         * Figma (node 506:10236):
-         *   bg Primary/700, rounded-[100px] (pill), white text, ~10px font
-         *   positioned at top-right corner, slightly overlapping outside the avatar.
-         *
-         * top-[-2px] right-[-2px] matches Figma's top: -1px with a 1px margin.
-         */}
         {count > 0 && (
           <span
             className={[
-              "absolute top-[-2px] right-[-2px]",
+              "absolute top-[-5px] right-[-5px]",
               "inline-flex items-center justify-center",
-              "h-[var(--space-4)] min-w-[var(--space-4)]",
-              "px-[var(--space-1)]",
+              "h-[14px] min-w-[14px]",
+              "px-[3px]",
               "rounded-full",
               "bg-[var(--color-primary-700)]",
               "font-[family-name:var(--font-body)] leading-none font-normal",
@@ -256,13 +239,13 @@ function ClubItem({ club }: { club: Club }) {
         )}
       </div>
 
-      {/* Club name label */}
+      {/* Club name */}
       <span
         className={
-          "font-[family-name:var(--font-body)] font-medium " +
-          "text-[length:var(--font-size-body2)] leading-[1.5] " +
-          "whitespace-nowrap text-[color:var(--color-text-secondary)]"
+          BODY2_SEMIBOLD +
+          " min-w-0 truncate text-[color:var(--color-neutral-900)]"
         }
+        style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {club.name}
       </span>
@@ -330,8 +313,7 @@ export function SearchPanel({
         <section className="flex w-full flex-col gap-[var(--space-3)]">
           <h2 className={SECTION_TITLE}>Your Clubs</h2>
 
-          {/* Wrap grid — Figma: gap-[16px] flex-wrap */}
-          <div className="flex flex-wrap items-start gap-[var(--space-4)]">
+          <div className="flex flex-col gap-[var(--space-1)]">
             {clubs.map((club) => (
               <ClubItem key={club.id} club={club} />
             ))}
