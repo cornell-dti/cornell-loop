@@ -21,7 +21,7 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import ProfileIcon from "../assets/profile-avatar.svg?react";
+import { User } from "lucide-react";
 import { fallbackColorsForName } from "../utils/fallbackColors";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -98,9 +98,9 @@ function AvatarCircle({
          * Sized to --space-5 (20 px) inside the 32 px circle.
          * Color is a darker shade from the same palette as the background.
          */
-        <ProfileIcon
+        <User
           aria-hidden="true"
-          className="size-[var(--space-5)]"
+          size={20}
           style={{ color: fallbackColorsForName(item.name).fg }}
         />
       )}

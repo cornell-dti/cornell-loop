@@ -1,5 +1,4 @@
-import BookmarkIcon from "../assets/bookmark.svg?react";
-import BookmarkFilledIcon from "../assets/bookmark-filled.svg?react";
+import { Bookmark as BookmarkIcon } from "lucide-react";
 
 export interface BookmarkProps {
   /** Whether the item is currently bookmarked. */
@@ -16,9 +15,9 @@ export interface BookmarkProps {
  * Bookmark toggle button.
  *
  * Figma states (node 493:1041):
- *   Default → bookmark.svg       stroke Neutral/500 (#ADB5BD)
- *   Saved   → bookmark-filled.svg fill Primary/700 (#EB7128)
- *   Hover (unsaved) → darkens via --filter-icon-close-default
+ *   Default → Bookmark outline, stroke Neutral/500 (#ADB5BD)
+ *   Saved   → Bookmark filled,  fill Primary/700 (#EB7128)
+ *   Hover (unsaved) → darkens to Neutral/700
  */
 export function Bookmark({
   bookmarked,
@@ -37,17 +36,19 @@ export function Bookmark({
         .join(" ")}
     >
       {bookmarked ? (
-        <BookmarkFilledIcon
+        <BookmarkIcon
           aria-hidden="true"
-          className={`${iconClassName} transition-opacity duration-150 group-hover:opacity-70`}
+          fill="currentColor"
+          className={`${iconClassName} text-[color:var(--color-primary-700)] transition-opacity duration-150 group-hover:opacity-70`}
         />
       ) : (
         <BookmarkIcon
           aria-hidden="true"
           className={
             `${iconClassName} ` +
-            "group-hover:[filter:var(--filter-icon-close-default)] " +
-            "transition-[filter] duration-150"
+            "text-[color:var(--color-neutral-500)] " +
+            "group-hover:text-[color:var(--color-neutral-700)] " +
+            "transition-colors duration-150"
           }
         />
       )}

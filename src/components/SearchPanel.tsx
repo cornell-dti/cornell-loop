@@ -23,14 +23,12 @@
  *   Result rows   : default → hover:bg-surface-subtle (bg highlight)
  *   "Show more"   : default link colour → hover:underline
  *
- * Icon: star.svg (used inside indicator badges) — imported via SVGR (?react).
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
 import type { ComponentPropsWithoutRef } from "react";
-import StarIcon from "../assets/star.svg?react";
 import { Tag } from "./Tags";
 import { fallbackColorsForName } from "../utils/fallbackColors";
 import { DateBadge } from "./DateBadge";
@@ -78,10 +76,10 @@ export interface SearchResultItem {
   title: string;
   orgName: string;
   /**
-   * When true a small neutral indicator badge (star icon) is shown beside
-   * the org name — matches the Figma "Icon button" element.
+   * When true a "Following" pill badge is shown beside the org name —
+   * matches the following badge used in DashboardPost.
    */
-  hasIndicator?: boolean;
+  following?: boolean;
   /**
    * Optional tag label to the right of the org row.
    * Rendered using the shared Tag component (blue colour).
@@ -368,22 +366,21 @@ function SearchResultRow({ item }: { item: SearchResultItem }) {
             {item.orgName}
           </span>
 
-          {/*
-           * Indicator badge — small neutral pill with a star icon.
-           * Figma bg: #949494 ≈ --color-neutral-600 (consistent with DashboardPost).
-           * star.svg uses fill="white"/stroke="white" — renders correctly on dark bg.
-           */}
-          {item.hasIndicator && (
+          {/* "Following" pill badge — matches DashboardPost pattern */}
+          {item.following && (
             <span
               className={[
-                "inline-flex items-center justify-center",
-                "rounded-full p-[var(--space-1)]",
-                "size-[var(--space-3)]",
-                "bg-[var(--color-neutral-600)]",
+                "inline-flex items-center",
+                "rounded-full",
+                "bg-[var(--color-neutral-200)]",
+                "px-[var(--space-1-5)] py-0",
+                "font-[family-name:var(--font-body)] font-medium",
+                "text-[length:10px] leading-[18px]",
+                "text-[color:var(--color-neutral-600)]",
+                "whitespace-nowrap",
               ].join(" ")}
-              aria-hidden="true"
             >
-              <StarIcon className="size-full" />
+              Following
             </span>
           )}
         </div>

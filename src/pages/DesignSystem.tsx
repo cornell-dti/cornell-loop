@@ -8,6 +8,7 @@
 import { useState } from "react";
 
 import { Button } from "../components/Button";
+import { Dropdown } from "../components/Dropdown";
 import { Toggle } from "../components/Toggle";
 import { Tag } from "../components/Tags";
 import { SearchBar } from "../components/SearchBar";
@@ -356,18 +357,24 @@ const SAMPLE_RESULT_GROUPS = [
       {
         title: "ML Workshop",
         orgName: "CDS",
-        hasIndicator: true,
+        following: true,
         tag: { label: "CS", color: "neutral" as const },
       },
       {
         title: "Hackathon Kickoff",
         orgName: "Cornell AI",
-        hasIndicator: false,
+        following: false,
         tag: { label: "Open to all", color: "blue" as const },
       },
-      { title: "Pitch Night", orgName: "eLab", hasIndicator: false },
+      { title: "Pitch Night", orgName: "eLab", following: false },
     ],
   },
+];
+
+const SAMPLE_DROPDOWN_OPTIONS = [
+  { value: "a", label: "Option A" },
+  { value: "b", label: "Option B" },
+  { value: "c", label: "Option C" },
 ];
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -380,6 +387,7 @@ export default function DesignSystem() {
   const [cornellAiFollowing, setCornellAiFollowing] = useState(false);
   const [toggleCompact, setToggleCompact] = useState("Feed");
   const [toggleDefault, setToggleDefault] = useState("Feed");
+  const [dropdownValue, setDropdownValue] = useState<string>("");
 
   return (
     <div
@@ -863,6 +871,21 @@ export default function DesignSystem() {
               onShowMore={() => {}}
             />
           </div>
+        </DS_Row>
+      </DS_Section>
+
+      {/* ════════════════════════════════════════
+          16. DROPDOWN
+         ════════════════════════════════════════ */}
+      <DS_Section id="dropdown" title="Dropdown">
+        <DS_Row label="Default">
+          <Dropdown
+            value={dropdownValue}
+            onChange={setDropdownValue}
+            options={SAMPLE_DROPDOWN_OPTIONS}
+            placeholder="Dropdown"
+            className="w-[11rem]"
+          />
         </DS_Row>
       </DS_Section>
     </div>

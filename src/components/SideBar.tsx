@@ -21,21 +21,17 @@
  *   • Selected: Primary/400 bg,  rounded-[12px] (--space-3),    text Primary/800, icon orange
  *
  * Icon colouring:
- *   SVG assets in src/assets/ use hardcoded stroke colours.  CSS filters defined in
- *   tokens.css (--filter-icon-nav, --filter-icon-nav-selected) normalise them to the
- *   correct colour for each state.
+ *   Lucide icons use currentColor — text colour utilities set the icon colour
+ *   for each state (Neutral/900 default, Primary/800 selected).
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef, FC, SVGProps } from "react";
+import type { ComponentPropsWithoutRef } from "react";
+import { Bookmark, Home, MailCheck, User, type LucideIcon } from "lucide-react";
 
-// ── SVG imports — ?react suffix gives us inline React components via SVGR ────
-import HomeIcon from "../assets/home-icon.svg?react";
-import BookmarkIcon from "../assets/bookmark.svg?react";
-import SubscriptionsIcon from "../assets/subscriptions-icon.svg?react";
-import ProfileIcon from "../assets/profile.svg?react";
+// Brand logo — kept as SVG import
 import LoopLogo from "../assets/loop_logo.svg?react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,18 +40,16 @@ export type NavItemId = "home" | "bookmarks" | "subscriptions";
 export type BottomItemId = "profile";
 export type SideBarItemId = NavItemId | BottomItemId;
 
-type SvgIcon = FC<SVGProps<SVGSVGElement>>;
-
 interface NavItemDef {
   id: NavItemId;
   label: string;
-  Icon: SvgIcon;
+  Icon: LucideIcon;
 }
 
 const PRIMARY_NAV: NavItemDef[] = [
-  { id: "home", label: "Home", Icon: HomeIcon },
-  { id: "bookmarks", label: "Bookmarks", Icon: BookmarkIcon },
-  { id: "subscriptions", label: "Subscriptions", Icon: SubscriptionsIcon },
+  { id: "home", label: "Home", Icon: Home },
+  { id: "bookmarks", label: "Bookmarks", Icon: Bookmark },
+  { id: "subscriptions", label: "Subscriptions", Icon: MailCheck },
 ];
 
 export interface SideBarProps extends ComponentPropsWithoutRef<"nav"> {
@@ -73,7 +67,7 @@ export interface SideBarProps extends ComponentPropsWithoutRef<"nav"> {
 interface SideBarTabProps {
   id: SideBarItemId;
   label: string;
-  Icon: SvgIcon;
+  Icon: LucideIcon;
   isSelected: boolean;
   /** 'compact' reduces vertical padding; used for the Profile tab (Figma: py 4px vs 6px). */
   size?: "default" | "compact";
@@ -117,18 +111,17 @@ function SideBarTab({
         .join(" ")}
     >
       {/*
-       * Icon: always 24 × 24 px.  className drives the CSS filter so both the
-       * default (~Neutral/900) and selected (~Primary/800) colours are token-based.
-       * brightness(0) normalises any hardcoded SVG stroke first; subsequent ops
-       * produce the target colour.
+       * Icon: always 24 × 24 px.  Colour is set via currentColor using text
+       * colour utilities — Neutral/900 by default, Primary/800 when selected.
        */}
       <Icon
         aria-hidden="true"
+        size={24}
         className={[
-          "size-[var(--space-6)] shrink-0 transition-[filter] duration-150",
+          "shrink-0 transition-colors duration-150",
           isSelected
-            ? "[filter:var(--filter-icon-nav-selected)]"
-            : "[filter:var(--filter-icon-nav)]",
+            ? "text-[color:var(--color-primary-800)]"
+            : "text-[color:var(--color-neutral-900)]",
         ].join(" ")}
       />
 
@@ -239,7 +232,7 @@ export function SideBar({
         <SideBarTab
           id="profile"
           label="Profile"
-          Icon={ProfileIcon}
+          Icon={User}
           isSelected={activeItem === "profile"}
           size="compact"
           onClick={() => handleClick("profile")}

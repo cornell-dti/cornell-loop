@@ -26,9 +26,7 @@ import {
   type InputHTMLAttributes,
 } from "react";
 
-// Note: the file is search_icon.svg (not search.svg).
-import SearchIcon from "../assets/search_icon.svg?react";
-import CloseSearchIcon from "../assets/close_search.svg?react";
+import { Search, X } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -116,12 +114,12 @@ export function SearchBar({
       {/* ── Left: search icon + input field ── */}
       <div className="flex min-w-0 flex-1 items-center gap-[var(--space-3)]">
         {/*
-         * Search icon — search_icon.svg uses stroke="#495057" (Neutral/700) natively,
-         * so no filter needed. className goes directly to the <svg> via SVGR.
+         * Search icon — Neutral/700 stroke colour via currentColor.
          */}
-        <SearchIcon
+        <Search
           aria-hidden="true"
-          className="size-[var(--space-4)] shrink-0"
+          className="shrink-0 text-[color:var(--color-neutral-700)]"
+          size={16}
         />
 
         {/*
@@ -184,13 +182,13 @@ export function SearchBar({
           .filter(Boolean)
           .join(" ")}
       >
-        <CloseSearchIcon
+        <X
           aria-hidden="true"
           className={
             "size-full " +
-            "[filter:var(--filter-icon-close-default)] " +
-            "group-hover:[filter:var(--filter-icon-close-hover)] " +
-            "transition-[filter] duration-150"
+            "text-[color:var(--color-neutral-700)] " +
+            "group-hover:text-[color:var(--color-black)] " +
+            "transition-colors duration-150"
           }
         />
       </button>
