@@ -793,7 +793,30 @@ export default function DesignSystem() {
       <DS_Section id="loop-summary" title="Cards — Loop Summary">
         <DS_Row label="Default">
           <div className="w-[28rem]">
-            <LoopSummary summary="This week CDS is running an intro ML workshop and Cornell AI is hosting a neural networks deep-dive. Both events are open to all majors and offer free dinner. RSVPs close 48 hours before each session." />
+            <LoopSummary
+              summary="This week CDS is running an intro ML workshop and Cornell AI is hosting a neural networks deep-dive. Both events are open to all majors and offer free dinner. RSVPs close 48 hours before each session."
+              organizations={[
+                {
+                  name: "CDS",
+                  following: true,
+                  description:
+                    "Cornell Data Science builds ML tools and hosts workshops for the Cornell community.",
+                  tags: [
+                    { label: "For you", color: "blue" as const },
+                    { label: "Data Science" },
+                  ],
+                  onToggleFollow: () => {},
+                },
+                {
+                  name: "Cornell AI",
+                  following: false,
+                  description:
+                    "Student-run club exploring artificial intelligence research and applications.",
+                  tags: [{ label: "Tech" }, { label: "Research" }],
+                  onToggleFollow: () => {},
+                },
+              ]}
+            />
           </div>
         </DS_Row>
       </DS_Section>
