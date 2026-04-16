@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Cornell Loop",
+  "version": "0.0.1",
+  "action": {
+    "default_title": "Cornell Loop",
+    "default_icon": {
+      "16": "popup_icon.png",
+      "32": "popup_icon.png",
+      "48": "popup_icon.png",
+      "128": "popup_icon.png"
+    }
+  },
+  "icons": {
+    "16": "popup_icon.png",
+    "32": "popup_icon.png",
+    "48": "popup_icon.png",
+    "128": "popup_icon.png"
+  },
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://calendar.google.com/*"
+      ],
+      "js": ["src/content.tsx"],
+      "css": ["src/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage", "identity", "tabs"]
+}
