@@ -138,7 +138,7 @@ export function SearchBar({
           className={[
             'min-w-0 flex-1 bg-transparent border-none outline-none',
             'font-[family-name:var(--font-body)] font-normal',
-            'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
+            'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]',
             'tracking-[var(--letter-spacing-body2)]',
             'text-[var(--color-neutral-700)]',
             'placeholder:text-[var(--color-neutral-700)]',

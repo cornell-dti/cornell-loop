@@ -149,7 +149,7 @@ export function Avatar({ avatars, className }: AvatarProps) {
           'flex items-center',
           isMultiple ? 'gap-[var(--space-1)]' : '',
           'font-[family-name:var(--font-body)] font-semibold',
-          'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
+          'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]',
           'tracking-[var(--letter-spacing-body2)]',
           'text-[var(--color-neutral-700)]',
           'whitespace-nowrap',

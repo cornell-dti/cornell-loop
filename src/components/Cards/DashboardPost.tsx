@@ -24,6 +24,7 @@
 
 import { DashboardEventCard } from './DashboardEventCard';
 import type { DashboardEventCardProps, TagItem } from './DashboardEventCard';
+import { Avatar } from '../Avatar';
 import StarIcon from '../../assets/star.svg?react';
 
 export type { TagItem };
@@ -107,68 +108,8 @@ export function DashboardPost({
 
         {/* Left: avatar stack + org names + indicator badge */}
         <div className="flex items-center gap-[var(--space-2)]">
+          <Avatar avatars={organizations.map(o => ({ name: o.name, src: o.avatarUrl }))} />
 
-          {/* Stacked avatars — overlap with negative margin on all but first */}
-          {organizations.length > 0 && (
-            <div className="flex items-center">
-              {organizations.map((org, i) => (
-                <span
-                  key={i}
-                  className={[
-                    'relative inline-flex shrink-0 items-center justify-center',
-                    'rounded-full overflow-hidden',
-                    'size-[var(--space-8)]',
-                    /* White ring to create visual separation between overlapping avatars */
-                    'ring-2 ring-[var(--color-surface)]',
-                    i > 0 ? '[margin-left:calc(-1*var(--space-2))]' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  style={{ zIndex: organizations.length - i }}
-                >
-                  {org.avatarUrl ? (
-                    <img
-                      src={org.avatarUrl}
-                      alt={org.name}
-                      className="size-full object-cover"
-                    />
-                  ) : (
-                    /* Fallback: initial letter badge using secondary palette */
-                    <span
-                      className={
-                        'size-full flex items-center justify-center ' +
-                        'bg-[var(--color-secondary-400)] ' +
-                        'font-[family-name:var(--font-body)] font-semibold ' +
-                        'text-[var(--font-size-body3)] ' +
-                        'text-[var(--color-secondary-900)]'
-                      }
-                    >
-                      {org.name.charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Org names — Figma: DM Sans SemiBold 14px, Neutral/700 */}
-          <span
-            className={
-              'font-[family-name:var(--font-body)] font-semibold ' +
-              'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-              'tracking-[var(--letter-spacing-body2)] ' +
-              'text-[var(--color-neutral-700)] whitespace-nowrap'
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {organizations.map((o) => o.name).join(', ')}
-          </span>
-
-          {/*
-           * Indicator badge
-           * Figma: small circular icon button, bg #5f5f5f ≈ --color-neutral-600.
-           * Appears to be a "shared" or "featured" signal in the feed.
-           */}
           <span
             className={
               'inline-flex items-center justify-center ' +
