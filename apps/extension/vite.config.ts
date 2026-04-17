@@ -15,6 +15,9 @@ export default defineConfig({
     svgr(),
     webExtension({ manifest: './manifest.json' }),
   ],
+  build: {
+    cssCodeSplit: false,
+  },
   resolve: {
     alias: {
       '@app/ui': path.resolve(__dirname, '../../shared/ui/src'),

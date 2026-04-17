@@ -1,2 +1,19 @@
 @import 'tailwindcss';
-@import '@app/ui/styles/tokens.css';
+
+/* Explicitly scan component files so Tailwind generates all used utility classes */
+@source "../src/**/*.{ts,tsx}";
+@source "../../../shared/ui/src/**/*.{ts,tsx}";
+
+@import '../../../shared/ui/src/styles/tokens.css';
+
+/*
+ * Tailwind v4 `.border` uses `border-style: var(--tw-border-style)`.
+ * `@property --tw-border-style` does not apply inside ShadowRoot adoptedStyleSheets,
+ * so `--tw-border-style` is invalid and borders disappear (see tailwindcss#16025).
+ * Force solid borders after Tailwind utilities so width + color utilities still work.
+ */
+@layer utilities {
+  .border {
+    border-style: solid;
+  }
+}

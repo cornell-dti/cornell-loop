@@ -54,7 +54,7 @@ const BASE_CLASSES =
   'px-[var(--space-3)] py-[var(--space-0-5)] ' +
   'rounded-[var(--radius-input)] ' +
   'font-[family-name:var(--font-body)] font-medium ' +
-  'text-[var(--font-size-body2)] leading-[var(--space-6)] ' +
+  'text-[length:var(--font-size-body2)] leading-[var(--space-6)] ' +
   'tracking-[var(--letter-spacing-body2)] ' +
   'text-[var(--color-neutral-700)] ' +
   'whitespace-nowrap select-none transition-colors duration-150';

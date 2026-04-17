@@ -4,7 +4,7 @@
  * Sections extracted: Colors, Typography, Effects (Shadows + Border Radius)
  */
 
-:root {
+:root, :host {
   /* ─────────────────────────────────────────────
    * PRIMARY PALETTE  (warm orange-brown brand)
    * ───────────────────────────────────────────── */
@@ -81,6 +81,7 @@
   --font-heading: 'DM Sans', sans-serif;
   --font-body:    'DM Sans', sans-serif;
   --font-brand:   'Manrope', sans-serif;
+  /* --font-ui removed — all UI text uses DM Sans (--font-body) */
 
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT SIZES (px)
@@ -176,6 +177,10 @@
   --filter-icon-nav-selected:
     brightness(0) saturate(100%) invert(28%) sepia(84%)
     saturate(1180%) hue-rotate(8deg) brightness(99%) contrast(108%);
+  --filter-icon-close-default:
+    brightness(0) opacity(0.55);
+  --filter-icon-close-hover:
+    brightness(0) opacity(0.87);
 
   /* ─────────────────────────────────────────────
    * SPACING SCALE  (4px base grid)
