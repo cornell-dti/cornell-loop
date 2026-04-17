@@ -75,7 +75,7 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
    * Source: Figma Frame93 (node 383:415)
    */
   secondary:
-    'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-black)] ' +
+    'bg-[var(--color-surface)] border border-[var(--color-neutral-500)] text-[var(--color-neutral-700)] ' +
     'hover:bg-[var(--color-surface-subtle)] ' +
     'active:bg-[var(--color-border)] ' +
     'focus-visible:outline-[var(--color-neutral-900)] ' +

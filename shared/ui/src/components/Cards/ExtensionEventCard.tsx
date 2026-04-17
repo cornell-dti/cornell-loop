@@ -49,12 +49,12 @@ export { DateBadge };
 
 const BODY2_SEMIBOLD =
   'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
+  'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
   'tracking-[var(--letter-spacing-body2)]';
 
 const BODY3 =
   'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
+  'text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
   'tracking-[var(--letter-spacing-body3)]';
 
 // DateBadge, ThumbnailVariant, and DateBadgeProps are re-exported above
@@ -266,7 +266,7 @@ export function ExtensionEventCard({
                 'size-full flex items-center justify-center ' +
                 'bg-[var(--color-secondary-400)] ' +
                 'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[var(--font-size-body3)] text-[var(--color-secondary-900)]'
+                'text-[length:var(--font-size-body3)] text-[color:var(--color-secondary-900)]'
               }
             >
               {orgName.charAt(0).toUpperCase()}

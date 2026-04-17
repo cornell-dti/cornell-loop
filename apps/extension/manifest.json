@@ -28,7 +28,6 @@
         "https://calendar.google.com/*"
       ],
       "js": ["src/content.tsx"],
-      "css": ["src/content.css"],
       "run_at": "document_idle"
     }
   ],
