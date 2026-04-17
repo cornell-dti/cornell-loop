@@ -75,7 +75,6 @@
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT FAMILIES
    * Primary typeface: DM Sans (headings + body copy)
-   * Secondary typeface: Inter (UI labels, metadata)
    * Brand wordmark: Manrope (sidebar logo)
    * ───────────────────────────────────────────── */
   --font-heading: 'DM Sans', sans-serif;
