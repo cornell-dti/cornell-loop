@@ -23,11 +23,11 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import NewspaperIcon from '../assets/newspaper-outline.svg?react';
+import { Newspaper } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type ThumbnailVariant = 'date' | 'news';
+export type ThumbnailVariant = "date" | "news";
 
 export interface DateBadgeProps {
   /** Controls which content fills the badge. Defaults to "date". */
@@ -42,7 +42,7 @@ export interface DateBadgeProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function DateBadge({
-  variant = 'date',
+  variant = "date",
   day,
   month,
   className,
@@ -50,15 +50,15 @@ export function DateBadge({
   return (
     <div
       className={[
-        'relative overflow-hidden shrink-0',
-        'size-[var(--size-date-badge)]',
-        'rounded-[var(--space-1)]',
-        '[border:1.5px_solid_var(--color-primary-700)]',
-        'bg-[var(--color-primary-700)]',
+        "relative shrink-0 overflow-hidden",
+        "size-[var(--size-date-badge)]",
+        "rounded-[var(--space-1)]",
+        "[border:1.5px_solid_var(--color-primary-700)]",
+        "bg-[var(--color-primary-700)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
     >
       {/*
        * Cream body — extends 1.5px beyond the padding edge on top/bottom/right
@@ -67,13 +67,13 @@ export function DateBadge({
        * overflow-hidden on the parent clips everything to the border-box boundary.
        */}
       <div
-        className="absolute top-[-1.5px] bottom-[-1.5px] right-[-1.5px] bg-[var(--color-primary-400)]"
-        style={{ left: 'var(--space-1)' }}
+        className="absolute top-[-1.5px] right-[-1.5px] bottom-[-1.5px] bg-[var(--color-primary-400)]"
+        style={{ left: "var(--space-1)" }}
         aria-hidden="true"
       />
 
       {/* ── "date" variant ── */}
-      {variant === 'date' && (
+      {variant === "date" && (
         /*
          * justify-center with no pb offset → true vertical centre of the 55×55 badge.
          * Both spans use leading-none (line-height: 1) so line-boxes match glyph
@@ -83,31 +83,31 @@ export function DateBadge({
           {/* Day number — Figma: DM Sans Regular 28px, tracking -1px */}
           <span
             className={[
-              'font-[family-name:var(--font-body)] font-normal',
-              'text-[1.75rem] leading-none tracking-[var(--letter-spacing-sub1)]',
-              'text-[var(--color-neutral-900)] whitespace-nowrap',
-            ].join(' ')}
+              "font-[family-name:var(--font-body)] font-normal",
+              "text-[1.75rem] leading-none tracking-[var(--letter-spacing-sub1)]",
+              "whitespace-nowrap text-[color:var(--color-neutral-900)]",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            {day ?? '–'}
+            {day ?? "–"}
           </span>
 
           {/* Month — Figma: DM Sans 12px, centre-aligned, tracking -0.5px */}
           <span
             className={[
-              'font-[family-name:var(--font-body)] font-normal leading-none',
-              'text-[length:var(--font-size-body3)] tracking-[var(--letter-spacing-body3)]',
-              'text-[var(--color-neutral-900)] text-center whitespace-nowrap',
-            ].join(' ')}
+              "font-[family-name:var(--font-body)] leading-none font-normal",
+              "text-[length:var(--font-size-body3)] tracking-[var(--letter-spacing-body3)]",
+              "text-center whitespace-nowrap text-[color:var(--color-neutral-900)]",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            {month ?? ''}
+            {month ?? ""}
           </span>
         </div>
       )}
 
       {/* ── "news" variant ── */}
-      {variant === 'news' && (
+      {variant === "news" && (
         /*
          * Icon centred within the cream area only (not the full frame).
          * Left edge matches the cream layer's left edge (--space-1 = 4px orange strip),
@@ -115,11 +115,12 @@ export function DateBadge({
          */
         <div
           className="absolute top-0 bottom-0 right-0 z-10 flex items-center justify-center"
-          style={{ left: 'var(--space-1)' }}
+          style={{ left: "var(--space-1)" }}
         >
-          <NewspaperIcon
+          <Newspaper
             aria-hidden="true"
-            className="size-[1.875rem]"
+            size={30}
+            className="text-[color:var(--color-neutral-900)]"
           />
         </div>
       )}

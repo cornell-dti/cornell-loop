@@ -25,7 +25,7 @@ import { useRef, useState, useLayoutEffect, type ComponentPropsWithoutRef } from
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type ToggleSize = 'compact' | 'default';
+export type ToggleSize = "compact" | "default";
 
 export interface ToggleOption {
   /** The value identifier for this option. */
@@ -34,7 +34,10 @@ export interface ToggleOption {
   label: string;
 }
 
-export interface ToggleProps extends Omit<ComponentPropsWithoutRef<'div'>, 'onChange'> {
+export interface ToggleProps extends Omit<
+  ComponentPropsWithoutRef<"div">,
+  "onChange"
+> {
   /**
    * Ordered list of options to render as tabs.
    * Accepts either plain strings (used as both value and label)
@@ -65,8 +68,8 @@ const CONTAINER_BASE =
   'overflow-hidden';
 
 const CONTAINER_SIZE: Record<ToggleSize, string> = {
-  compact: 'gap-[var(--space-2)]',   /* 8px  — Figma Extension toggle */
-  default: 'gap-[var(--space-8)]',   /* 32px — Figma Desktop  toggle  */
+  compact: "gap-[var(--space-2)]" /* 8px  — Figma Extension toggle */,
+  default: "gap-[var(--space-8)]" /* 32px — Figma Desktop  toggle  */,
 };
 
 const OPTION_BASE =
@@ -88,7 +91,7 @@ const OPTION_INACTIVE = 'rounded-full text-[var(--color-text-secondary)] hover:t
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function normalise(opt: string | ToggleOption): ToggleOption {
-  return typeof opt === 'string' ? { value: opt, label: opt } : opt;
+  return typeof opt === "string" ? { value: opt, label: opt } : opt;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -97,7 +100,7 @@ export function Toggle({
   options,
   value,
   onChange,
-  size = 'default',
+  size = "default",
   className,
   ...rest
 }: ToggleProps) {
@@ -127,7 +130,7 @@ export function Toggle({
       role="tablist"
       className={[CONTAINER_BASE, CONTAINER_SIZE[size], className]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* Sliding orange pill — absolutely positioned, transitions on left/width */}
