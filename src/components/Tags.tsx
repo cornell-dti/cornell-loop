@@ -54,7 +54,7 @@ const BASE_CLASSES =
   'px-[var(--space-3)] py-[var(--space-0-5)] ' +
   'rounded-[var(--radius-input)] ' +
   'font-[family-name:var(--font-body)] font-medium ' +
-  'text-[var(--font-size-body2)] leading-[var(--space-6)] ' +
+  'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
   'tracking-[var(--letter-spacing-body2)] ' +
   'text-[var(--color-neutral-700)] ' +
   'whitespace-nowrap select-none transition-colors duration-150';
@@ -74,10 +74,13 @@ const BASE_CLASSES =
  * background transition is handled naturally by CSS hover without special-casing.
  */
 const COLOR_CLASSES: Record<TagColor, string> = {
-  neutral:
-    'bg-[var(--color-neutral-200)] hover:bg-[var(--color-neutral-300)]',
-  blue:
-    'bg-[var(--color-secondary-300)] hover:bg-[var(--color-secondary-400)]',
+  neutral: 'bg-[var(--color-neutral-200)]',
+  blue:    'bg-[var(--color-secondary-300)]',
+};
+
+const COLOR_HOVER_CLASSES: Record<TagColor, string> = {
+  neutral: 'hover:bg-[var(--color-neutral-300)]',
+  blue:    'hover:bg-[var(--color-secondary-400)]',
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -92,7 +95,7 @@ export function Tag({
 }: TagProps) {
   return (
     <span
-      className={[BASE_CLASSES, COLOR_CLASSES[color], className]
+      className={[BASE_CLASSES, COLOR_CLASSES[color], !onDismiss && COLOR_HOVER_CLASSES[color], className]
         .filter(Boolean)
         .join(' ')}
       style={{ fontVariationSettings: "'opsz' 14" }}
@@ -114,8 +117,7 @@ export function Tag({
           onClick={onDismiss}
           className={
             'group inline-flex items-center justify-center ' +
-            'size-[var(--space-3)] ' +
-            'rounded-[var(--radius-input)] ' +
+            'size-[var(--space-4)] rounded-full ' +
             'cursor-pointer ' +
             'focus-visible:outline-2 focus-visible:outline-offset-1 ' +
             'focus-visible:outline-[var(--color-neutral-700)]'
@@ -124,10 +126,9 @@ export function Tag({
           <CloseIcon
             aria-hidden="true"
             className={
-              'size-full ' +
-              '[filter:var(--filter-icon-close-default)] ' +
-              'group-hover:[filter:var(--filter-icon-close-hover)] ' +
-              'transition-[filter] duration-150'
+              'size-[var(--space-3)] ' +
+              'opacity-60 group-hover:opacity-100 ' +
+              'transition-opacity duration-150'
             }
           />
         </button>

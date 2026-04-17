@@ -37,9 +37,10 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
+import { useState, type ComponentPropsWithoutRef } from 'react';
 import BookmarkIcon       from '../../assets/bookmark.svg?react';
 import BookmarkFilledIcon from '../../assets/bookmark-filled.svg?react';
+import { Avatar } from '../Avatar';
 import { DateBadge } from '../DateBadge';
 import type { ThumbnailVariant } from '../DateBadge';
 export type { ThumbnailVariant, DateBadgeProps } from '../DateBadge';
@@ -49,12 +50,12 @@ export { DateBadge };
 
 const BODY2_SEMIBOLD =
   'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
+  'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
   'tracking-[var(--letter-spacing-body2)]';
 
 const BODY3 =
   'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
+  'text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
   'tracking-[var(--letter-spacing-body3)]';
 
 // DateBadge, ThumbnailVariant, and DateBadgeProps are re-exported above
@@ -103,11 +104,14 @@ export function ExtensionEventRow({
   month,
   title,
   description,
-  bookmarked = false,
+  bookmarked: bookmarkedProp = false,
   onBookmark,
   className,
   ...rest
 }: ExtensionEventRowProps) {
+  const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
+  const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
+  const handleBookmark = onBookmark ?? (() => setInternalBookmarked(b => !b));
   return (
     /*
      * Interactive states — Figma property1 "Default" | "hover":
@@ -165,23 +169,19 @@ export function ExtensionEventRow({
         aria-pressed={bookmarked}
         onClick={(e) => {
           e.stopPropagation();
-          onBookmark?.();
+          handleBookmark();
         }}
         className="group shrink-0 size-[var(--space-6)] cursor-pointer"
       >
         {bookmarked ? (
           <BookmarkFilledIcon
             aria-hidden="true"
-            className="size-full"
+            className="size-full transition-opacity duration-150 group-hover:opacity-70"
           />
         ) : (
           <BookmarkIcon
             aria-hidden="true"
-            className={
-              'size-full ' +
-              'group-hover:[filter:var(--filter-icon-close-default)] ' +
-              'transition-[filter] duration-150'
-            }
+            className="size-full transition-[filter] duration-150 group-hover:[filter:var(--filter-icon-nav)]"
           />
         )}
       </button>
@@ -244,44 +244,7 @@ export function ExtensionEventCard({
       {...rest}
     >
       {/* ── Org header ── */}
-      <div className="flex items-center gap-[var(--space-2)] px-[var(--space-1-5)]">
-        {/* Org avatar — 32 px circle */}
-        <div
-          className={[
-            'relative shrink-0 size-[var(--space-8)]',
-            'rounded-full overflow-hidden',
-            'bg-[var(--color-surface-subtle)]',
-          ].join(' ')}
-        >
-          {orgAvatarUrl ? (
-            <img
-              src={orgAvatarUrl}
-              alt={orgName}
-              className="size-full object-cover"
-            />
-          ) : (
-            /* Initials fallback */
-            <span
-              className={
-                'size-full flex items-center justify-center ' +
-                'bg-[var(--color-secondary-400)] ' +
-                'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[var(--font-size-body3)] text-[var(--color-secondary-900)]'
-              }
-            >
-              {orgName.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
-
-        {/* Org name — Figma: DM Sans SemiBold 14px, Neutral/700 */}
-        <span
-          className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] whitespace-nowrap'}
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          {orgName}
-        </span>
-      </div>
+      <Avatar avatars={[{ name: orgName, src: orgAvatarUrl }]} />
 
       {/* ── Event rows ── */}
       {events.length > 0 && (

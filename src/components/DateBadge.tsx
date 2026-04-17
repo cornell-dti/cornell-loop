@@ -109,10 +109,14 @@ export function DateBadge({
       {/* ── "news" variant ── */}
       {variant === 'news' && (
         /*
-         * Newspaper icon centred inside the badge.
-         * Figma: size-[29.737px], approximated as 1.875rem (≈ 30px).
+         * Icon centred within the cream area only (not the full frame).
+         * Left edge matches the cream layer's left edge (--space-1 = 4px orange strip),
+         * so the icon is optically centred between the orange strip and the right edge.
          */
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
+        <div
+          className="absolute top-0 bottom-0 right-0 z-10 flex items-center justify-center"
+          style={{ left: 'var(--space-1)' }}
+        >
           <NewspaperIcon
             aria-hidden="true"
             className="size-[1.875rem]"

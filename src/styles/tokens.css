@@ -137,7 +137,7 @@
               0px 0px 1px 0px rgba(33, 37, 41, 0.32);
   --shadow-2: 0px 2px 2px 0px rgba(33, 37, 41, 0.06),
               0px 0px 1px 0px rgba(33, 37, 41, 0.08);
-  --shadow-primary-glow: 0px 0px 8px 0px rgba(211, 89, 16, 0.6); /* primary button press/hover glow; from Figma */
+  --shadow-primary-glow: none; /* primary button press/hover glow */
 
   /* ─────────────────────────────────────────────
    * BORDER RADIUS

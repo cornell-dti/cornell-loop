@@ -16,6 +16,11 @@ import { SideBar }      from '../components/SideBar';
 import type { SideBarItemId } from '../components/SideBar';
 import { LoopLogo }     from '../components/Logo';
 
+import BookmarkIcon       from '../assets/bookmark.svg?react';
+import BookmarkFilledIcon from '../assets/bookmark-filled.svg?react';
+import CloseTagsIcon      from '../assets/close_tags.svg?react';
+import CloseSearchIcon    from '../assets/close_search.svg?react';
+
 import { DashboardEventCard }  from '../components/Cards/DashboardEventCard';
 import { DashboardPost }       from '../components/Cards/DashboardPost';
 import { LoopSummary }         from '../components/Cards/LoopSummary';
@@ -328,6 +333,26 @@ const SAMPLE_RESULT_GROUPS = [
   },
 ];
 
+// ─── BookmarkToggle ───────────────────────────────────────────────────────────
+
+function BookmarkToggle() {
+  const [filled, setFilled] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={filled ? 'Remove bookmark' : 'Bookmark'}
+      onClick={() => setFilled(f => !f)}
+      className="group inline-flex cursor-pointer bg-transparent border-none p-0"
+    >
+      {filled ? (
+        <BookmarkFilledIcon className="size-[var(--space-6)] transition-opacity duration-150 group-hover:opacity-70" />
+      ) : (
+        <BookmarkIcon className="size-[var(--space-6)] transition-[filter] duration-150 group-hover:[filter:var(--filter-icon-nav)]" />
+      )}
+    </button>
+  );
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function DesignSystem() {
@@ -335,6 +360,7 @@ export default function DesignSystem() {
   const [bookmarked, setBookmarked] = useState(false);
   const [toggleCompact, setToggleCompact] = useState('Feed');
   const [toggleDefault, setToggleDefault] = useState('Feed');
+  const [toggleThreeOptions, setToggleThreeOptions] = useState('Home');
 
   return (
     <div
@@ -491,9 +517,8 @@ export default function DesignSystem() {
         </DS_Row>
 
         <DS_Row label="Disabled state">
-          <Button variant="primary"   size="md" disabled>Primary disabled</Button>
-          <Button variant="secondary" size="md" disabled>Secondary disabled</Button>
-          <Button variant="primary"   size="cta" disabled>CTA disabled</Button>
+          <Button variant="primary" size="md" disabled>Disabled</Button>
+          <Button variant="primary" size="cta" disabled>CTA disabled</Button>
         </DS_Row>
       </DS_Section>
 
@@ -522,8 +547,8 @@ export default function DesignSystem() {
         <DS_Row label="Three options">
           <Toggle
             options={['Home', 'Bookmarks', 'Profile']}
-            value={toggleDefault}
-            onChange={setToggleDefault}
+            value={toggleThreeOptions}
+            onChange={setToggleThreeOptions}
             size="compact"
           />
         </DS_Row>
@@ -550,7 +575,29 @@ export default function DesignSystem() {
       </DS_Section>
 
       {/* ════════════════════════════════════════
-          7. SEARCH BAR
+          7. ICONS
+         ════════════════════════════════════════ */}
+      <DS_Section id="icons" title="Icons">
+        <DS_Row label="Bookmark">
+          <BookmarkToggle />
+        </DS_Row>
+
+        <DS_Row label="Close / Dismiss">
+          <div className="flex items-center gap-[var(--space-6)]">
+            <div className="flex flex-col items-center gap-[var(--space-2)]">
+              <CloseTagsIcon className="size-[var(--space-4)]" />
+              <DS_Label>Tags</DS_Label>
+            </div>
+            <div className="flex flex-col items-center gap-[var(--space-2)]">
+              <CloseSearchIcon className="size-[var(--space-4)] [filter:var(--filter-icon-nav)]" />
+              <DS_Label>Search</DS_Label>
+            </div>
+          </div>
+        </DS_Row>
+      </DS_Section>
+
+      {/* ════════════════════════════════════════
+          8. SEARCH BAR
          ════════════════════════════════════════ */}
       <DS_Section id="searchbar" title="Search Bar">
         <DS_Row label="Blank (no value)">
@@ -577,19 +624,19 @@ export default function DesignSystem() {
          ════════════════════════════════════════ */}
       <DS_Section id="avatar" title="Avatar">
         <DS_Row label="Single — with image URL">
-          <Avatar avatars={[{ src: 'https://i.pravatar.cc/64?img=1', name: 'Alice Chen' }]} />
+          <Avatar avatars={[{ src: 'https://i.pravatar.cc/64?img=1', name: 'DTI' }]} />
         </DS_Row>
 
         <DS_Row label="Single — fallback (no src)">
-          <Avatar avatars={[{ name: 'Bob Smith' }]} />
+          <Avatar avatars={[{ name: 'WICC' }]} />
         </DS_Row>
 
         <DS_Row label="Multiple — stacked (fallback icons)">
           <Avatar
             avatars={[
-              { name: 'CDS' },
-              { name: 'Cornell AI' },
-              { name: 'eLab' },
+              { name: 'DTI' },
+              { name: 'WICC' },
+              { name: 'DCC' },
             ]}
           />
         </DS_Row>
@@ -597,9 +644,9 @@ export default function DesignSystem() {
         <DS_Row label="Multiple — stacked (with images)">
           <Avatar
             avatars={[
-              { src: 'https://i.pravatar.cc/64?img=2', name: 'Alice' },
-              { src: 'https://i.pravatar.cc/64?img=3', name: 'Bob' },
-              { src: 'https://i.pravatar.cc/64?img=4', name: 'Carol' },
+              { src: 'https://i.pravatar.cc/64?img=2', name: 'DTI' },
+              { src: 'https://i.pravatar.cc/64?img=3', name: 'WICC' },
+              { src: 'https://i.pravatar.cc/64?img=4', name: 'DCC' },
             ]}
           />
         </DS_Row>

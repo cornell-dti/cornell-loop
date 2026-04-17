@@ -18,7 +18,7 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
+import { useState, type ComponentPropsWithoutRef } from 'react';
 import { Tag } from '../Tags';
 import type { TagColor } from '../Tags';
 import CalendarIcon       from '../../assets/calendar.svg?react';
@@ -81,11 +81,14 @@ export function DashboardEventCard({
   tags = [],
   onRsvp,
   onShare,
-  bookmarked = false,
+  bookmarked: bookmarkedProp = false,
   onBookmark,
   className,
   ...rest
 }: DashboardEventCardProps) {
+  const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
+  const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
+  const handleBookmark = onBookmark ?? (() => setInternalBookmarked(b => !b));
   return (
     <article
       className={[
@@ -150,22 +153,18 @@ export function DashboardEventCard({
               type="button"
               aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark event'}
               aria-pressed={bookmarked}
-              onClick={onBookmark}
+              onClick={handleBookmark}
               className="group size-[var(--space-4)] cursor-pointer"
             >
               {bookmarked ? (
                 <BookmarkFilledIcon
                   aria-hidden="true"
-                  className="size-full"
+                  className="size-full transition-opacity duration-150 group-hover:opacity-70"
                 />
               ) : (
                 <BookmarkIcon
                   aria-hidden="true"
-                  className={
-                    'size-full ' +
-                    'group-hover:[filter:var(--filter-icon-close-default)] ' +
-                    'transition-[filter] duration-150'
-                  }
+                  className="size-full transition-[filter] duration-150 group-hover:[filter:var(--filter-icon-nav)]"
                 />
               )}
             </button>

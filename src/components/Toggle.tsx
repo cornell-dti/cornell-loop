@@ -21,7 +21,7 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
+import { useRef, useState, useLayoutEffect, type ComponentPropsWithoutRef } from 'react';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -57,11 +57,12 @@ export interface ToggleProps extends Omit<ComponentPropsWithoutRef<'div'>, 'onCh
 // ─── Style constants ──────────────────────────────────────────────────────────
 
 const CONTAINER_BASE =
-  'inline-flex items-center ' +
+  'relative inline-flex items-center ' +
   'p-[var(--space-1-5)] ' +
   'bg-[var(--color-surface)] ' +
   'border border-[var(--color-border)] ' +
-  'rounded-[var(--radius-toggle)]';
+  'rounded-[var(--radius-toggle)] ' +
+  'overflow-hidden';
 
 const CONTAINER_SIZE: Record<ToggleSize, string> = {
   compact: 'gap-[var(--space-2)]',   /* 8px  — Figma Extension toggle */
@@ -69,29 +70,20 @@ const CONTAINER_SIZE: Record<ToggleSize, string> = {
 };
 
 const OPTION_BASE =
-  'flex-1 flex items-center justify-center ' +
+  'relative z-10 flex-1 flex items-center justify-center ' +
   'px-[var(--space-5)] ' +
   'font-[family-name:var(--font-body)] font-semibold ' +
   'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
   'tracking-[var(--letter-spacing-body2)] ' +
-  'whitespace-nowrap select-none cursor-pointer ' +
-  'transition-all duration-150';
+  'whitespace-nowrap select-none cursor-pointer';
 
 const OPTION_SIZE_PY: Record<ToggleSize, string> = {
-  compact: 'py-[var(--space-2)]',    /* 8px  — Figma Extension */
-  default: 'py-[var(--space-1-5)]',  /* 6px  — Figma Desktop  */
+  compact: 'py-[var(--space-2)]',    /* 8px */
+  default: 'py-[var(--space-2)]',    /* 8px */
 };
 
-const OPTION_ACTIVE =
-  'rounded-[var(--radius-button)] ' +
-  'bg-[var(--color-primary-700)] ' +
-  'text-[var(--color-white)] ' +
-  'shadow-[var(--shadow-1)]';
-
-const OPTION_INACTIVE =
-  'rounded-full ' +
-  'text-[var(--color-text-secondary)] ' +
-  'hover:text-[var(--color-text-default)]';
+const OPTION_ACTIVE   = 'rounded-[var(--radius-button)]';
+const OPTION_INACTIVE = 'rounded-full text-[var(--color-text-secondary)] hover:text-[var(--color-text-default)]';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,23 +103,53 @@ export function Toggle({
 }: ToggleProps) {
   const normalised = options.map(normalise);
 
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const [pill, setPill] = useState<{
+    left: number; top: number; width: number; height: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const activeIndex = normalised.findIndex(o => o.value === value);
+    const el = optionRefs.current[activeIndex];
+    if (!el) return;
+
+    setPill({
+      left:   el.offsetLeft,
+      top:    el.offsetTop,
+      width:  el.offsetWidth,
+      height: el.offsetHeight,
+    });
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div
       role="tablist"
-      className={[
-        CONTAINER_BASE,
-        CONTAINER_SIZE[size],
-        className,
-      ]
+      className={[CONTAINER_BASE, CONTAINER_SIZE[size], className]
         .filter(Boolean)
         .join(' ')}
       {...rest}
     >
-      {normalised.map((opt) => {
+      {/* Sliding orange pill — absolutely positioned, transitions on left/width */}
+      {pill && (
+        <span
+          aria-hidden
+          className="absolute rounded-[var(--radius-button)] bg-[var(--color-primary-700)] shadow-[var(--shadow-1)] pointer-events-none transition-[left,width] duration-200 ease-in-out"
+          style={{
+            left:   pill.left,
+            top:    pill.top,
+            width:  pill.width,
+            height: pill.height,
+          }}
+        />
+      )}
+
+      {normalised.map((opt, i) => {
         const isActive = opt.value === value;
         return (
           <button
             key={opt.value}
+            ref={el => { optionRefs.current[i] = el; }}
             type="button"
             role="tab"
             aria-selected={isActive}
@@ -137,7 +159,10 @@ export function Toggle({
               OPTION_SIZE_PY[size],
               isActive ? OPTION_ACTIVE : OPTION_INACTIVE,
             ].join(' ')}
-            style={{ fontVariationSettings: "'opsz' 14" }}
+            style={{
+              fontVariationSettings: "'opsz' 14",
+              ...(isActive ? { color: 'var(--color-white)' } : {}),
+            }}
           >
             {opt.label}
           </button>
