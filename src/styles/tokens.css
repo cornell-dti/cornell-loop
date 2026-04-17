@@ -10,7 +10,7 @@
    * ───────────────────────────────────────────── */
   --color-primary-900: #592100;
   --color-primary-800: #a74409;
-  --color-primary-700: #eb7128;  /* brand default */
+  --color-primary-700: #eb7128; /* brand default */
   --color-primary-hover: #d35910; /* interactive hover — between 700 and 800; from Figma button hover state */
   --color-primary-600: #ffa26b;
   --color-primary-500: #ffcaaa;
@@ -37,8 +37,8 @@
   --color-neutral-300: #dee2e6;
   --color-neutral-200: #edeff1;
   --color-neutral-100: #f8f9fa;
-  --color-black:       #000000;
-  --color-white:       #ffffff;
+  --color-black: #000000;
+  --color-white: #ffffff;
 
   /* ─────────────────────────────────────────────
    * TRANSPARENCY SCALE
@@ -47,30 +47,30 @@
    * the opacity utilities in your styling system.
    * ───────────────────────────────────────────── */
   --opacity-100: 1;
-  --opacity-80:  0.8;
-  --opacity-40:  0.4;
-  --opacity-8:   0.08;
-  --opacity-4:   0.04;
+  --opacity-80: 0.8;
+  --opacity-40: 0.4;
+  --opacity-8: 0.08;
+  --opacity-4: 0.04;
 
   /* ─────────────────────────────────────────────
    * SEMANTIC / ALIAS COLOUR TOKENS
    * Map high-level intent to palette values.
    * ───────────────────────────────────────────── */
-  --color-brand:        var(--color-primary-700);
-  --color-brand-light:  var(--color-primary-400);
-  --color-brand-dark:   var(--color-primary-900);
+  --color-brand: var(--color-primary-700);
+  --color-brand-light: var(--color-primary-400);
+  --color-brand-dark: var(--color-primary-900);
 
-  --color-text-default:   var(--color-neutral-900);
+  --color-text-default: var(--color-neutral-900);
   --color-text-secondary: var(--color-neutral-600);
-  --color-text-muted:     var(--color-neutral-500);
-  --color-text-inverse:   var(--color-white);
+  --color-text-muted: var(--color-neutral-500);
+  --color-text-inverse: var(--color-white);
 
-  --color-surface:        var(--color-white);
+  --color-surface: var(--color-white);
   --color-surface-subtle: var(--color-neutral-100);
   --color-surface-raised: var(--color-neutral-200);
 
-  --color-border:         var(--color-neutral-300);
-  --color-border-strong:  var(--color-neutral-400);
+  --color-border: var(--color-neutral-300);
+  --color-border-strong: var(--color-neutral-400);
 
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT FAMILIES
@@ -78,44 +78,44 @@
    * Secondary typeface: Inter (UI labels, metadata)
    * Brand wordmark: Manrope (sidebar logo)
    * ───────────────────────────────────────────── */
-  --font-heading: 'DM Sans', sans-serif;
-  --font-body:    'DM Sans', sans-serif;
-  --font-brand:   'Manrope', sans-serif;
+  --font-heading: "DM Sans", sans-serif;
+  --font-body: "DM Sans", sans-serif;
+  --font-brand: "Manrope", sans-serif;
 
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT SIZES (px)
    * ───────────────────────────────────────────── */
-  --font-size-wordmark: 2rem;         /* 32px — compact wordmark (sidebar "Loop" text); from Figma 31.9px */
+  --font-size-wordmark: 2rem; /* 32px — compact wordmark (sidebar "Loop" text); from Figma 31.9px */
   --font-size-wordmark-display: 3.4375rem; /* 55px — display wordmark (Logo section); from Figma 55.07px */
-  --font-size-h1:     3.75rem;   /* 60px */
-  --font-size-h2:     3rem;      /* 48px */
-  --font-size-h3:     2.5rem;    /* 40px */
-  --font-size-sub1:   1.75rem;   /* 28px */
-  --font-size-sub2:   1.125rem;  /* 18px */
-  --font-size-body1:  1.125rem;  /* 18px */
-  --font-size-body2:  0.875rem;  /* 14px */
-  --font-size-body3:  0.75rem;   /* 12px */
+  --font-size-h1: 3.75rem; /* 60px */
+  --font-size-h2: 3rem; /* 48px */
+  --font-size-h3: 2.5rem; /* 40px */
+  --font-size-sub1: 1.75rem; /* 28px */
+  --font-size-sub2: 1.125rem; /* 18px */
+  --font-size-body1: 1.125rem; /* 18px */
+  --font-size-body2: 0.875rem; /* 14px */
+  --font-size-body3: 0.75rem; /* 12px */
 
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — LINE HEIGHTS
    * ───────────────────────────────────────────── */
-  --line-height-h1:    4.5rem;    /* 72px */
-  --line-height-h2:    4rem;      /* 64px */
-  --line-height-h3:    3rem;      /* 48px */
-  --line-height-sub1:  normal;
-  --line-height-sub2:  1.75rem;   /* 28px */
-  --line-height-body1: 1.75rem;   /* 28px */
+  --line-height-h1: 4.5rem; /* 72px */
+  --line-height-h2: 4rem; /* 64px */
+  --line-height-h3: 3rem; /* 48px */
+  --line-height-sub1: normal;
+  --line-height-sub2: 1.75rem; /* 28px */
+  --line-height-body1: 1.75rem; /* 28px */
   --line-height-body2: 1.2625rem; /* 20.2px */
   --line-height-body3: normal;
 
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — LETTER SPACING
    * ───────────────────────────────────────────── */
-  --letter-spacing-h1:    -0.9px;
-  --letter-spacing-h2:    -0.5px;
-  --letter-spacing-h3:    -1px;
-  --letter-spacing-sub1:  -1px;
-  --letter-spacing-sub2:  -1px;
+  --letter-spacing-h1: -0.9px;
+  --letter-spacing-h2: -0.5px;
+  --letter-spacing-h3: -1px;
+  --letter-spacing-sub1: -1px;
+  --letter-spacing-sub2: -1px;
   --letter-spacing-body1: -0.5px;
   --letter-spacing-body2: -0.5px;
   --letter-spacing-body3: -0.5px;
@@ -123,29 +123,31 @@
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT WEIGHTS
    * ───────────────────────────────────────────── */
-  --font-weight-regular:  400;
-  --font-weight-medium:   500;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
   --font-weight-semibold: 600;
-  --font-weight-bold:     700;
+  --font-weight-bold: 700;
 
   /* ─────────────────────────────────────────────
    * SHADOWS
    * Shadow 1 — stronger, for elevated cards/modals
    * Shadow 2 — subtle, for resting surfaces/inputs
    * ───────────────────────────────────────────── */
-  --shadow-1: 0px 3px 6px 0px rgba(33, 37, 41, 0.15),
-              0px 0px 1px 0px rgba(33, 37, 41, 0.32);
-  --shadow-2: 0px 2px 2px 0px rgba(33, 37, 41, 0.06),
-              0px 0px 1px 0px rgba(33, 37, 41, 0.08);
-  --shadow-primary-glow: none; /* primary button press/hover glow */
+  --shadow-1:
+    0px 3px 6px 0px rgba(33, 37, 41, 0.15),
+    0px 0px 1px 0px rgba(33, 37, 41, 0.32);
+  --shadow-2:
+    0px 2px 2px 0px rgba(33, 37, 41, 0.06),
+    0px 0px 1px 0px rgba(33, 37, 41, 0.08);
+  --shadow-primary-glow: none;
 
   /* ─────────────────────────────────────────────
    * BORDER RADIUS
    * ───────────────────────────────────────────── */
-  --radius-card:   16px;  /* cards, panels */
-  --radius-button: 1rem;  /* 16px — button border-radius; from Figma buttons (node 381:1681) */
+  --radius-card: 16px; /* cards, panels */
+  --radius-button: 1rem; /* 16px — button border-radius; from Figma buttons (node 381:1681) */
   --radius-toggle: 1.25rem; /* 20px — toggle pill container; from Figma toggle (node 382:519) */
-  --radius-input:   8px;  /* inputs */
+  --radius-input: 8px; /* inputs */
 
   /* ─────────────────────────────────────────────
    * SEMANTIC LINK COLOUR
@@ -157,13 +159,13 @@
   /* ─────────────────────────────────────────────
    * LAYOUT
    * ───────────────────────────────────────────── */
-  --sidebar-width:       215px;   /* from Figma "Side bar" component */
-  --search-panel-width:  334px;   /* from Figma "Search Panel" component (node 390:526) */
+  --sidebar-width: 215px; /* from Figma "Side bar" component */
+  --search-panel-width: 334px; /* from Figma "Search Panel" component (node 390:526) */
 
   /* Component-specific fixed sizes not on the 4px grid */
-  --size-date-badge:   3.4375rem; /* 55px  — calendar date widget in RSVP items */
-  --size-club-avatar:  3.5rem;    /* 56px  ≈ Figma 56.7px — club logo circle */
-  --font-size-badge:   0.625rem;  /* 10px  — notification count badge (Figma node 506:10236) */
+  --size-date-badge: 3.4375rem; /* 55px  — calendar date widget in RSVP items */
+  --size-club-avatar: 3.5rem; /* 56px  ≈ Figma 56.7px — club logo circle */
+  --font-size-badge: 0.625rem; /* 10px  — notification count badge (Figma node 506:10236) */
 
   /* ─────────────────────────────────────────────
    * ICON FILTERS
@@ -171,27 +173,27 @@
    * --filter-icon-nav:          normalises any SVG stroke to ~Neutral/900 (#212529)
    * --filter-icon-nav-selected: recolours to ~Primary/800 (#a74409) for active nav items
    * ───────────────────────────────────────────── */
-  --filter-icon-nav:
-    brightness(0) opacity(0.87);
-  --filter-icon-nav-selected:
-    brightness(0) saturate(100%) invert(28%) sepia(84%)
-    saturate(1180%) hue-rotate(8deg) brightness(99%) contrast(108%);
+  --filter-icon-nav: brightness(0) opacity(0.87);
+  --filter-icon-nav-selected: brightness(0) saturate(100%) invert(28%)
+    sepia(84%) saturate(1180%) hue-rotate(8deg) brightness(99%) contrast(108%);
+  /* Darkens Neutral/500 (#ADB5BD) stroke icons to ~Neutral/700 (#495057) on hover */
+  --filter-icon-close-default: brightness(0) opacity(0.65);
 
   /* ─────────────────────────────────────────────
    * SPACING SCALE  (4px base grid)
    * Observed from Figma layout measurements.
    * ───────────────────────────────────────────── */
   --space-0-5: 0.125rem; /*  2px — tag vertical padding; from Figma Tag py */
-  --space-1:   0.25rem;  /*  4px */
+  --space-1: 0.25rem; /*  4px */
   --space-1-5: 0.375rem; /*  6px — button vertical padding (sm/md); from Figma button py */
-  --space-2:   0.5rem;   /*  8px */
-  --space-3:  0.75rem;  /* 12px */
-  --space-4:  1rem;     /* 16px */
-  --space-5:  1.25rem;  /* 20px */
-  --space-6:  1.5rem;   /* 24px */
-  --space-8:  2rem;     /* 32px */
-  --space-9:  2.25rem;  /* 36px */
-  --space-10: 2.5rem;   /* 40px */
-  --space-12: 3rem;     /* 48px */
-  --space-16: 4rem;     /* 64px */
+  --space-2: 0.5rem; /*  8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-9: 2.25rem; /* 36px */
+  --space-10: 2.5rem; /* 40px */
+  --space-12: 3rem; /* 48px */
+  --space-16: 4rem; /* 64px */
 }
