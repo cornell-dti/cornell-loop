@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+@import '@app/ui/styles/tokens.css';
+
+/* ─── Base reset / global defaults ──────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-body);
+  font-size: var(--font-size-body1);
+  line-height: var(--line-height-body1);
+  color: var(--color-text-default);
+  background-color: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100vh;
+}
