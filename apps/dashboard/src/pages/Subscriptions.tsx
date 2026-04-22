@@ -28,9 +28,9 @@
  */
 
 import type { ComponentPropsWithoutRef } from 'react';
-import { SideBar } from './SideBar';
-import type { SideBarItemId } from './SideBar';
-import { SearchBar } from './SearchBar';
+import { SideBar } from '@app/ui';
+import type { SideBarItemId } from '@app/ui';
+import { SearchBar } from '@app/ui';
 import StarIcon from '../assets/star.svg?react';
 
 // ─── Shared typography class strings ─────────────────────────────────────────
