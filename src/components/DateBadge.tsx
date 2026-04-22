@@ -114,7 +114,7 @@ export function DateBadge({
          * so the icon is optically centred between the orange strip and the right edge.
          */
         <div
-          className="absolute top-0 bottom-0 right-0 z-10 flex items-center justify-center"
+          className="absolute top-0 right-0 bottom-0 z-10 flex items-center justify-center"
           style={{ left: "var(--space-1)" }}
         >
           <Newspaper

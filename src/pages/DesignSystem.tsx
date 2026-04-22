@@ -17,10 +17,10 @@ import { SideBar } from "../components/SideBar";
 import type { SideBarItemId } from "../components/SideBar";
 import { LoopLogo } from "../components/Logo";
 
-import BookmarkIcon       from '../assets/bookmark.svg?react';
-import BookmarkFilledIcon from '../assets/bookmark-filled.svg?react';
-import CloseTagsIcon      from '../assets/close_tags.svg?react';
-import CloseSearchIcon    from '../assets/close_search.svg?react';
+import BookmarkIcon from "../assets/bookmark.svg?react";
+import BookmarkFilledIcon from "../assets/bookmark-filled.svg?react";
+import CloseTagsIcon from "../assets/close_tags.svg?react";
+import CloseSearchIcon from "../assets/close_search.svg?react";
 
 import { DashboardEventCard } from "../components/Cards/DashboardEventCard";
 import { DashboardPost } from "../components/Cards/DashboardPost";
@@ -383,9 +383,9 @@ function BookmarkToggle() {
   return (
     <button
       type="button"
-      aria-label={filled ? 'Remove bookmark' : 'Bookmark'}
-      onClick={() => setFilled(f => !f)}
-      className="group inline-flex cursor-pointer bg-transparent border-none p-0"
+      aria-label={filled ? "Remove bookmark" : "Bookmark"}
+      onClick={() => setFilled((f) => !f)}
+      className="group inline-flex cursor-pointer border-none bg-transparent p-0"
     >
       {filled ? (
         <BookmarkFilledIcon className="size-[var(--space-6)] transition-opacity duration-150 group-hover:opacity-70" />
@@ -410,9 +410,9 @@ export default function DesignSystem() {
   const [following, setFollowing] = useState(true);
   const [cdsFollowing, setCdsFollowing] = useState(true);
   const [cornellAiFollowing, setCornellAiFollowing] = useState(false);
-  const [toggleCompact, setToggleCompact] = useState('Feed');
-  const [toggleDefault, setToggleDefault] = useState('Feed');
-  const [toggleThreeOptions, setToggleThreeOptions] = useState('Home');
+  const [toggleCompact, setToggleCompact] = useState("Feed");
+  const [toggleDefault, setToggleDefault] = useState("Feed");
+  const [toggleThreeOptions, setToggleThreeOptions] = useState("Home");
   const [dropdownValue, setDropdownValue] = useState<string>("");
 
   return (
@@ -582,8 +582,12 @@ export default function DesignSystem() {
         </DS_Row>
 
         <DS_Row label="Disabled state">
-          <Button variant="primary" size="md" disabled>Disabled</Button>
-          <Button variant="primary" size="cta" disabled>CTA disabled</Button>
+          <Button variant="primary" size="md" disabled>
+            Disabled
+          </Button>
+          <Button variant="primary" size="cta" disabled>
+            CTA disabled
+          </Button>
         </DS_Row>
       </DS_Section>
 
@@ -611,7 +615,7 @@ export default function DesignSystem() {
 
         <DS_Row label="Three options">
           <Toggle
-            options={['Home', 'Bookmarks', 'Profile']}
+            options={["Home", "Bookmarks", "Profile"]}
             value={toggleThreeOptions}
             onChange={setToggleThreeOptions}
             size="compact"
@@ -693,29 +697,27 @@ export default function DesignSystem() {
          ════════════════════════════════════════ */}
       <DS_Section id="avatar" title="Avatar">
         <DS_Row label="Single — with image URL">
-          <Avatar avatars={[{ src: 'https://i.pravatar.cc/64?img=1', name: 'DTI' }]} />
+          <Avatar
+            avatars={[{ src: "https://i.pravatar.cc/64?img=1", name: "DTI" }]}
+          />
         </DS_Row>
 
         <DS_Row label="Single — fallback (no src)">
-          <Avatar avatars={[{ name: 'WICC' }]} />
+          <Avatar avatars={[{ name: "WICC" }]} />
         </DS_Row>
 
         <DS_Row label="Multiple — stacked (fallback icons)">
           <Avatar
-            avatars={[
-              { name: 'DTI' },
-              { name: 'WICC' },
-              { name: 'DCC' },
-            ]}
+            avatars={[{ name: "DTI" }, { name: "WICC" }, { name: "DCC" }]}
           />
         </DS_Row>
 
         <DS_Row label="Multiple — stacked (with images)">
           <Avatar
             avatars={[
-              { src: 'https://i.pravatar.cc/64?img=2', name: 'DTI' },
-              { src: 'https://i.pravatar.cc/64?img=3', name: 'WICC' },
-              { src: 'https://i.pravatar.cc/64?img=4', name: 'DCC' },
+              { src: "https://i.pravatar.cc/64?img=2", name: "DTI" },
+              { src: "https://i.pravatar.cc/64?img=3", name: "WICC" },
+              { src: "https://i.pravatar.cc/64?img=4", name: "DCC" },
             ]}
           />
         </DS_Row>
