@@ -1,0 +1,92 @@
+[
+  {
+    "listserv": "ACSU",
+    "host": "ACSU",
+    "club": "ACSU",
+    "title": "ACSU Student Faculty Luncheon",
+    "description": "Connect with CS professors and students over lunch with other CS students.",
+    "date": "2026-03-13",
+    "location": "CIS 250 (Young Conference Room)",
+    "tags": ["networking", "cs", "faculty"]
+  },
+  {
+    "listserv": "ACSU",
+    "host": "ACSU",
+    "club": "ACSU",
+    "title": "1:1 Faculty Coffee Chat Week",
+    "description": "Sign up for informal 1:1 chats with professors about research opportunities, careers, and advice.",
+    "date": "2026-03-09",
+    "location": "Various campus locations",
+    "tags": ["research", "mentorship", "coffee"]
+  },
+  {
+    "listserv": "ACSU",
+    "host": "Cornell AppDev & Ramp",
+    "club": "Cornell AppDev",
+    "title": "AppDev x Ramp - HACK→HIRED",
+    "description": "One-day AI-focused hackathon with workshops, prizes, and a chance to interview for a Fall SWE internship at Ramp.",
+    "date": "2026-03-14",
+    "location": "eHub",
+    "tags": ["hackathon", "career", "recruiting", "ai"]
+  },
+  {
+    "listserv": "ACSU",
+    "host": "Citadel GQS",
+    "club": "",
+    "title": "Citadel Global Quantitative Strategies Tech Talk",
+    "description": "Tech talk on quantitative trading careers and how your research skills translate to GQS at Citadel.",
+    "date": "2026-03-17",
+    "location": "Upson 142",
+    "tags": ["finance", "tech-talk", "recruiting"]
+  },
+  {
+    "listserv": "WICC",
+    "host": "WICC",
+    "club": "WICC",
+    "title": "Cracking Your Career (CYC)",
+    "description": "Four-part series on pathways in computing, interviewing, resumes, and standing out in tech roles.",
+    "date": "2026-03-03",
+    "location": "Gates 114",
+    "tags": ["career", "workshop"]
+  },
+  {
+    "listserv": "WICC",
+    "host": "WICC & MathWorks",
+    "club": "WICC",
+    "title": "WICC x MathWorks MATLAB Challenge",
+    "description": "Hands-on MATLAB challenge using MATLAB Copilot with prizes, swag, and info on careers at MathWorks.",
+    "date": "2026-03-16",
+    "location": "Gates G01",
+    "tags": ["workshop", "mathworks", "ai", "swag"]
+  },
+  {
+    "listserv": "WICC",
+    "host": "WICC & Jane Street",
+    "club": "WICC",
+    "title": "WICC x Jane Street Tech Talks",
+    "description": "Talk on predictable communication at scale and Aria, Jane Street's low-latency messaging system, with food and swag.",
+    "date": "2026-03-18",
+    "location": "Phillips 101",
+    "tags": ["talk", "jane-street", "systems"]
+  },
+  {
+    "listserv": "WICC",
+    "host": "External",
+    "club": "",
+    "title": "HackDartmouth XI",
+    "description": "24-hour hackathon at Dartmouth with workshops, prizes, and a Lost In Space theme.",
+    "date": "2026-04-11",
+    "location": "Dartmouth",
+    "tags": ["hackathon", "travel"]
+  },
+  {
+    "listserv": "WICC",
+    "host": "Jane Street",
+    "club": "",
+    "title": "Jane Street FOCUS Program",
+    "description": "Multi-day NYC program for first-year students to explore trading, software development, and strategy at Jane Street.",
+    "date": "2026-05-19",
+    "location": "New York City",
+    "tags": ["program", "first-year", "professional-track"]
+  }
+]
