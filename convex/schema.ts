@@ -67,7 +67,7 @@ export default defineSchema({
 
     location: v.optional(
       v.object({
-        displayText: v.string(), 
+        displayText: v.string(),
         address: v.optional(v.string()),
         isVirtual: v.boolean(),
         buildingCode: v.optional(v.string()), // "Gates 114", "CIS 250"
@@ -81,7 +81,7 @@ export default defineSchema({
           v.literal("registration"), // more for courses, hackathons, etc.
           v.literal("application"), // internships, jobs, programs
           v.literal("rsvp"), // events with physical link (decide if combines with registration)
-          v.literal("info"), // general info, websites, etc. 
+          v.literal("info"), // general info, websites, etc.
           v.literal("social"), // instagram, etc.
         ),
         label: v.optional(v.string()), // "Apply here", "RSVP Link"
@@ -101,7 +101,8 @@ export default defineSchema({
 
     tags: v.array(v.string()),
     targetAudience: v.optional(
-      v.union( // decide if we need all or define more
+      v.union(
+        // decide if we need all or define more
         v.literal("all"),
         v.literal("first_year"),
         v.literal("women_nonbinary"),
@@ -118,7 +119,6 @@ export default defineSchema({
         v.literal("paid"),
       ),
     ),
-
   })
     .index("by_listserv", ["listserv"])
     .index("by_section", ["listservSection"])
