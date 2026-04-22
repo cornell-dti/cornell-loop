@@ -80,7 +80,7 @@ export function DashboardEventCard({
 }: DashboardEventCardProps) {
   const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
   const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
-  const handleBookmark = onBookmark ?? (() => setInternalBookmarked(b => !b));
+  const handleBookmark = onBookmark ?? (() => setInternalBookmarked((b) => !b));
 
   const [expanded, setExpanded] = useState(false);
   const isClamped = truncateDescription && !expanded;

@@ -109,7 +109,7 @@ export function ExtensionEventRow({
 }: ExtensionEventRowProps) {
   const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
   const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
-  const handleBookmark = onBookmark ?? (() => setInternalBookmarked(b => !b));
+  const handleBookmark = onBookmark ?? (() => setInternalBookmarked((b) => !b));
   return (
     /*
      * Interactive states — Figma property1 "Default" | "hover":
