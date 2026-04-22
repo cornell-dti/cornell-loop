@@ -1,32 +1,33 @@
 /**
- * Home — Loop Dashboard Page
+ * Bookmarks — Loop Dashboard Page
  *
- * Source: Figma "Incubator-design-file" › node 263:3493 "Home"
+ * Source: Figma "Incubator-design-file" › node 260:2325 "Home" (Bookmarks view)
  *
- * Full-page layout composed from existing design system components:
- *   • SideBar (left)     — navigation rail with logo + primary nav + profile
- *   • Main feed (center) — Toggle tab switcher, tag filter bar, post list
- *   • Right panel        — SearchBar, contextual event sections ("This week", "Trending")
+ * Three-column page layout:
+ *   • SideBar (left)        — navigation rail, "Bookmarks" active
+ *   • Main content (center) — heading, SearchBar, tag filter bar, bookmarked post list
+ *   • Right panel           — SearchBar, "This week" + "Trending" event sections
  *
- * The feed uses the DashboardPost component for each post entry.
- * The right-panel event rows mirror the SearchResultRow pattern from SearchPanel,
- * extended to support circle avatars and the orange "For you" availability badge.
+ * The main content renders one DashboardPost per bookmarked item, each with
+ * `bookmarked={true}` to show the filled bookmark icon state.
  *
- * "For you" badge: Figma uses bg #ffe4d5 / text #b54400 — approximated here with
- * --color-primary-500 / --color-primary-800, the closest available palette tokens.
+ * The tag filter bar mirrors the Home page filter bar (Recruitment, Early Career, etc.)
+ * and sits directly below the SearchBar in a shared px-32px column.
+ *
+ * Right-panel sections (SideEventRow, SidePanelSection) mirror the pattern
+ * from Subscriptions.tsx.
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
 import type { ComponentPropsWithoutRef } from 'react';
-import { SideBar } from './SideBar';
-import type { SideBarItemId } from './SideBar';
-import { Toggle } from './Toggle';
-import { Tag } from './Tags';
-import { SearchBar } from './SearchBar';
-import { DashboardPost } from './Cards/DashboardPost';
-import type { DashboardPostProps } from './Cards/DashboardPost';
+import { SideBar } from '@app/ui';
+import type { SideBarItemId } from '@app/ui';
+import { SearchBar } from '@app/ui';
+import { Tag } from '@app/ui';
+import { DashboardPost } from '@app/ui';
+import type { DashboardPostProps } from '@app/ui';
 import StarIcon from '../assets/star.svg?react';
 
 // ─── Shared typography class strings ─────────────────────────────────────────
@@ -49,82 +50,64 @@ const SECTION_TITLE =
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type FeedTab = 'for-you' | 'following';
-
+/** A single tag in the filter bar, e.g. "Recruitment". */
 export interface FeedTagItem {
-  /** Display label for the filter tag, e.g. "Recruitment". */
   label: string;
 }
 
 /**
- * A single event row rendered inside a right-panel section ("This week" / "Trending").
- * Mirrors the structure of Figma node 263:3698 and siblings.
+ * A single event row inside a right-panel section ("This week" / "Trending").
+ * Mirrors the SideEventItem pattern from Subscriptions.tsx.
  */
-export interface HomeEventItem {
+export interface SideEventItem {
   title: string;
   orgName: string;
-  /** Optional avatar image URL. Falls back to an initial-letter badge. */
   orgAvatarUrl?: string;
   /**
-   * When true a small neutral indicator badge (star icon) is shown beside the org name.
-   * Matches the Figma "Icon button" element (bg #949494 ≈ --color-neutral-600).
+   * When true a small indicator badge (star icon) is shown beside the org name.
+   * Figma bg: #949494 ≈ --color-neutral-600.
    */
   hasIndicator?: boolean;
   /**
    * When true an orange "For you" badge is rendered to the right of the org row.
-   * Figma: bg #ffe4d5 / text #b54400 — approximated with --color-primary-500 / --color-primary-800.
+   * Figma: bg #ffe4d5 / text #b54400 — approximated with
+   * --color-primary-500 / --color-primary-800.
    */
   isForYou?: boolean;
 }
 
-/** Props for a single right-panel section card ("This week" or "Trending"). */
-export interface HomeSidePanelProps {
-  /** Card heading text, e.g. "This week" or "Trending". */
+/** Props for a right-panel contextual section card ("This week" / "Trending"). */
+export interface SidePanelSectionProps {
   title: string;
-  items: HomeEventItem[];
-  /** When provided a "Show more" link is rendered at the bottom of the card. */
+  items: SideEventItem[];
   onShowMore?: () => void;
 }
 
-export interface HomeProps extends ComponentPropsWithoutRef<'div'> {
+export interface BookmarksProps extends ComponentPropsWithoutRef<'div'> {
   // ── Sidebar ──
-  /** Currently active navigation item. Defaults to 'home'. */
   activeNavItem?: SideBarItemId;
-  /** Called with the nav item id when a sidebar tab is clicked. */
   onNavigate?: (id: SideBarItemId) => void;
 
-  // ── Feed toggle ──
-  /** Active feed tab. Defaults to 'for-you'. */
-  activeTab?: FeedTab;
-  /** Called with the new tab value when the toggle changes. */
-  onTabChange?: (tab: FeedTab) => void;
-
-  // ── Tag filter bar ──
-  /**
-   * List of tags shown in the horizontal filter bar.
-   * Defaults to the tags from the Figma spec.
-   */
-  feedTags?: FeedTagItem[];
-  /** Called with the tag label when a filter tag is clicked. */
-  onTagClick?: (label: string) => void;
-  /** Called when the "+" add-tag button is clicked. */
-  onAddTag?: () => void;
-
-  // ── Posts ──
-  /** Feed posts rendered using the DashboardPost component. */
-  posts?: DashboardPostProps[];
-
-  // ── Search ──
+  // ── Center search ──
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   onSearchClear?: () => void;
 
+  // ── Tag filter bar ──
+  feedTags?: FeedTagItem[];
+  onTagClick?: (label: string) => void;
+  onAddTag?: () => void;
+
+  // ── Bookmarked posts ──
+  posts?: DashboardPostProps[];
+
+  // ── Right panel search ──
+  sidePanelSearchValue?: string;
+  onSidePanelSearchChange?: (value: string) => void;
+  onSidePanelSearchClear?: () => void;
+
   // ── Right panel sections ──
-  /**
-   * Ordered list of contextual event sections shown in the right panel.
-   * Figma shows "This week" first, then "Trending".
-   */
-  sidePanels?: HomeSidePanelProps[];
+  sidePanels?: SidePanelSectionProps[];
 }
 
 // ─── Default data ─────────────────────────────────────────────────────────────
@@ -137,14 +120,13 @@ const DEFAULT_FEED_TAGS: FeedTagItem[] = [
   { label: 'Just for Fun' },
 ];
 
-// ─── HomeEventRow ─────────────────────────────────────────────────────────────
+// ─── SideEventRow ─────────────────────────────────────────────────────────────
 
 /**
- * A single event row inside a HomeSidePanel section.
- * Renders: event title + org avatar + org name + optional indicator badge + optional "For you" tag.
- * Matches Figma nodes 263:3698–263:3724.
+ * A single event row inside a right-panel section.
+ * Matches Figma nodes 260:2513–260:2539 and 260:2544–260:2568.
  */
-function HomeEventRow({ item }: { item: HomeEventItem }) {
+function SideEventRow({ item }: { item: SideEventItem }) {
   return (
     <div
       className={[
@@ -155,7 +137,7 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
         'transition-colors duration-150',
       ].join(' ')}
     >
-      {/* Event title — semibold, single line truncation */}
+      {/* Event title */}
       <p
         className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] truncate w-full'}
         style={{ fontVariationSettings: "'opsz' 14" }}
@@ -163,14 +145,10 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
         {item.title}
       </p>
 
-      {/* Org row: avatar + name + indicator badge + optional "For you" tag */}
+      {/* Org row: avatar + name + optional indicator + optional "For you" tag */}
       <div className="flex items-center gap-[var(--space-3)]">
         <div className="flex items-center gap-[var(--space-2)]">
-          {/*
-           * Circle avatar — 24 × 24 px (--space-6).
-           * Falls back to an initial-letter badge using secondary palette,
-           * consistent with the avatar pattern in DashboardPost.
-           */}
+          {/* Circle avatar — 24 × 24 px */}
           <span
             className={[
               'inline-flex items-center justify-center shrink-0',
@@ -209,7 +187,7 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
 
           {/*
            * Indicator badge — small circular pill with a star icon.
-           * Figma bg: #949494 ≈ --color-neutral-600 (consistent with DashboardPost indicator).
+           * Figma bg: #949494 ≈ --color-neutral-600.
            */}
           {item.hasIndicator && (
             <span
@@ -229,8 +207,7 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
         {/*
          * "For you" badge.
          * Figma: bg #ffe4d5 / text #b54400 — approximated with
-         * --color-primary-500 (#ffcaaa) / --color-primary-800 (#a74409),
-         * the closest available palette tokens.
+         * --color-primary-500 (#ffcaaa) / --color-primary-800 (#a74409).
          */}
         {item.isForYou && (
           <span
@@ -255,16 +232,13 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
   );
 }
 
-// ─── HomeSidePanel ────────────────────────────────────────────────────────────
+// ─── SidePanelSection ─────────────────────────────────────────────────────────
 
 /**
  * A contextual event section card in the right panel ("This week" / "Trending").
- * Matches Figma nodes 263:3695 and 263:3726.
- *
- * Container: bg white, Neutral/300 border, rounded-[16px], px 16px, py 12px.
- * This mirrors the SearchResultList container style from SearchPanel.tsx.
+ * Matches Figma nodes 260:2510 and 260:2541.
  */
-function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
+function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
   return (
     <div
       className={[
@@ -276,20 +250,18 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
         'w-full',
       ].join(' ')}
     >
-      {/* Section title — DM Sans Bold 18px, Neutral/900 */}
       <h2 className={SECTION_TITLE} style={{ fontVariationSettings: "'opsz' 14" }}>
         {title}
       </h2>
 
-      {/* Event rows */}
       <div className="flex flex-col gap-[var(--space-4)] w-full">
         {items.map((item, i) => (
-          <HomeEventRow key={i} item={item} />
+          <SideEventRow key={i} item={item} />
         ))}
       </div>
 
       {/*
-       * "Show more" link — Figma: Inter Regular 16px, #0074bc.
+       * "Show more" link — Figma: #0074bc.
        * --color-link maps to --color-secondary-600 (#427fb4), the closest token.
        */}
       {onShowMore && (
@@ -312,38 +284,39 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
   );
 }
 
-// ─── Home ─────────────────────────────────────────────────────────────────────
+// ─── Bookmarks ────────────────────────────────────────────────────────────────
 
 /**
- * Home page layout — three-column shell:
+ * Bookmarks page layout — three-column shell:
  *
- *   ┌────────────┬──────────────────────────┬────────────────┐
- *   │  SideBar   │  Main feed               │  Right panel   │
- *   │ (215px)    │  (flex-1)                │ (334px)        │
- *   │            │  Toggle + tag filter     │  SearchBar     │
- *   │  Home      │  ─────────────────────   │  This week     │
- *   │  Bookmarks │  DashboardPost ×n        │  Trending      │
- *   │  Subs      │                          │                │
- *   │  ────────  │                          │                │
- *   │  Profile   │                          │                │
- *   └────────────┴──────────────────────────┴────────────────┘
+ *   ┌────────────┬────────────────────────────────┬────────────────┐
+ *   │  SideBar   │  Main content                  │  Right panel   │
+ *   │ (215px)    │  (flex-1)                      │ (334px)        │
+ *   │            │  "Bookmarks" heading            │  SearchBar     │
+ *   │  Home      │  SearchBar + tag filter bar     │  This week     │
+ *   │  Bookmarks ●  ──────────────────────────    │  Trending      │
+ *   │  Subs      │  DashboardPost (bookmarked) × n │                │
+ *   │  ────────  │                                 │                │
+ *   │  Profile   │                                 │                │
+ *   └────────────┴────────────────────────────────┴────────────────┘
  */
-export function Home({
-  activeNavItem = 'home',
+export function Bookmarks({
+  activeNavItem = 'bookmarks',
   onNavigate,
-  activeTab = 'for-you',
-  onTabChange,
+  searchValue,
+  onSearchChange,
+  onSearchClear,
   feedTags = DEFAULT_FEED_TAGS,
   onTagClick,
   onAddTag,
   posts = [],
-  searchValue,
-  onSearchChange,
-  onSearchClear,
+  sidePanelSearchValue,
+  onSidePanelSearchChange,
+  onSidePanelSearchClear,
   sidePanels = [],
   className,
   ...rest
-}: HomeProps) {
+}: BookmarksProps) {
   return (
     <div
       className={[
@@ -361,73 +334,82 @@ export function Home({
         onNavigate={onNavigate}
       />
 
-      {/* ── Main feed ── */}
+      {/* ── Main content ── */}
       <main
         className="flex-1 min-w-0 flex flex-col gap-[var(--space-6)] py-[var(--space-6)] overflow-y-auto"
-        aria-label="Feed"
+        aria-label="Bookmarks"
       >
-        {/* ── Feed header: tab toggle + tag filter bar ── */}
+        {/* ── Page header ── */}
         <div className="flex flex-col gap-[var(--space-6)] w-full shrink-0">
           {/*
-           * Feed tab toggle — "For you" / "Following".
-           * w-full stretches the toggle to fill the padded container.
-           * Figma (node 263:3535): full-width pill container, px 24px.
+           * Heading — Figma (node 260:2577): px 24px.
+           * Typography: Manrope Bold ~31px = --font-brand + --font-size-wordmark.
            */}
           <div className="px-[var(--space-6)]">
-            <Toggle
-              options={[
-                { value: 'for-you', label: 'For you' },
-                { value: 'following', label: 'Following' },
-              ]}
-              value={activeTab}
-              onChange={(v) => onTabChange?.(v as FeedTab)}
-              className="w-full"
-            />
+            <h1
+              className={
+                'font-[family-name:var(--font-brand)] font-bold ' +
+                'text-[var(--font-size-wordmark)] leading-[normal] ' +
+                'text-[var(--color-black)] whitespace-nowrap'
+              }
+            >
+              Bookmarks
+            </h1>
           </div>
 
           {/*
-           * Tag filter bar — horizontal scrollable row of neutral Tag chips.
-           * Figma (node 263:3540): px 32px, gap 12px.
-           * The final "+" tag triggers onAddTag to open a tag picker.
+           * SearchBar + tag filter — Figma (node 260:2372): px 32px, stacked vertically.
            */}
-          <div
-            className="flex items-center gap-[var(--space-3)] px-[var(--space-8)] overflow-x-auto"
-          >
-            {feedTags.map((tag) => (
+          <div className="flex flex-col gap-[var(--space-3)] px-[var(--space-8)]">
+            <SearchBar
+              value={searchValue}
+              onChange={onSearchChange}
+              onClear={onSearchClear}
+              placeholder="Search"
+              className="w-full"
+            />
+
+            {/*
+             * Tag filter bar — Figma (node 260:2593): horizontal row of neutral Tag chips.
+             * The final "+" tag triggers onAddTag to open a tag picker.
+             */}
+            <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
+              {feedTags.map((tag) => (
+                <Tag
+                  key={tag.label}
+                  color="neutral"
+                  onClick={() => onTagClick?.(tag.label)}
+                  className="cursor-pointer shrink-0"
+                  style={{ fontVariationSettings: "'opsz' 14" }}
+                >
+                  {tag.label}
+                </Tag>
+              ))}
+
+              {/* "+" tag — opens tag picker */}
               <Tag
-                key={tag.label}
                 color="neutral"
-                onClick={() => onTagClick?.(tag.label)}
+                onClick={onAddTag}
                 className="cursor-pointer shrink-0"
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >
-                {tag.label}
+                +
               </Tag>
-            ))}
-
-            {/* "+" tag — opens tag picker (Figma node 263:3552) */}
-            <Tag
-              color="neutral"
-              onClick={onAddTag}
-              className="cursor-pointer shrink-0"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              +
-            </Tag>
+            </div>
           </div>
         </div>
 
-        {/* Horizontal divider — Figma node 263:3557: 1px, --color-border */}
+        {/* Horizontal divider — Figma node 260:2389 */}
         <div
           className="h-px w-full bg-[var(--color-border)] shrink-0"
           role="separator"
           aria-hidden="true"
         />
 
-        {/* ── Post list ── */}
+        {/* ── Bookmarked post list — Figma node 260:2390 ── */}
         {/*
-         * Each post is rendered as a DashboardPost (org header + event card).
-         * Figma (node 263:3558): pb 24px, px 24px, gap 32px between posts.
+         * Figma: px 24px, pb 24px, gap 32px between posts.
+         * Each post is rendered with bookmarked=true (filled bookmark icon).
          */}
         <div className="flex flex-col gap-[var(--space-8)] px-[var(--space-6)] pb-[var(--space-6)]">
           {posts.map((post, i) => (
@@ -438,9 +420,9 @@ export function Home({
 
       {/* ── Right panel ── */}
       {/*
-       * Fixed-width aside — mirrors the SearchPanel layout from SearchPanel.tsx.
-       * Figma (node 263:3691): w-326px, px 24px, py 32px, gap 24px, left border.
-       * Uses --search-panel-width (334px) as the closest available layout token.
+       * Mirrors the right-panel layout from Home and Subscriptions pages.
+       * Figma (node 260:2506): w-326px, px 24px, py 32px, gap 24px, left border.
+       * Uses --search-panel-width (334px) as the closest layout token.
        */}
       <aside
         className={[
@@ -454,18 +436,18 @@ export function Home({
         ].join(' ')}
         aria-label="Contextual panel"
       >
-        {/* Search bar — Figma node 263:3692 */}
+        {/* Right-panel SearchBar — Figma node 260:2507 */}
         <SearchBar
-          value={searchValue}
-          onChange={onSearchChange}
-          onClear={onSearchClear}
+          value={sidePanelSearchValue}
+          onChange={onSidePanelSearchChange}
+          onClear={onSidePanelSearchClear}
           placeholder="Search"
           className="w-full shrink-0"
         />
 
         {/* Contextual event sections — "This week", "Trending", etc. */}
         {sidePanels.map((panel, i) => (
-          <HomeSidePanel key={i} {...panel} />
+          <SidePanelSection key={i} {...panel} />
         ))}
       </aside>
     </div>
