@@ -44,5 +44,5 @@ Now write the digest based on this JSON:
 \`\`\`json
 ${JSON.stringify(events, null, 2)}
 \`\`\`
-`
+`;
 }
