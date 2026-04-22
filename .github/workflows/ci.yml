@@ -16,3 +16,5 @@ jobs:
         run: bun run type-check
       - name: Lint check
         run: bun run lint
+      - name: Format check
+        run: bun run format:check

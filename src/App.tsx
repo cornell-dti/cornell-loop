@@ -1,12 +1,8 @@
-import './App.css';
+import "./App.css";
+import DesignSystem from "./pages/DesignSystem";
 
 function App() {
-  
-  return (
-    <div>
-      App
-    </div>
-  )
-};
+  return <DesignSystem />;
+}
 
-export default App
+export default App;

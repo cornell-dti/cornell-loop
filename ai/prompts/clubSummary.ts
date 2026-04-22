@@ -22,5 +22,5 @@ Here are the events for this club (JSON):
 \`\`\`json
 ${JSON.stringify(events, null, 2)}
 \`\`\`
-`
+`;
 }
