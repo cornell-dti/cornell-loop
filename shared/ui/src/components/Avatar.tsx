@@ -13,14 +13,16 @@
  *
  * Image fallback:
  *   When an avatar item has no `src`, profile.svg from src/assets is shown on a
- *   Neutral/100 background.  The icon is normalised to ~Neutral/900 via the
+ *   colour derived deterministically from the avatar name using design-system
+ *   palette tokens.  The icon is normalised to ~Neutral/900 via the
  *   --filter-icon-nav CSS custom property defined in tokens.css.
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import ProfileIcon from '../assets/profile.svg?react';
+import { User } from "lucide-react";
+import { fallbackColorsForName } from "../utils/fallbackColors";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -45,41 +47,44 @@ export interface AvatarProps {
 
 interface AvatarCircleProps {
   item: AvatarItem;
-  /**
-   * When true the circle gets the white 2 px ring separator and a negative
-   * left margin for stacking (Figma: mr-[-8px] pattern on every avatar after
-   * the first, implemented here as margin-left for cleaner DOM flow).
-   */
-  stacked?: boolean;
+  /** Show the white 2 px ring (all avatars in a multi-stack). */
+  showRing?: boolean;
+  /** Apply negative left margin for overlap (2nd+ avatars only). */
+  overlap?: boolean;
   /** CSS z-index so earlier avatars render on top of later ones. */
   zIndex?: number;
 }
 
-function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
+function AvatarCircle({
+  item,
+  showRing = false,
+  overlap = false,
+  zIndex,
+}: AvatarCircleProps) {
   return (
     <span
       className={[
         /* shape */
-        'relative inline-flex shrink-0 items-center justify-center',
-        'rounded-full overflow-hidden',
+        "relative inline-flex shrink-0 items-center justify-center",
+        "overflow-hidden rounded-full",
         /* size: 32 px = --space-8 */
-        'size-[var(--space-8)]',
-        /* fallback background */
-        'bg-[var(--color-surface-subtle)]',
-        /*
-         * Stacked ring + overlap:
-         *   ring-2 ring-[var(--color-surface)] → 2 px white ring between circles
-         *   [margin-left:calc(-1*var(--space-2))] → −8 px overlap
-         *   Figma uses mr-[-8px] on all avatars + pr-[8px] on the container;
-         *   using ml here on 2nd+ avatars is equivalent with no container padding needed.
-         */
-        stacked
-          ? 'ring-2 ring-[var(--color-surface)] [margin-left:calc(-1*var(--space-2))]'
-          : '',
+        "size-[var(--space-8)]",
+        /* fallback background — overridden inline when no src is provided */
+        item.src ? "bg-[var(--color-surface-subtle)]" : "",
+        /* White outline on every avatar in a stack so overlapping neighbours show a border.
+         * Uses outline instead of ring to avoid clipping with overflow-hidden. */
+        showRing ? "outline-2 outline-[var(--color-surface)]" : "",
+        /* Negative margin for overlap on 2nd+ avatars */
+        overlap ? "[margin-left:calc(-1*var(--space-2))]" : "",
       ]
         .filter(Boolean)
-        .join(' ')}
-      style={zIndex !== undefined ? { zIndex } : undefined}
+        .join(" ")}
+      style={{
+        ...(zIndex !== undefined ? { zIndex } : {}),
+        ...(!item.src
+          ? { backgroundColor: fallbackColorsForName(item.name).bg }
+          : {}),
+      }}
     >
       {item.src ? (
         <img
@@ -91,11 +96,12 @@ function AvatarCircle({ item, stacked = false, zIndex }: AvatarCircleProps) {
         /*
          * Fallback: profile.svg rendered inline via SVGR.
          * Sized to --space-5 (20 px) inside the 32 px circle.
-         * --filter-icon-nav normalises the hardcoded SVG stroke to ~Neutral/900.
+         * Color is a darker shade from the same palette as the background.
          */
-        <ProfileIcon
+        <User
           aria-hidden="true"
-          className="size-[var(--space-5)] [filter:var(--filter-icon-nav)]"
+          size={20}
+          style={{ color: fallbackColorsForName(item.name).fg }}
         />
       )}
     </span>
@@ -117,12 +123,12 @@ export function Avatar({ avatars, className }: AvatarProps) {
      */
     <div
       className={[
-        'flex items-center gap-[var(--space-2)]',
-        'px-[var(--space-1-5)]',
+        "flex items-center gap-[var(--space-2)]",
+        "px-[var(--space-1-5)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
     >
       {/* ── Circle(s) ── */}
       <div className="flex items-center">
@@ -130,7 +136,8 @@ export function Avatar({ avatars, className }: AvatarProps) {
           <AvatarCircle
             key={i}
             item={avatar}
-            stacked={isMultiple && i > 0}
+            showRing={isMultiple}
+            overlap={isMultiple && i > 0}
             /* Higher index = lower z-index so first avatar sits on top */
             zIndex={avatars.length - i}
           />
@@ -146,16 +153,16 @@ export function Avatar({ avatars, className }: AvatarProps) {
        */}
       <div
         className={[
-          'flex items-center',
-          isMultiple ? 'gap-[var(--space-1)]' : '',
-          'font-[family-name:var(--font-body)] font-semibold',
-          'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
-          'tracking-[var(--letter-spacing-body2)]',
-          'text-[var(--color-neutral-700)]',
-          'whitespace-nowrap',
+          "flex items-center",
+          isMultiple ? "gap-[var(--space-1)]" : "",
+          "font-[family-name:var(--font-body)] font-semibold",
+          "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+          "tracking-[var(--letter-spacing-body2)]",
+          "text-[color:var(--color-neutral-700)]",
+          "pointer-events-none whitespace-nowrap select-none",
         ]
           .filter(Boolean)
-          .join(' ')}
+          .join(" ")}
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {avatars.map((avatar, i) => (
