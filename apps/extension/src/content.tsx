@@ -5,7 +5,7 @@ import { ConvexReactClient } from "convex/react";
 import FloatingPanel from "./components/FloatingPanel.tsx";
 import contentStyles from "./content.css?inline";
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 
 function loadFonts() {
   if (document.getElementById("cornell-loop-fonts")) return;
@@ -18,7 +18,17 @@ function loadFonts() {
 }
 
 function mount() {
+  if (!convexUrl) {
+    console.warn(
+      "[Cornell Loop] VITE_CONVEX_URL is not set. " +
+        "Create apps/extension/.env.local with VITE_CONVEX_URL=<your-convex-url> and rebuild.",
+    );
+    return;
+  }
+
   if (document.getElementById("cornell-loop-host")) return;
+
+  const convex = new ConvexReactClient(convexUrl);
 
   loadFonts();
 
@@ -33,13 +43,12 @@ function mount() {
 
   const shadow = host.attachShadow({ mode: "open" });
 
-  // Inject processed Tailwind + token styles into the shadow root so they
-  // aren't blocked by shadow DOM style encapsulation.
-  console.log("[cornell-loop] styles length:", contentStyles.length);
-
-  const sheet = new CSSStyleSheet();
-  sheet.replaceSync(contentStyles);
-  shadow.adoptedStyleSheets = [sheet];
+  // Use a <style> node instead of adoptedStyleSheets + replaceSync: constructable
+  // stylesheets disallow @import (Tailwind may emit them) and can mishandle
+  // @property compared to a document stylesheet.
+  const styleEl = document.createElement("style");
+  styleEl.textContent = contentStyles;
+  shadow.appendChild(styleEl);
 
   const mountPoint = document.createElement("div");
   mountPoint.style.pointerEvents = "auto";
