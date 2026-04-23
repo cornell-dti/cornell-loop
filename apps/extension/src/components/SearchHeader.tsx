@@ -10,81 +10,83 @@
  *           Logo + Close | [← back] SearchBar   (no toggle)
  */
 
-import type { ComponentPropsWithoutRef } from 'react'
-import { SearchBar, Toggle, LoopLogo } from '@app/ui'
-import CloseIcon      from '@app/ui/assets/close_search.svg?react'
-import ChevronBackIcon from '@app/ui/assets/chevron-back.svg?react'
+import type { ComponentPropsWithoutRef } from "react";
+import { SearchBar, Toggle, LoopLogo } from "@app/ui";
+import CloseIcon from "@app/ui/assets/close_search.svg?react";
+import ChevronBackIcon from "@app/ui/assets/chevron-back.svg?react";
 
 // ── Public types ───────────────────────────────────────────────────────────
 
-export type SearchHeaderVariant = 'main' | 'search'
+export type SearchHeaderVariant = "main" | "search";
 
-export interface SearchHeaderProps
-  extends Omit<ComponentPropsWithoutRef<'div'>, 'onChange'> {
+export interface SearchHeaderProps extends Omit<
+  ComponentPropsWithoutRef<"div">,
+  "onChange"
+> {
   /**
    * Layout variant:
    *   'main'   → SearchBar + Feed/Bookmarks Toggle below logo row
    *   'search' → Back chevron + SearchBar below logo row (no toggle)
    * Defaults to 'main'.
    */
-  variant?: SearchHeaderVariant
+  variant?: SearchHeaderVariant;
 
   /** Called when the × close button is clicked. */
-  onClose?: () => void
+  onClose?: () => void;
 
   /** Controlled search query string. */
-  searchQuery?: string
+  searchQuery?: string;
   /** Called with the new value whenever the search input changes. */
-  onSearchChange?: (value: string) => void
+  onSearchChange?: (value: string) => void;
   /** Called when the × clear button inside the search bar is clicked. */
-  onSearchClear?: () => void
+  onSearchClear?: () => void;
   /** Called when the search input receives focus (used to switch to search view). */
-  onSearchFocus?: () => void
+  onSearchFocus?: () => void;
 
   /**
    * Called when the ‹ back chevron is clicked.
    * Only relevant in the 'search' variant.
    */
-  onBack?: () => void
+  onBack?: () => void;
 
   /**
    * Currently active toggle tab value ('feed' | 'bookmarks').
    * Only relevant in the 'main' variant. Defaults to 'feed'.
    */
-  activeTab?: string
+  activeTab?: string;
   /**
    * Called with the new tab value when a toggle option is selected.
    * Only relevant in the 'main' variant.
    */
-  onTabChange?: (tab: string) => void
+  onTabChange?: (tab: string) => void;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const TOGGLE_OPTIONS = [
-  { value: 'feed',      label: 'Feed' },
-  { value: 'bookmarks', label: 'Bookmarks' },
-]
+  { value: "feed", label: "Feed" },
+  { value: "bookmarks", label: "Bookmarks" },
+];
 
 // Shared icon-button wrapper — 25.6 px hit target, subtle hover bg
 const ICON_BTN =
-  'shrink-0 flex items-center justify-center ' +
-  'size-[var(--space-6)] rounded-[var(--radius-input)] cursor-pointer ' +
-  'hover:bg-[var(--color-surface-subtle)] transition-colors duration-150 ' +
-  'focus-visible:outline-2 focus-visible:outline-offset-1 ' +
-  'focus-visible:outline-[var(--color-primary-700)]'
+  "shrink-0 flex items-center justify-center " +
+  "size-[var(--space-6)] rounded-[var(--radius-input)] cursor-pointer " +
+  "hover:bg-[var(--color-surface-subtle)] transition-colors duration-150 " +
+  "focus-visible:outline-2 focus-visible:outline-offset-1 " +
+  "focus-visible:outline-[var(--color-primary-700)]";
 
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function SearchHeader({
-  variant = 'main',
+  variant = "main",
   onClose,
-  searchQuery = '',
+  searchQuery = "",
   onSearchChange,
   onSearchClear,
   onSearchFocus,
   onBack,
-  activeTab = 'feed',
+  activeTab = "feed",
   onTabChange,
   className,
   ...rest
@@ -92,15 +94,15 @@ export function SearchHeader({
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-3)] w-full shrink-0',
+        "flex w-full shrink-0 flex-col gap-[var(--space-3)]",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Logo row: wordmark left, close right ── */}
-      <div className="flex items-center justify-between w-full">
+      <div className="flex w-full items-center justify-between">
         {/* size="sm": 24px mark + 32px "Loop" wordmark — matches Figma panel header */}
         <LoopLogo variant="wordmark" size="sm" />
 
@@ -117,17 +119,17 @@ export function SearchHeader({
           <CloseIcon
             aria-hidden="true"
             className={
-              'size-full ' +
-              '[filter:var(--filter-icon-close-default)] ' +
-              'hover:[filter:var(--filter-icon-close-hover)] ' +
-              'transition-[filter] duration-150'
+              "size-full " +
+              "[filter:var(--filter-icon-close-default)] " +
+              "hover:[filter:var(--filter-icon-close-hover)] " +
+              "transition-[filter] duration-150"
             }
           />
         </button>
       </div>
 
       {/* ── Search row ── */}
-      {variant === 'main' ? (
+      {variant === "main" ? (
         /* Main variant: search bar spans full width */
         <SearchBar
           value={searchQuery}
@@ -139,7 +141,7 @@ export function SearchHeader({
       ) : (
         /* Search variant: back chevron + search bar (flex-1).
            Figma gap between chevron and input: 4px (--space-1) */
-        <div className="flex items-center gap-[var(--space-1)] w-full">
+        <div className="flex w-full items-center gap-[var(--space-1)]">
           <button
             type="button"
             aria-label="Go back"
@@ -167,7 +169,7 @@ export function SearchHeader({
       )}
 
       {/* ── Toggle (main variant only) ── */}
-      {variant === 'main' && (
+      {variant === "main" && (
         <Toggle
           options={TOGGLE_OPTIONS}
           value={activeTab}
@@ -177,7 +179,7 @@ export function SearchHeader({
         />
       )}
     </div>
-  )
+  );
 }
 
-export default SearchHeader
+export default SearchHeader;

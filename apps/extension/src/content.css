@@ -1,10 +1,10 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
 /* Explicitly scan component files so Tailwind generates all used utility classes */
 @source "../src/**/*.{ts,tsx}";
 @source "../../../shared/ui/src/**/*.{ts,tsx}";
 
-@import '../../../shared/ui/src/styles/tokens.css';
+@import "../../../shared/ui/src/styles/tokens.css";
 
 /*
  * Tailwind v4 `.border` uses `border-style: var(--tw-border-style)`.

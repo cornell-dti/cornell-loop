@@ -1,26 +1,32 @@
-import { Tag } from '@app/ui'
-import { BookmarkCard } from './BookmarkCard'
-import EditIcon from '@app/ui/assets/edit_icon.svg?react'
+import { Tag } from "@app/ui";
+import { BookmarkCard } from "./BookmarkCard";
+import EditIcon from "@app/ui/assets/edit_icon.svg?react";
 
 // ── Shared typography ──────────────────────────────────────────────────────
 
 // Figma: Inter Regular 16px, #5f5f5f, tracking -0.176px, leading 1.5
 const UI_BODY =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[1rem] leading-[1.5] tracking-[-0.176px] text-[#5f5f5f]'
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[1rem] leading-[1.5] tracking-[-0.176px] text-[#5f5f5f]";
 
 // Figma: Inter Regular 16px label for "Sort by" (same style as UI_BODY)
-const SORT_LABEL = UI_BODY + ' whitespace-nowrap'
+const SORT_LABEL = UI_BODY + " whitespace-nowrap";
 
-const SORT_TAGS = ['Internships', 'Early career', 'Tech', 'Mentorship', 'Just for fun']
+const SORT_TAGS = [
+  "Internships",
+  "Early career",
+  "Tech",
+  "Mentorship",
+  "Just for fun",
+];
 
 const POPULAR_SEARCHES = [
-  { rank: '#1', term: 'Recruitment' },
-  { rank: '#2', term: 'Sports' },
-  { rank: '#3', term: 'Concert' },
-  { rank: '#4', term: 'Housing' },
-  { rank: '#5', term: 'A&S' },
-]
+  { rank: "#1", term: "Recruitment" },
+  { rank: "#2", term: "Sports" },
+  { rank: "#3", term: "Concert" },
+  { rank: "#4", term: "Housing" },
+  { rank: "#5", term: "A&S" },
+];
 
 // ── SearchEmptyState ───────────────────────────────────────────────────────
 // Figma 554:7828 — shown when the search bar is focused but has no query.
@@ -28,13 +34,13 @@ const POPULAR_SEARCHES = [
 
 function SearchEmptyState() {
   return (
-    <div className="flex flex-col gap-[var(--space-3)] w-full">
+    <div className="flex w-full flex-col gap-[var(--space-3)]">
       {/* Heading — Figma: DM Sans Medium 18px, #5f5f5f, lh 28px, tracking -0.5px */}
       <p
         className={
-          'font-[family-name:var(--font-body)] font-medium ' +
-          'text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] ' +
-          'tracking-[var(--letter-spacing-body1)] text-[#5f5f5f] whitespace-nowrap'
+          "font-[family-name:var(--font-body)] font-medium " +
+          "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+          "tracking-[var(--letter-spacing-body1)] whitespace-nowrap text-[#5f5f5f]"
         }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
@@ -42,26 +48,26 @@ function SearchEmptyState() {
       </p>
 
       {/* Ranked rows — Figma: bg #f9f9f9, rounded-[16px], px-16 py-8, gap-12 */}
-      <div className="flex flex-col gap-[var(--space-2)] w-full">
+      <div className="flex w-full flex-col gap-[var(--space-2)]">
         {POPULAR_SEARCHES.map(({ rank, term }) => (
           <button
             key={rank}
             type="button"
             className={
-              'flex items-center gap-[var(--space-3)] w-full ' +
-              'bg-[#f9f9f9] rounded-[var(--radius-button)] ' +
-              'px-[var(--space-4)] py-[var(--space-2)] ' +
-              'hover:bg-[var(--color-neutral-200)] transition-colors duration-150 ' +
-              'text-left'
+              "flex w-full items-center gap-[var(--space-3)] " +
+              "rounded-[var(--radius-button)] bg-[#f9f9f9] " +
+              "px-[var(--space-4)] py-[var(--space-2)] " +
+              "transition-colors duration-150 hover:bg-[var(--color-neutral-200)] " +
+              "text-left"
             }
           >
-            <span className={UI_BODY + ' shrink-0'}>{rank}</span>
+            <span className={UI_BODY + " shrink-0"}>{rank}</span>
             <span className={UI_BODY}>{term}</span>
           </button>
         ))}
       </div>
     </div>
-  )
+  );
 }
 
 // ── SearchResultsState ─────────────────────────────────────────────────────
@@ -70,20 +76,21 @@ function SearchEmptyState() {
 
 function SearchResultsState() {
   return (
-    <div className="flex flex-col gap-[var(--space-4)] w-full">
-
+    <div className="flex w-full flex-col gap-[var(--space-4)]">
       {/* Sort by */}
       <section className="flex flex-col gap-[var(--space-2)]">
         <p className={SORT_LABEL}>Sort by</p>
-        <div className="flex flex-wrap gap-[9px] items-center">
+        <div className="flex flex-wrap items-center gap-[9px]">
           {SORT_TAGS.map((label) => (
-            <Tag key={label} color="neutral">{label}</Tag>
+            <Tag key={label} color="neutral">
+              {label}
+            </Tag>
           ))}
           <Tag color="neutral">+</Tag>
           <button
             type="button"
             aria-label="Edit filter tags"
-            className="shrink-0 size-4 cursor-pointer opacity-60 hover:opacity-100 transition-opacity"
+            className="size-4 shrink-0 cursor-pointer opacity-60 transition-opacity hover:opacity-100"
           >
             <EditIcon className="size-full" />
           </button>
@@ -99,8 +106,8 @@ function SearchResultsState() {
           day={24}
           month="Mar"
           title="Datadog recruitment event"
-          subtitle={['4:00 pm - 5:30 pm', 'Hollister hall 312']}
-          tags={['Internships', 'Early career']}
+          subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
+          tags={["Internships", "Early career"]}
           onRsvp={() => {}}
           onAddToCalendar={() => {}}
         />
@@ -111,7 +118,7 @@ function SearchResultsState() {
           thumbnailVariant="news"
           title="Datadog recruitment event"
           subtitle="For early career designers and developers"
-          tags={['Internships', 'Early career']}
+          tags={["Internships", "Early career"]}
           onAddToCalendar={() => {}}
         />
 
@@ -122,12 +129,12 @@ function SearchResultsState() {
           day={24}
           month="Mar"
           title="Datadog recruitment event"
-          subtitle={['4:00 pm - 5:30 pm', 'Hollister hall 312']}
-          tags={['Internships', 'Early career']}
+          subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
+          tags={["Internships", "Early career"]}
         />
       </div>
     </div>
-  )
+  );
 }
 
 // ── SearchView ─────────────────────────────────────────────────────────────
@@ -136,9 +143,9 @@ function SearchResultsState() {
 
 export interface SearchViewProps {
   /** The current search query. Empty string or undefined → popular state. */
-  query?: string
+  query?: string;
 }
 
-export default function SearchView({ query = '' }: SearchViewProps) {
-  return query.trim() === '' ? <SearchEmptyState /> : <SearchResultsState />
+export default function SearchView({ query = "" }: SearchViewProps) {
+  return query.trim() === "" ? <SearchEmptyState /> : <SearchResultsState />;
 }
