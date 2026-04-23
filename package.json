@@ -10,6 +10,15 @@
     "dev": "bun run --cwd apps/dashboard dev",
     "build": "bun run --cwd apps/dashboard build",
     "lint": "bun run --cwd apps/dashboard lint",
-    "type-check": "bun run --cwd apps/dashboard type-check"
+    "type-check": "bun run --cwd apps/dashboard type-check",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@google/genai": "^1.44.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.2",
+    "prettier-plugin-tailwindcss": "^0.7.2"
   }
 }

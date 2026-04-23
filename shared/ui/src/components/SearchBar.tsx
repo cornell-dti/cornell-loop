@@ -24,16 +24,16 @@ import {
   useState,
   type ChangeEvent,
   type InputHTMLAttributes,
-} from 'react';
+} from "react";
 
-// Note: the file is search_icon.svg (not search.svg).
-import SearchIcon      from '../assets/search_icon.svg?react';
-import CloseSearchIcon from '../assets/close_search.svg?react';
+import { Search, X } from "lucide-react";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export interface SearchBarProps
-  extends Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value' | 'defaultValue'> {
+export interface SearchBarProps extends Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "value" | "defaultValue"
+> {
   /** Controlled value. Omit for uncontrolled usage (pair with `defaultValue`). */
   value?: string;
   /** Initial value for uncontrolled usage. */
@@ -52,10 +52,10 @@ export interface SearchBarProps
 
 export function SearchBar({
   value,
-  defaultValue = '',
+  defaultValue = "",
   onChange,
   onClear,
-  placeholder = 'Search',
+  placeholder = "Search",
   className,
   disabled,
   ...rest
@@ -63,7 +63,7 @@ export function SearchBar({
   const isControlled = value !== undefined;
   const [localValue, setLocalValue] = useState<string>(defaultValue);
   const displayValue = isControlled ? value : localValue;
-  const hasValue = (displayValue ?? '').length > 0;
+  const hasValue = (displayValue ?? "").length > 0;
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -76,8 +76,8 @@ export function SearchBar({
   );
 
   const handleClear = useCallback(() => {
-    if (!isControlled) setLocalValue('');
-    onChange?.('');
+    if (!isControlled) setLocalValue("");
+    onChange?.("");
     onClear?.();
     inputRef.current?.focus();
   }, [isControlled, onChange, onClear]);
@@ -90,36 +90,36 @@ export function SearchBar({
     <div
       className={[
         // Layout & shape
-        'flex items-center justify-between',
-        'gap-[var(--space-3)]',
-        'px-[var(--space-4)] py-[var(--space-2)]',
-        'rounded-[var(--radius-card)]',
+        "flex items-center justify-between",
+        "gap-[var(--space-3)]",
+        "px-[var(--space-4)] py-[var(--space-2)]",
+        "rounded-[var(--radius-card)]",
         // Colours
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
         // Focus ring (accessibility — not shown in Figma but required for keyboard nav)
-        'focus-within:outline-2 focus-within:outline-offset-0',
-        'focus-within:outline-[var(--color-primary-700)]',
+        "focus-within:outline-2 focus-within:outline-offset-0",
+        "focus-within:outline-[var(--color-primary-700)]",
         // Disabled
         disabled
-          ? 'opacity-[var(--opacity-40)] cursor-not-allowed'
-          : 'cursor-text',
+          ? "cursor-not-allowed opacity-[var(--opacity-40)]"
+          : "cursor-text",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       // Forward click on the outer div to the hidden input for UX convenience
       onClick={() => !disabled && inputRef.current?.focus()}
     >
       {/* ── Left: search icon + input field ── */}
-      <div className="flex items-center gap-[var(--space-3)] min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 items-center gap-[var(--space-3)]">
         {/*
-         * Search icon — search_icon.svg uses stroke="#495057" (Neutral/700) natively,
-         * so no filter needed. className goes directly to the <svg> via SVGR.
+         * Search icon — Neutral/700 stroke colour via currentColor.
          */}
-        <SearchIcon
+        <Search
           aria-hidden="true"
-          className="shrink-0 size-[var(--space-4)]"
+          className="shrink-0 text-[color:var(--color-neutral-700)]"
+          size={16}
         />
 
         {/*
@@ -136,19 +136,19 @@ export function SearchBar({
           placeholder={placeholder}
           disabled={disabled}
           className={[
-            'min-w-0 flex-1 bg-transparent border-none outline-none',
-            'font-[family-name:var(--font-body)] font-normal',
-            'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
-            'tracking-[var(--letter-spacing-body2)]',
-            'text-[var(--color-neutral-700)]',
-            'placeholder:text-[var(--color-neutral-700)]',
-            disabled ? 'cursor-not-allowed pointer-events-none' : '',
+            "min-w-0 flex-1 border-none bg-transparent outline-none",
+            "font-[family-name:var(--font-body)] font-normal",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+            "tracking-[var(--letter-spacing-body2)]",
+            "text-[color:var(--color-neutral-700)]",
+            "placeholder:text-[color:var(--color-neutral-700)]",
+            disabled ? "pointer-events-none cursor-not-allowed" : "",
             // Remove browser's built-in search-cancel button (we provide our own)
-            '[&::-webkit-search-cancel-button]:hidden',
-            '[&::-webkit-search-decoration]:hidden',
+            "[&::-webkit-search-cancel-button]:hidden",
+            "[&::-webkit-search-decoration]:hidden",
           ]
             .filter(Boolean)
-            .join(' ')}
+            .join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
           {...rest}
         />
@@ -168,27 +168,27 @@ export function SearchBar({
         onClick={handleClear}
         tabIndex={hasValue ? 0 : -1}
         className={[
-          'group shrink-0 flex items-center justify-center',
-          'size-[var(--space-4)]',
-          'rounded-[var(--radius-input)]',
-          'cursor-pointer',
-          'transition-opacity duration-150',
-          'focus-visible:outline-2 focus-visible:outline-offset-1',
-          'focus-visible:outline-[var(--color-primary-700)]',
+          "group flex shrink-0 items-center justify-center",
+          "size-[var(--space-4)]",
+          "rounded-[var(--radius-input)]",
+          "cursor-pointer",
+          "transition-opacity duration-150",
+          "focus-visible:outline-2 focus-visible:outline-offset-1",
+          "focus-visible:outline-[var(--color-primary-700)]",
           hasValue
-            ? 'opacity-[var(--opacity-100)] pointer-events-auto'
-            : 'opacity-0 pointer-events-none',
+            ? "pointer-events-auto opacity-[var(--opacity-100)]"
+            : "pointer-events-none opacity-0",
         ]
           .filter(Boolean)
-          .join(' ')}
+          .join(" ")}
       >
-        <CloseSearchIcon
+        <X
           aria-hidden="true"
           className={
-            'size-full ' +
-            '[filter:var(--filter-icon-close-default)] ' +
-            'group-hover:[filter:var(--filter-icon-close-hover)] ' +
-            'transition-[filter] duration-150'
+            "size-full " +
+            "text-[color:var(--color-neutral-700)] " +
+            "group-hover:text-[color:var(--color-black)] " +
+            "transition-colors duration-150"
           }
         />
       </button>
