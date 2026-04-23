@@ -4,7 +4,7 @@
  * Source: Figma "Incubator-design-file" › node 350:504 "Input"
  *
  * A centred modal card for collecting initial user profile information:
- *   • Greeting — "Hi {name}!" centred at the top
+ *   • Greeting — "Hi {userName}!" centred at the top; falls back to "Hi there!"
  *   • Major field — styled dropdown trigger (flex-1)
  *   • Grad Year field — styled dropdown trigger (shrink-0, content-width)
  *   • Minor field — optional, styled dropdown trigger (full-width)
@@ -86,7 +86,7 @@ const BODY2_REGULAR =
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export interface ProfileProps extends ComponentPropsWithoutRef<'div'> {
-  /** First name shown in the greeting, e.g. "Megan" → "Hi Megan!". */
+  /** First name shown in the greeting, e.g. "Alex" → "Hi Alex!". Falls back to "Hi there!" when omitted. */
   userName?: string;
 
   // ── Major ──
@@ -190,10 +190,10 @@ function ProfileSelectField({
  *   │           Hi {userName}!             │  ← greeting, centred
  *   │                                      │
  *   │  Major ──────────────── Grad Year    │  ← side-by-side, major flex-1
- *   │  [ Computer Science      ▾ ]  [2026▾]│
+ *   │  [ Select major          ▾ ]  [Year▾]│
  *   │                                      │
  *   │  Minor (optional)                    │
- *   │  [ Linguistics              ▾ ]      │
+ *   │  [ Select minor             ▾ ]      │
  *   │                                      │
  *   │  Interests                           │
  *   │  [Internships] [Early Career] [Tech] │
@@ -201,7 +201,7 @@ function ProfileSelectField({
  *   └──────────────────────────────────────┘
  */
 export function Profile({
-  userName = 'Megan',
+  userName,
   major,
   onMajorChange,
   gradYear,
@@ -278,7 +278,7 @@ export function Profile({
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            Hi {userName}!
+            {userName ? `Hi ${userName}!` : 'Hi there!'}
           </h2>
         </div>
 
