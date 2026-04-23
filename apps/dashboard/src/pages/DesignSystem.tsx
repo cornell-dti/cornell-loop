@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import {
   Button,
+  Dropdown,
   Toggle,
   Tag,
   SearchBar,
@@ -23,8 +24,13 @@ import {
   ExtensionEventCard,
   SearchPanel,
   SearchResultList,
-} from '@app/ui';
-import type { SideBarItemId } from '@app/ui';
+} from "@app/ui";
+import type { SideBarItemId, Organization } from "@app/ui";
+
+import BookmarkIcon from "@app/ui/assets/bookmark.svg?react";
+import BookmarkFilledIcon from "@app/ui/assets/bookmark-filled.svg?react";
+import CloseTagsIcon from "@app/ui/assets/close_tags.svg?react";
+import CloseSearchIcon from "@app/ui/assets/close_search.svg?react";
 
 // ─── Page-internal layout helpers ─────────────────────────────────────────────
 // These are NOT new design-system components — they are private page layout
