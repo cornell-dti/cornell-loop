@@ -37,25 +37,25 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import BookmarkIcon       from '../../assets/bookmark.svg?react';
-import BookmarkFilledIcon from '../../assets/bookmark-filled.svg?react';
-import { DateBadge } from '../DateBadge';
-import type { ThumbnailVariant } from '../DateBadge';
-export type { ThumbnailVariant, DateBadgeProps } from '../DateBadge';
+import { useState, type ComponentPropsWithoutRef } from "react";
+import { Bookmark } from "../Bookmark";
+import { Avatar } from "../Avatar";
+import { DateBadge } from "../DateBadge";
+import type { ThumbnailVariant } from "../DateBadge";
+export type { ThumbnailVariant, DateBadgeProps } from "../DateBadge";
 export { DateBadge };
 
 // ─── Shared typography class strings ──────────────────────────────────────────
 
 const BODY2_SEMIBOLD =
-  'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-semibold " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY3 =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] ' +
-  'tracking-[var(--letter-spacing-body3)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] " +
+  "tracking-[var(--letter-spacing-body3)]";
 
 // DateBadge, ThumbnailVariant, and DateBadgeProps are re-exported above
 // from src/components/DateBadge.tsx.
@@ -94,20 +94,22 @@ export interface ExtensionEventItem {
 //   "hover"   → bg-surface-subtle (implemented as CSS hover — no prop needed)
 
 export interface ExtensionEventRowProps
-  extends ExtensionEventItem,
-    Omit<ComponentPropsWithoutRef<'div'>, 'title'> {}
+  extends ExtensionEventItem, Omit<ComponentPropsWithoutRef<"div">, "title"> {}
 
 export function ExtensionEventRow({
-  thumbnailVariant = 'date',
+  thumbnailVariant = "date",
   day,
   month,
   title,
   description,
-  bookmarked = false,
+  bookmarked: bookmarkedProp = false,
   onBookmark,
   className,
   ...rest
 }: ExtensionEventRowProps) {
+  const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
+  const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
+  const handleBookmark = onBookmark ?? (() => setInternalBookmarked((b) => !b));
   return (
     /*
      * Interactive states — Figma property1 "Default" | "hover":
@@ -117,25 +119,28 @@ export function ExtensionEventRow({
      */
     <div
       className={[
-        'flex gap-[var(--space-3)] items-center w-full',
-        'p-[var(--space-1-5)]',
-        'rounded-[var(--radius-input)]',
-        'bg-[var(--color-surface)]',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
+        "flex w-full items-center gap-[var(--space-3)]",
+        "p-[var(--space-1-5)]",
+        "rounded-[var(--radius-input)]",
+        "bg-[var(--color-surface)]",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* Thumbnail badge */}
       <DateBadge variant={thumbnailVariant} day={day} month={month} />
 
       {/* Text content */}
-      <div className="flex-1 min-w-0 flex flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
+      <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
         <p
-          className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-900)] w-full truncate'}
+          className={
+            BODY2_SEMIBOLD +
+            " w-full truncate text-[color:var(--color-neutral-900)]"
+          }
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           {title}
@@ -143,7 +148,9 @@ export function ExtensionEventRow({
 
         {description && (
           <p
-            className={BODY3 + ' text-[var(--color-neutral-700)] w-full truncate'}
+            className={
+              BODY3 + " w-full truncate text-[color:var(--color-neutral-700)]"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {description}
@@ -151,40 +158,14 @@ export function ExtensionEventRow({
         )}
       </div>
 
-      {/*
-       * Bookmark button — switches SVG based on `bookmarked` prop.
-       * Same pattern as DashboardEventCard:
-       *   false → BookmarkIcon       (stroke="#ADB5BD", gray outline)
-       *   true  → BookmarkFilledIcon (fill="#EB7128",   orange filled)
-       * On hover when unsaved: --filter-icon-close-default darkens to ~Neutral/700.
-       * Source: Figma Icons section — Bookmark icon states (node 493:1041)
-       */}
-      <button
-        type="button"
-        aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark event'}
-        aria-pressed={bookmarked}
-        onClick={(e) => {
+      <Bookmark
+        bookmarked={bookmarked}
+        onToggle={(e) => {
           e.stopPropagation();
-          onBookmark?.();
+          handleBookmark();
         }}
-        className="group shrink-0 size-[var(--space-6)] cursor-pointer"
-      >
-        {bookmarked ? (
-          <BookmarkFilledIcon
-            aria-hidden="true"
-            className="size-full"
-          />
-        ) : (
-          <BookmarkIcon
-            aria-hidden="true"
-            className={
-              'size-full ' +
-              'group-hover:[filter:var(--filter-icon-close-default)] ' +
-              'transition-[filter] duration-150'
-            }
-          />
-        )}
-      </button>
+        iconClassName="size-[var(--space-6)]"
+      />
     </div>
   );
 }
@@ -206,8 +187,7 @@ export function ExtensionEventRow({
 //   bg white, border Neutral/300 (#dee2e6 = --color-border), rounded-[12px],
 //   p-[12px], gap-[16px], overflow-hidden
 
-export interface ExtensionEventCardProps
-  extends ComponentPropsWithoutRef<'div'> {
+export interface ExtensionEventCardProps extends ComponentPropsWithoutRef<"div"> {
   /** Organisation name shown in the card header. */
   orgName: string;
   /** URL for the org's circular avatar image. Falls back to an initials badge. */
@@ -231,61 +211,24 @@ export function ExtensionEventCard({
      */
     <div
       className={[
-        'flex flex-col gap-[var(--space-4)]',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--space-3)]',
-        'p-[var(--space-3)]',
-        'overflow-hidden',
+        "flex flex-col gap-[var(--space-4)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--space-3)]",
+        "p-[var(--space-3)]",
+        "overflow-hidden",
         className,
       ]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Org header ── */}
-      <div className="flex items-center gap-[var(--space-2)] px-[var(--space-1-5)]">
-        {/* Org avatar — 32 px circle */}
-        <div
-          className={[
-            'relative shrink-0 size-[var(--space-8)]',
-            'rounded-full overflow-hidden',
-            'bg-[var(--color-surface-subtle)]',
-          ].join(' ')}
-        >
-          {orgAvatarUrl ? (
-            <img
-              src={orgAvatarUrl}
-              alt={orgName}
-              className="size-full object-cover"
-            />
-          ) : (
-            /* Initials fallback */
-            <span
-              className={
-                'size-full flex items-center justify-center ' +
-                'bg-[var(--color-secondary-400)] ' +
-                'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[length:var(--font-size-body3)] text-[color:var(--color-secondary-900)]'
-              }
-            >
-              {orgName.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
-
-        {/* Org name — Figma: DM Sans SemiBold 14px, Neutral/700 */}
-        <span
-          className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] whitespace-nowrap'}
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          {orgName}
-        </span>
-      </div>
+      <Avatar avatars={[{ name: orgName, src: orgAvatarUrl }]} />
 
       {/* ── Event rows ── */}
       {events.length > 0 && (
-        <div className="flex flex-col gap-[var(--space-3)] w-full">
+        <div className="flex w-full flex-col gap-[var(--space-3)]">
           {events.map((event, i) => (
             <ExtensionEventRow key={i} {...event} />
           ))}
