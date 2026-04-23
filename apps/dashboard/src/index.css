@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "./styles/tokens.css";
+@import "@app/ui/styles/tokens.css";
 
 /* ─── Base reset / global defaults ──────────────────────────────────────── */
 

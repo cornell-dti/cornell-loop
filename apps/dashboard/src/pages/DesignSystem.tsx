@@ -7,32 +7,30 @@
 
 import { useState } from "react";
 
-import { Button } from "../components/Button";
-import { Dropdown } from "../components/Dropdown";
-import { Toggle } from "../components/Toggle";
-import { Tag } from "../components/Tags";
-import { SearchBar } from "../components/SearchBar";
-import { Avatar } from "../components/Avatar";
-import { SideBar } from "../components/SideBar";
-import type { SideBarItemId } from "../components/SideBar";
-import { LoopLogo } from "../components/Logo";
-
-import BookmarkIcon from "../assets/bookmark.svg?react";
-import BookmarkFilledIcon from "../assets/bookmark-filled.svg?react";
-import CloseTagsIcon from "../assets/close_tags.svg?react";
-import CloseSearchIcon from "../assets/close_search.svg?react";
-
-import { DashboardEventCard } from "../components/Cards/DashboardEventCard";
-import { DashboardPost } from "../components/Cards/DashboardPost";
-import type { Organization } from "../components/Cards/DashboardPost";
-import { LoopSummary } from "../components/Cards/LoopSummary";
 import {
+  Button,
+  Dropdown,
+  Toggle,
+  Tag,
+  SearchBar,
+  Avatar,
+  SideBar,
+  LoopLogo,
+  DashboardEventCard,
+  DashboardPost,
+  LoopSummary,
   DateBadge,
   ExtensionEventRow,
   ExtensionEventCard,
-} from "../components/Cards/ExtensionEventCard";
+  SearchPanel,
+  SearchResultList,
+} from "@app/ui";
+import type { SideBarItemId, Organization } from "@app/ui";
 
-import { SearchPanel, SearchResultList } from "../components/SearchPanel";
+import BookmarkIcon from "@app/ui/assets/bookmark.svg?react";
+import BookmarkFilledIcon from "@app/ui/assets/bookmark-filled.svg?react";
+import CloseTagsIcon from "@app/ui/assets/close_tags.svg?react";
+import CloseSearchIcon from "@app/ui/assets/close_search.svg?react";
 
 // ─── Page-internal layout helpers ─────────────────────────────────────────────
 // These are NOT new design-system components — they are private page layout
