@@ -2,42 +2,23 @@
   "name": "cornell-loop",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "shared/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "type-check": "tsc --noEmit",
+    "dev": "bun run --cwd apps/dashboard dev",
+    "build": "bun run --cwd apps/dashboard build",
+    "lint": "bun run --cwd apps/dashboard lint",
+    "type-check": "bun run --cwd apps/dashboard type-check",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@auth/core": "0.37.0",
-    "@convex-dev/auth": "^0.0.91",
-    "@google/genai": "^1.44.0",
-    "convex": "^1.32.0",
-    "lucide-react": "^1.8.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "vite-plugin-svgr": "^5.2.0"
+    "@google/genai": "^1.44.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@tailwindcss/vite": "^4.2.2",
-    "@types/node": "^24.10.1",
-    "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.4.24",
-    "globals": "^16.5.0",
     "prettier": "^3.8.2",
-    "prettier-plugin-tailwindcss": "^0.7.2",
-    "tailwindcss": "^4.2.2",
-    "typescript": "~5.9.3",
-    "typescript-eslint": "^8.48.0",
-    "vite": "^7.3.1"
+    "prettier-plugin-tailwindcss": "^0.7.2"
   }
 }
