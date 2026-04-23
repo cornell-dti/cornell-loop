@@ -4,7 +4,8 @@
  * Sections extracted: Colors, Typography, Effects (Shadows + Border Radius)
  */
 
-:root, :host {
+:root,
+:host {
   /* ─────────────────────────────────────────────
    * PRIMARY PALETTE  (warm orange-brown brand)
    * ───────────────────────────────────────────── */
