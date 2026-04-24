@@ -243,7 +243,7 @@ export default function Landing() {
   }, []);
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#5BA0DC]">
+    <div className="relative min-h-screen overflow-x-hidden bg-[var(--color-secondary-500)]">
       {/* ── Background ─────────────────────────────────────────────── */}
       {/* Texture image tiled full-page height */}
       <img

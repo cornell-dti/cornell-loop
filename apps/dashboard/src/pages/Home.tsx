@@ -22,7 +22,6 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { SideBar } from "@app/ui";
 import type { SideBarItemId } from "@app/ui";
-import { Toggle } from "@app/ui";
 import { Tag } from "@app/ui";
 import { SearchBar } from "@app/ui";
 import { DashboardPost } from "@app/ui";
@@ -48,8 +47,6 @@ const SECTION_TITLE =
   "text-[var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
-
-export type FeedTab = "for-you" | "following";
 
 export interface FeedTagItem {
   /** Display label for the filter tag, e.g. "Recruitment". */
@@ -92,12 +89,6 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
   activeNavItem?: SideBarItemId;
   /** Called with the nav item id when a sidebar tab is clicked. */
   onNavigate?: (id: SideBarItemId) => void;
-
-  // ── Feed toggle ──
-  /** Active feed tab. Defaults to 'for-you'. */
-  activeTab?: FeedTab;
-  /** Called with the new tab value when the toggle changes. */
-  onTabChange?: (tab: FeedTab) => void;
 
   // ── Tag filter bar ──
   /**
@@ -339,8 +330,6 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
 export function Home({
   activeNavItem = "home",
   onNavigate,
-  activeTab = "for-you",
-  onTabChange,
   feedTags = DEFAULT_FEED_TAGS,
   onTagClick,
   onAddTag,
@@ -364,34 +353,25 @@ export function Home({
 
       {/* ── Main feed ── */}
       <main
-        className="flex-1 min-w-0 flex flex-col gap-[var(--space-6)] py-[var(--space-6)] overflow-y-auto"
+        className="flex-1 min-w-0 flex flex-col gap-[var(--space-6)] py-[var(--space-6)] overflow-y-auto bg-[var(--color-surface-subtle)]"
         aria-label="Feed"
       >
-        {/* ── Feed header: tab toggle + tag filter bar ── */}
-        <div className="flex flex-col gap-[var(--space-6)] w-full shrink-0">
-          {/*
-           * Feed tab toggle — "For you" / "Following".
-           * w-full stretches the toggle to fill the padded container.
-           * Figma (node 263:3535): full-width pill container, px 24px.
-           */}
-          <div className="px-[var(--space-6)]">
-            <Toggle
-              options={[
-                { value: "for-you", label: "For you" },
-                { value: "following", label: "Following" },
-              ]}
-              value={activeTab}
-              onChange={(v) => onTabChange?.(v as FeedTab)}
-              className="w-full"
-            />
-          </div>
+        {/* ── Feed header: search bar + tag filter bar ── */}
+        {/*
+         * Figma node 506:8718: SearchBar sits above the tag filter bar within
+         * the main feed, gap 16px. Tags row is the category filter shown
+         * beneath it; the "+" tag opens a picker.
+         */}
+        <div className="flex flex-col gap-[var(--space-4)] w-full shrink-0 px-[var(--space-8)]">
+          <SearchBar
+            value={searchValue}
+            onChange={onSearchChange}
+            onClear={onSearchClear}
+            placeholder="Search"
+            className="w-full shrink-0"
+          />
 
-          {/*
-           * Tag filter bar — horizontal scrollable row of neutral Tag chips.
-           * Figma (node 263:3540): px 32px, gap 12px.
-           * The final "+" tag triggers onAddTag to open a tag picker.
-           */}
-          <div className="flex items-center gap-[var(--space-3)] px-[var(--space-8)] overflow-x-auto">
+          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
             {feedTags.map((tag) => (
               <Tag
                 key={tag.label}
@@ -453,15 +433,6 @@ export function Home({
         ].join(" ")}
         aria-label="Contextual panel"
       >
-        {/* Search bar — Figma node 263:3692 */}
-        <SearchBar
-          value={searchValue}
-          onChange={onSearchChange}
-          onClear={onSearchClear}
-          placeholder="Search"
-          className="w-full shrink-0"
-        />
-
         {/* Contextual event sections — "This week", "Trending", etc. */}
         {sidePanels.map((panel, i) => (
           <HomeSidePanel key={i} {...panel} />
