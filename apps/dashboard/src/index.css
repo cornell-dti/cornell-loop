@@ -1,5 +1,5 @@
-@import 'tailwindcss';
-@import '@app/ui/styles/tokens.css';
+@import "tailwindcss";
+@import "@app/ui/styles/tokens.css";
 
 /* ─── Base reset / global defaults ──────────────────────────────────────── */
 
@@ -24,4 +24,16 @@ body {
 
 #root {
   min-height: 100vh;
+}
+
+/* ─── Landing page float animation ──────────────────────────────────────── */
+
+@keyframes landing-float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -10px;
+  }
 }

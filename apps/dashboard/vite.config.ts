@@ -14,6 +14,7 @@ export default defineConfig({
     tailwindcss(),
     svgr(),
   ],
+  envDir: '../../',
   resolve: {
     alias: {
       '@app/ui': path.resolve(__dirname, '../../shared/ui/src'),
