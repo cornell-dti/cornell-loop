@@ -138,7 +138,7 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
   return (
     <div
       className={[
-        "flex items-center justify-between w-full",
+        "flex w-full items-center justify-between",
         "bg-[var(--color-surface)]",
         "border border-[var(--color-border)]",
         "rounded-[var(--radius-card)]",
@@ -154,8 +154,8 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
          */}
         <span
           className={[
-            "inline-flex items-center justify-center shrink-0",
-            "rounded-full overflow-hidden",
+            "inline-flex shrink-0 items-center justify-center",
+            "overflow-hidden rounded-full",
             "size-[3.75rem]",
             "bg-[var(--color-surface-raised)]",
           ].join(" ")}
@@ -169,10 +169,10 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
           ) : (
             <span
               className={
-                "size-full flex items-center justify-center " +
+                "flex size-full items-center justify-center " +
                 "bg-[var(--color-secondary-400)] " +
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[var(--font-size-body1)] text-[var(--color-secondary-900)]"
+                "text-[var(--color-secondary-900)] text-[var(--font-size-body1)]"
               }
             >
               {item.orgName.charAt(0).toUpperCase()}
@@ -187,9 +187,9 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
             <span
               className={
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+                "leading-[var(--line-height-body1)] text-[var(--font-size-body1)] " +
                 "tracking-[var(--letter-spacing-body1)] " +
-                "text-[var(--color-neutral-700)] whitespace-nowrap"
+                "whitespace-nowrap text-[var(--color-neutral-700)]"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
@@ -210,7 +210,7 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
                   "rounded-full p-[var(--space-1)]",
                   "size-[var(--space-5)]",
                   "bg-[var(--color-neutral-600)]",
-                  "cursor-help shrink-0",
+                  "shrink-0 cursor-help",
                 ].join(" ")}
                 aria-label="Registered student organization"
               >
@@ -228,7 +228,7 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
           <p
             className={
               BODY2_REGULAR +
-              " text-[var(--color-text-muted)] whitespace-nowrap"
+              " whitespace-nowrap text-[var(--color-text-muted)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -240,9 +240,9 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
           <p
             className={
               "font-[family-name:var(--font-body)] font-normal italic " +
-              "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+              "leading-[var(--line-height-body2)] text-[var(--font-size-body2)] " +
               "tracking-[var(--letter-spacing-body2)] " +
-              "text-[var(--color-text-muted)] whitespace-nowrap"
+              "whitespace-nowrap text-[var(--color-text-muted)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -261,12 +261,12 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
         type="button"
         onClick={item.onUnsubscribe}
         className={[
-          "shrink-0 inline-flex items-center justify-center",
+          "inline-flex shrink-0 items-center justify-center",
           "px-[var(--space-4)] py-[var(--space-2)]",
           "rounded-[var(--radius-card)]",
           "bg-[var(--color-neutral-600)]",
           "font-[family-name:var(--font-body)] font-semibold",
-          "text-[var(--font-size-body2)] leading-[var(--line-height-body2)]",
+          "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
           "tracking-[var(--letter-spacing-body2)]",
           "text-[var(--color-white)]",
           "cursor-pointer whitespace-nowrap",
@@ -291,7 +291,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
   return (
     <div
       className={[
-        "flex flex-col gap-[var(--space-1)] w-full",
+        "flex w-full flex-col gap-[var(--space-1)]",
         "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
         "cursor-pointer",
         "hover:bg-[var(--color-surface-subtle)]",
@@ -301,7 +301,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
       {/* Event title */}
       <p
         className={
-          BODY2_SEMIBOLD + " text-[var(--color-neutral-700)] truncate w-full"
+          BODY2_SEMIBOLD + " w-full truncate text-[var(--color-neutral-700)]"
         }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
@@ -314,8 +314,8 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           {/* Circle avatar — 24 × 24 px */}
           <span
             className={[
-              "inline-flex items-center justify-center shrink-0",
-              "rounded-full overflow-hidden",
+              "inline-flex shrink-0 items-center justify-center",
+              "overflow-hidden rounded-full",
               "size-[var(--space-6)]",
               "bg-[var(--color-surface-raised)]",
             ].join(" ")}
@@ -329,10 +329,10 @@ function SideEventRow({ item }: { item: SideEventItem }) {
             ) : (
               <span
                 className={
-                  "size-full flex items-center justify-center " +
+                  "flex size-full items-center justify-center " +
                   "bg-[var(--color-secondary-400)] " +
                   "font-[family-name:var(--font-body)] font-semibold " +
-                  "text-[var(--font-size-body3)] text-[var(--color-secondary-900)]"
+                  "text-[var(--color-secondary-900)] text-[var(--font-size-body3)]"
                 }
               >
                 {item.orgName.charAt(0).toUpperCase()}
@@ -344,7 +344,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           <span
             className={
               BODY2_REGULAR +
-              " text-[var(--color-text-secondary)] whitespace-nowrap"
+              " whitespace-nowrap text-[var(--color-text-secondary)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -383,7 +383,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
               "rounded-[var(--radius-input)]",
               "bg-[var(--color-primary-500)]",
               "font-[family-name:var(--font-body)] font-medium",
-              "text-[var(--font-size-body2)] leading-[var(--space-6)]",
+              "leading-[var(--space-6)] text-[var(--font-size-body2)]",
               "tracking-[var(--letter-spacing-body2)]",
               "text-[var(--color-primary-800)]",
               "whitespace-nowrap select-none",
@@ -423,7 +423,7 @@ function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
         {title}
       </h2>
 
-      <div className="flex flex-col gap-[var(--space-4)] w-full">
+      <div className="flex w-full flex-col gap-[var(--space-4)]">
         {items.map((item, i) => (
           <SideEventRow key={i} item={item} />
         ))}
@@ -496,11 +496,11 @@ export function Subscriptions({
 
       {/* ── Main content ── */}
       <main
-        className="flex-1 min-w-0 flex flex-col gap-[var(--space-6)] py-[var(--space-6)] overflow-y-auto"
+        className="flex min-w-0 flex-1 flex-col gap-[var(--space-6)] overflow-y-auto py-[var(--space-6)]"
         aria-label="Subscriptions"
       >
         {/* ── Page header ── */}
-        <div className="flex flex-col gap-[var(--space-6)] w-full shrink-0">
+        <div className="flex w-full shrink-0 flex-col gap-[var(--space-6)]">
           {/*
            * Heading row: "Subscriptions" wordmark + count badge.
            * Figma (node 260:2796): px 24px, gap 12px.
@@ -510,8 +510,8 @@ export function Subscriptions({
             <h1
               className={
                 "font-[family-name:var(--font-brand)] font-bold " +
-                "text-[var(--font-size-wordmark)] leading-[normal] " +
-                "text-[var(--color-black)] whitespace-nowrap"
+                "leading-[normal] text-[var(--font-size-wordmark)] " +
+                "whitespace-nowrap text-[var(--color-black)]"
               }
             >
               Subscriptions
@@ -530,7 +530,7 @@ export function Subscriptions({
                   "rounded-[var(--space-3)]",
                   "bg-[var(--color-neutral-200)]",
                   "font-[family-name:var(--font-body)] font-normal",
-                  "text-[var(--font-size-body2)] leading-[1.5]",
+                  "leading-[1.5] text-[var(--font-size-body2)]",
                   "tracking-[var(--letter-spacing-body2)]",
                   "text-[var(--color-text-secondary)]",
                   "whitespace-nowrap select-none",
@@ -558,7 +558,7 @@ export function Subscriptions({
 
         {/* Horizontal divider — Figma node 260:2814 */}
         <div
-          className="h-px w-full bg-[var(--color-border)] shrink-0"
+          className="h-px w-full shrink-0 bg-[var(--color-border)]"
           role="separator"
           aria-hidden="true"
         />

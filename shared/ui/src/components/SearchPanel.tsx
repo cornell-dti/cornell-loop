@@ -28,10 +28,18 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { Tag } from "./Tags";
 import { fallbackColorsForName } from "../utils/fallbackColors";
 import { DateBadge } from "./DateBadge";
+import { OrgHoverCard } from "./OrgHoverCard";
+import type { Organization } from "./Cards/DashboardPost";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -61,6 +69,12 @@ export interface Club {
   avatarUrl?: string;
   /** When > 0 an orange notification pill is rendered over the avatar. */
   notificationCount?: number;
+  /**
+   * Short blurb about the club — surfaced in hover/detail contexts (e.g.
+   * OrgHoverCard) and useful when the same fixture feeds both the sidebar
+   * list and a richer surface.
+   */
+  description?: string;
 }
 
 export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
@@ -178,9 +192,52 @@ function ClubItem({ club }: { club: Club }) {
   const count = club.notificationCount ?? 0;
   const fallback = fallbackColorsForName(club.name);
 
+  // Hover card state — mirrors the pattern in DashboardPost so a club row
+  // reveals its description on hover. The card is placed to the LEFT of the
+  // row because the SearchPanel itself is a narrow right-side column; a
+  // bottom dropdown would overflow the panel horizontally.
+  const [hovered, setHovered] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const handleEnter = useCallback(() => {
+    clearHideTimer();
+    setHovered(true);
+  }, [clearHideTimer]);
+
+  const handleLeave = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setHovered(false), 120);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current !== null) {
+        clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Adapt Club → Organization shape for OrgHoverCard. Clubs in "Your Clubs"
+  // are by definition already subscribed, so default to `following: true`.
+  const org: Organization = {
+    name: club.name,
+    avatarUrl: club.avatarUrl,
+    description: club.description,
+    following: true,
+  };
+
   return (
     <div
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
       className={[
+        "relative",
         "flex w-full items-center gap-[var(--space-3)]",
         "p-[var(--space-1-5)]",
         "rounded-[var(--radius-input)]",
@@ -189,6 +246,7 @@ function ClubItem({ club }: { club: Club }) {
         "transition-colors duration-150",
       ].join(" ")}
     >
+      <OrgHoverCard org={org} visible={hovered} placement="left" />
       {/* Avatar + badge wrapper */}
       <div className="relative shrink-0">
         <div

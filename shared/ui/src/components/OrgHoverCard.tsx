@@ -24,29 +24,53 @@ const BODY2 =
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
+export type OrgHoverCardPlacement = "bottom" | "left";
+
 export interface OrgHoverCardProps {
   /** The organisation data to display. */
   org: Organization;
   /** Whether the hover card is currently visible. */
   visible: boolean;
+  /**
+   * Where the card sits relative to the trigger.
+   * - `bottom` (default): drops below the trigger with an arrow on top
+   *   pointing at the name. Used inline in post headers.
+   * - `left`: floats to the left of the trigger with an arrow on the right,
+   *   useful when the trigger lives in a narrow right-side panel where a
+   *   dropdown would overflow the panel.
+   */
+  placement?: OrgHoverCardPlacement;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function OrgHoverCard({ org, visible }: OrgHoverCardProps) {
+export function OrgHoverCard({
+  org,
+  visible,
+  placement = "bottom",
+}: OrgHoverCardProps) {
   const fallback = fallbackColorsForName(org.name);
+  const isLeft = placement === "left";
 
   return (
     <div
       className={[
-        "absolute top-full left-0 z-50",
-        /* Transparent bridge padding fills the gap between trigger and card
-           so the mouse never leaves the hover zone */
-        "pt-[var(--space-2)]",
+        "absolute z-50",
+        /*
+         * Placement-specific positioning + transparent bridge padding so the
+         * mouse never leaves the hover zone between trigger and card.
+         */
+        isLeft
+          ? "top-1/2 right-full -translate-y-1/2 pr-[var(--space-2)]"
+          : "top-full left-0 pt-[var(--space-2)]",
         "transition-[opacity,transform] duration-150",
         visible
-          ? "pointer-events-auto translate-y-0 opacity-100"
-          : "pointer-events-none -translate-y-1 opacity-0",
+          ? isLeft
+            ? "pointer-events-auto translate-x-0 opacity-100"
+            : "pointer-events-auto translate-y-0 opacity-100"
+          : isLeft
+            ? "pointer-events-none translate-x-1 opacity-0"
+            : "pointer-events-none -translate-y-1 opacity-0",
       ].join(" ")}
     >
       <div
@@ -60,10 +84,22 @@ export function OrgHoverCard({ org, visible }: OrgHoverCardProps) {
           "shadow-[var(--shadow-1)]",
         ].join(" ")}
       >
-        {/* Arrow border (outer) — centered on trigger name */}
-        <span className="absolute -top-[7px] left-[var(--space-6)] h-0 w-0 border-x-[7px] border-b-[7px] border-x-transparent border-b-[var(--color-neutral-300)]" />
+        {/* Arrow border (outer) */}
+        <span
+          className={
+            isLeft
+              ? "absolute top-1/2 -right-[7px] -translate-y-1/2 border-y-[7px] border-l-[7px] border-y-transparent border-l-[var(--color-neutral-300)]"
+              : "absolute -top-[7px] left-[var(--space-6)] h-0 w-0 border-x-[7px] border-b-[7px] border-x-transparent border-b-[var(--color-neutral-300)]"
+          }
+        />
         {/* Arrow fill (inner, white) */}
-        <span className="absolute -top-[6px] left-[25px] h-0 w-0 border-x-[6px] border-b-[6px] border-x-transparent border-b-[var(--color-surface)]" />
+        <span
+          className={
+            isLeft
+              ? "absolute top-1/2 -right-[6px] -translate-y-1/2 border-y-[6px] border-l-[6px] border-y-transparent border-l-[var(--color-surface)]"
+              : "absolute -top-[6px] left-[25px] h-0 w-0 border-x-[6px] border-b-[6px] border-x-transparent border-b-[var(--color-surface)]"
+          }
+        />
         {/* Top row: avatar + name + follow button */}
         <div className="flex items-center justify-between gap-[var(--space-2)]">
           <div className="flex items-center gap-[var(--space-2)]">

@@ -130,7 +130,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
   return (
     <div
       className={[
-        "flex flex-col gap-[var(--space-1)] w-full",
+        "flex w-full flex-col gap-[var(--space-1)]",
         "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
         "cursor-pointer",
         "hover:bg-[var(--color-surface-subtle)]",
@@ -140,7 +140,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
       {/* Event title */}
       <p
         className={
-          BODY2_SEMIBOLD + " text-[var(--color-neutral-700)] truncate w-full"
+          BODY2_SEMIBOLD + " w-full truncate text-[var(--color-neutral-700)]"
         }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
@@ -153,8 +153,8 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           {/* Circle avatar — 24 × 24 px */}
           <span
             className={[
-              "inline-flex items-center justify-center shrink-0",
-              "rounded-full overflow-hidden",
+              "inline-flex shrink-0 items-center justify-center",
+              "overflow-hidden rounded-full",
               "size-[var(--space-6)]",
               "bg-[var(--color-surface-raised)]",
             ].join(" ")}
@@ -168,10 +168,10 @@ function SideEventRow({ item }: { item: SideEventItem }) {
             ) : (
               <span
                 className={
-                  "size-full flex items-center justify-center " +
+                  "flex size-full items-center justify-center " +
                   "bg-[var(--color-secondary-400)] " +
                   "font-[family-name:var(--font-body)] font-semibold " +
-                  "text-[var(--font-size-body3)] text-[var(--color-secondary-900)]"
+                  "text-[var(--color-secondary-900)] text-[var(--font-size-body3)]"
                 }
               >
                 {item.orgName.charAt(0).toUpperCase()}
@@ -183,7 +183,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           <span
             className={
               BODY2_REGULAR +
-              " text-[var(--color-text-secondary)] whitespace-nowrap"
+              " whitespace-nowrap text-[var(--color-text-secondary)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -222,7 +222,7 @@ function SideEventRow({ item }: { item: SideEventItem }) {
               "rounded-[var(--radius-input)]",
               "bg-[var(--color-primary-500)]",
               "font-[family-name:var(--font-body)] font-medium",
-              "text-[var(--font-size-body2)] leading-[var(--space-6)]",
+              "leading-[var(--space-6)] text-[var(--font-size-body2)]",
               "tracking-[var(--letter-spacing-body2)]",
               "text-[var(--color-primary-800)]",
               "whitespace-nowrap select-none",
@@ -262,7 +262,7 @@ function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
         {title}
       </h2>
 
-      <div className="flex flex-col gap-[var(--space-4)] w-full">
+      <div className="flex w-full flex-col gap-[var(--space-4)]">
         {items.map((item, i) => (
           <SideEventRow key={i} item={item} />
         ))}
@@ -337,11 +337,11 @@ export function Bookmarks({
 
       {/* ── Main content ── */}
       <main
-        className="flex-1 min-w-0 flex flex-col gap-[var(--space-6)] py-[var(--space-6)] overflow-y-auto"
+        className="flex min-w-0 flex-1 flex-col gap-[var(--space-6)] overflow-y-auto py-[var(--space-6)]"
         aria-label="Bookmarks"
       >
         {/* ── Page header ── */}
-        <div className="flex flex-col gap-[var(--space-6)] w-full shrink-0">
+        <div className="flex w-full shrink-0 flex-col gap-[var(--space-6)]">
           {/*
            * Heading — Figma (node 260:2577): px 24px.
            * Typography: Manrope Bold ~31px = --font-brand + --font-size-wordmark.
@@ -350,8 +350,8 @@ export function Bookmarks({
             <h1
               className={
                 "font-[family-name:var(--font-brand)] font-bold " +
-                "text-[var(--font-size-wordmark)] leading-[normal] " +
-                "text-[var(--color-black)] whitespace-nowrap"
+                "leading-[normal] text-[var(--font-size-wordmark)] " +
+                "whitespace-nowrap text-[var(--color-black)]"
               }
             >
               Bookmarks
@@ -380,7 +380,7 @@ export function Bookmarks({
                   key={tag.label}
                   color="neutral"
                   onClick={() => onTagClick?.(tag.label)}
-                  className="cursor-pointer shrink-0"
+                  className="shrink-0 cursor-pointer"
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
                   {tag.label}
@@ -391,7 +391,7 @@ export function Bookmarks({
               <Tag
                 color="neutral"
                 onClick={onAddTag}
-                className="cursor-pointer shrink-0"
+                className="shrink-0 cursor-pointer"
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >
                 +
@@ -402,7 +402,7 @@ export function Bookmarks({
 
         {/* Horizontal divider — Figma node 260:2389 */}
         <div
-          className="h-px w-full bg-[var(--color-border)] shrink-0"
+          className="h-px w-full shrink-0 bg-[var(--color-border)]"
           role="separator"
           aria-hidden="true"
         />

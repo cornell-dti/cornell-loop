@@ -98,9 +98,9 @@ function CTAButton({
         "inline-flex items-center gap-3",
         "bg-[var(--color-black)] text-[var(--color-white)]",
         "font-[family-name:var(--font-body)] font-semibold",
-        "text-lg md:text-[21px] leading-[30px] tracking-[-0.75px]",
-        "px-6 py-2.5 rounded-full",
-        "hover:opacity-90 transition-opacity",
+        "text-lg leading-[30px] tracking-[-0.75px] md:text-[21px]",
+        "rounded-full px-6 py-2.5",
+        "transition-opacity hover:opacity-90",
         className,
       ]
         .filter(Boolean)
@@ -153,24 +153,24 @@ function FeatureCard({
   return (
     <div
       className={[
-        "flex-1 border-2 rounded-3xl p-6 flex flex-col gap-6 min-h-[400px] lg:min-h-[553px] overflow-hidden",
+        "flex min-h-[400px] flex-1 flex-col gap-6 overflow-hidden rounded-3xl border-2 p-6 lg:min-h-[553px]",
         v.bg,
         v.border,
       ].join(" ")}
     >
-      <div className="flex-1 flex flex-col items-center justify-center min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
         <img
           src={mockupSrc}
           alt={mockupAlt}
           loading="lazy"
           decoding="async"
-          className="w-full h-full max-h-full object-contain object-center"
+          className="h-full max-h-full w-full object-contain object-center"
         />
       </div>
       <div className="flex flex-col gap-1">
         <h3
           className={[
-            "font-[family-name:var(--font-body)] font-bold text-[24px] md:text-[28px] tracking-[-1px]",
+            "font-[family-name:var(--font-body)] text-[24px] font-bold tracking-[-1px] md:text-[28px]",
             v.title,
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
@@ -179,7 +179,7 @@ function FeatureCard({
         </h3>
         <p
           className={[
-            "font-[family-name:var(--font-body)] font-medium text-[16px] md:text-lg tracking-[-0.5px] leading-[28px]",
+            "font-[family-name:var(--font-body)] text-[16px] leading-[28px] font-medium tracking-[-0.5px] md:text-lg",
             v.desc,
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
@@ -250,17 +250,17 @@ export default function Landing() {
         src={bgTexture}
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 w-full h-full max-w-none object-cover pointer-events-none mix-blend-overlay opacity-80"
+        className="pointer-events-none absolute inset-0 h-full w-full max-w-none object-cover opacity-80 mix-blend-overlay"
       />
 
       {/* ── Sticky Navbar ─────────────────────────────────────────── */}
-      <nav className="sticky top-0 z-50 flex items-center justify-between px-6 md:px-12 py-4 md:py-6">
+      <nav className="sticky top-0 z-50 flex items-center justify-between px-6 py-4 md:px-12 md:py-6">
         <LoopLogo variant="wordmark-light" size="sm" />
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={handleCTA}
-            className="hidden sm:inline-flex items-center justify-center border border-white/80 text-white rounded-[var(--radius-button)] px-4 py-1.5 text-sm font-normal tracking-[-0.5px] hover:bg-white/10 transition-colors"
+            className="hidden items-center justify-center rounded-[var(--radius-button)] border border-white/80 px-4 py-1.5 text-sm font-normal tracking-[-0.5px] text-white transition-colors hover:bg-white/10 sm:inline-flex"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Go to dashboard
@@ -268,7 +268,7 @@ export default function Landing() {
           <button
             type="button"
             onClick={handleCTA}
-            className="inline-flex items-center justify-center bg-[var(--color-primary-700)] text-white rounded-[var(--radius-button)] px-4 py-1.5 text-sm font-normal tracking-[-0.5px] hover:bg-[var(--color-primary-hover)] transition-colors"
+            className="inline-flex items-center justify-center rounded-[var(--radius-button)] bg-[var(--color-primary-700)] px-4 py-1.5 text-sm font-normal tracking-[-0.5px] text-white transition-colors hover:bg-[var(--color-primary-hover)]"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Install
@@ -281,7 +281,7 @@ export default function Landing() {
           in pixels on the Figma canvas; we mirror those using percentage
           values so the stage can scale below 1280 without stretching at wide
           viewports. Content flows above decorations. */}
-      <section className="relative pt-12 md:pt-20 lg:pt-0 pb-4 md:pb-6">
+      <section className="relative pt-12 pb-4 md:pt-20 md:pb-6 lg:pt-0">
         <div className="relative mx-auto w-full max-w-[1280px] lg:h-[596px]">
           {/* Stamp card shape — white scalloped postage-stamp card behind hero content.
               Figma: visible stamp is x=333, y=204, 614×390 (stage-relative y=122).
@@ -290,7 +290,7 @@ export default function Landing() {
           <img
             src={heroStamp}
             alt=""
-            className="absolute hidden lg:block left-1/2 top-[116px] w-[626px] h-[402px] pointer-events-none z-0"
+            className="pointer-events-none absolute top-[116px] left-1/2 z-0 hidden h-[402px] w-[626px] lg:block"
             style={{ transform: "translateX(-50%)" }}
             aria-hidden="true"
           />
@@ -298,7 +298,7 @@ export default function Landing() {
           {/* Floating decorations — desktop only. Positions and sizes
               mirror the 1280-wide Figma canvas. left% = pixel_x / 1280. */}
           <div
-            className="hidden lg:block pointer-events-none"
+            className="pointer-events-none hidden lg:block"
             aria-hidden="true"
           >
             {/* DTI orange circle badge — Figma 997:4963 outer wrapper at
@@ -360,10 +360,10 @@ export default function Landing() {
               Stamp visible rect: top=122, height=390 (in stage coords). */}
 
           {/* Badge pill — above stamp on desktop */}
-          <div className="relative z-10 flex justify-center px-4 lg:absolute lg:left-1/2 lg:-translate-x-1/2 lg:top-[48px] lg:px-0">
-            <div className="border border-white/80 rounded-full px-3 py-0.5">
+          <div className="relative z-10 flex justify-center px-4 lg:absolute lg:top-[48px] lg:left-1/2 lg:-translate-x-1/2 lg:px-0">
+            <div className="rounded-full border border-white/80 px-3 py-0.5">
               <span
-                className="font-[family-name:var(--font-body)] font-medium text-white text-lg tracking-[-0.5px]"
+                className="font-[family-name:var(--font-body)] text-lg font-medium tracking-[-0.5px] text-white"
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >
                 A new product from{" "}
@@ -380,19 +380,19 @@ export default function Landing() {
           </div>
 
           {/* Body — centered inside stamp on desktop; normal flow on mobile */}
-          <div className="relative z-10 mt-6 flex flex-col items-center gap-6 max-w-[481px] mx-auto px-4 lg:mt-0 lg:absolute lg:left-1/2 lg:-translate-x-1/2 lg:top-[122px] lg:h-[390px] lg:justify-center lg:px-0">
+          <div className="relative z-10 mx-auto mt-6 flex max-w-[481px] flex-col items-center gap-6 px-4 lg:absolute lg:top-[122px] lg:left-1/2 lg:mt-0 lg:h-[390px] lg:-translate-x-1/2 lg:justify-center lg:px-0">
             {/* Headline */}
             <div className="flex flex-col items-center gap-2">
               <div className="flex flex-col items-center">
                 <h1
-                  className="font-[family-name:var(--font-body)] font-bold text-[36px] md:text-[48px] leading-[44px] md:leading-[56px] text-[var(--color-black)] text-center tracking-[-0.5px]"
+                  className="text-center font-[family-name:var(--font-body)] text-[36px] leading-[44px] font-bold tracking-[-0.5px] text-[var(--color-black)] md:text-[48px] md:leading-[56px]"
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
                   Less inbox,
                 </h1>
                 <div className="flex items-center gap-2">
                   <h1
-                    className="font-[family-name:var(--font-body)] font-bold text-[36px] md:text-[48px] leading-[44px] md:leading-[56px] text-[var(--color-black)] text-center tracking-[-0.5px]"
+                    className="text-center font-[family-name:var(--font-body)] text-[36px] leading-[44px] font-bold tracking-[-0.5px] text-[var(--color-black)] md:text-[48px] md:leading-[56px]"
                     style={{ fontVariationSettings: "'opsz' 14" }}
                   >
                     more Cornell
@@ -401,13 +401,13 @@ export default function Landing() {
                   <img
                     src={heroWaveEmoji}
                     alt=""
-                    className="hidden md:inline-block w-[64px] h-auto"
+                    className="hidden h-auto w-[64px] md:inline-block"
                   />
                 </div>
               </div>
 
               {/* Subtitle */}
-              <p className="font-[family-name:var(--font-brand)] text-[16px] md:text-[20px] text-[var(--color-black)] opacity-50 text-center max-w-[401px]">
+              <p className="max-w-[401px] text-center font-[family-name:var(--font-brand)] text-[16px] text-[var(--color-black)] opacity-50 md:text-[20px]">
                 Never miss out on a campus opportunity again — from recruiting
                 events to free food.
               </p>
@@ -423,10 +423,10 @@ export default function Landing() {
       <button
         type="button"
         onClick={scrollToPreview}
-        className="relative z-10 flex items-center justify-center gap-1 py-1 md:py-2 mx-auto text-[rgba(34,115,161,0.85)] hover:text-[rgba(34,115,161,1)] transition-colors cursor-pointer"
+        className="relative z-10 mx-auto flex cursor-pointer items-center justify-center gap-1 py-1 text-[rgba(34,115,161,0.85)] transition-colors hover:text-[rgba(34,115,161,1)] md:py-2"
       >
         <span
-          className="font-[family-name:var(--font-body)] font-medium text-lg tracking-[-0.5px]"
+          className="font-[family-name:var(--font-body)] text-lg font-medium tracking-[-0.5px]"
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Stay in the loop
@@ -438,8 +438,8 @@ export default function Landing() {
       {/* Figma 1280 canvas: dashboard (841:4949) centered, 871.6×544.9 @ top=758.
           Floaters positioned as % of dashboard frame so they scale together. */}
       <section ref={previewRef} className="relative pb-16 md:pb-24">
-        <div className="relative max-w-[1100px] mx-auto px-4">
-          <div className="relative w-full max-w-[872px] mx-auto">
+        <div className="relative mx-auto max-w-[1100px] px-4">
+          <div className="relative mx-auto w-full max-w-[872px]">
             {/* Dashboard screenshot (841:4949) */}
             <img
               src={dashboardScreenshot}
@@ -452,7 +452,7 @@ export default function Landing() {
             {/* Extension popup (841:4951) — left=872 top=744 w=243.7 h=573.
                 Relative to dashboard: left=76.2%, top=-2.57%, w=27.95% */}
             <div
-              className="hidden lg:block absolute animate-[landing-float_5s_ease-in-out_infinite_0.5s]"
+              className="absolute hidden animate-[landing-float_5s_ease-in-out_infinite_0.5s] lg:block"
               style={{ left: "76.2%", top: "-2.57%", width: "27.95%" }}
             >
               <img
@@ -471,7 +471,7 @@ export default function Landing() {
               alt="Event card preview: How to Land an Engineering Internship 101"
               loading="lazy"
               decoding="async"
-              className="hidden lg:block absolute animate-[landing-float_4.5s_ease-in-out_infinite_0.2s]"
+              className="absolute hidden animate-[landing-float_4.5s_ease-in-out_infinite_0.2s] lg:block"
               style={{ left: "-9.7%", top: "39.3%", width: "45.4%" }}
             />
 
@@ -482,7 +482,7 @@ export default function Landing() {
               alt="Loop Summary card"
               loading="lazy"
               decoding="async"
-              className="hidden lg:block absolute animate-[landing-float_5s_ease-in-out_infinite_0.8s]"
+              className="absolute hidden animate-[landing-float_5s_ease-in-out_infinite_0.8s] lg:block"
               style={{ left: "15.4%", top: "90%", width: "43.5%" }}
             />
           </div>
@@ -495,16 +495,16 @@ export default function Landing() {
           76px left of card, 80px down from card top.
           Right envelope: left=639 top=0 (167×165) → sits 70px right of
           card right edge, 89px above card top. */}
-      <section className="relative pt-6 md:pt-12 pb-24 md:pb-32 overflow-visible">
-        <div className="relative max-w-[820px] mx-auto px-4">
+      <section className="relative overflow-visible pt-6 pb-24 md:pt-12 md:pb-32">
+        <div className="relative mx-auto max-w-[820px] px-4">
           {/* Stats card wrapper — envelopes anchored to card edges */}
-          <div className="relative bg-white/80 rounded-3xl px-4 md:px-14 py-8 text-center">
+          <div className="relative rounded-3xl bg-white/80 px-4 py-8 text-center md:px-14">
             <img
               src={statsLeft}
               alt=""
               loading="lazy"
               decoding="async"
-              className="hidden lg:block absolute w-[162px] rotate-[-15.76deg] animate-[landing-float_4s_ease-in-out_infinite] pointer-events-none"
+              className="pointer-events-none absolute hidden w-[162px] rotate-[-15.76deg] animate-[landing-float_4s_ease-in-out_infinite] lg:block"
               style={{ left: "-76px", top: "80px" }}
               aria-hidden="true"
             />
@@ -513,12 +513,12 @@ export default function Landing() {
               alt=""
               loading="lazy"
               decoding="async"
-              className="hidden lg:block absolute w-[168px] animate-[landing-float_3.8s_ease-in-out_infinite_0.5s] pointer-events-none"
+              className="pointer-events-none absolute hidden w-[168px] animate-[landing-float_3.8s_ease-in-out_infinite_0.5s] lg:block"
               style={{ right: "-70px", top: "-89px" }}
               aria-hidden="true"
             />
             <p
-              className="font-[family-name:var(--font-body)] font-medium text-[20px] md:text-[24px] tracking-[-0.59px] text-[var(--color-black)]"
+              className="font-[family-name:var(--font-body)] text-[20px] font-medium tracking-[-0.59px] text-[var(--color-black)] md:text-[24px]"
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               The average Cornellian has{" "}
@@ -528,7 +528,7 @@ export default function Landing() {
               emails in their inbox.
             </p>
             <p
-              className="font-[family-name:var(--font-body)] font-medium text-[16px] md:text-lg text-[var(--color-black)] opacity-50 tracking-[-0.5px] mt-2"
+              className="mt-2 font-[family-name:var(--font-body)] text-[16px] font-medium tracking-[-0.5px] text-[var(--color-black)] opacity-50 md:text-lg"
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               Most of these emails never get opened.
@@ -538,17 +538,17 @@ export default function Landing() {
       </section>
 
       {/* ── Value Proposition Banner ──────────────────────────────── */}
-      <section className="relative px-4 md:px-8 lg:px-[121px] pb-12 md:pb-24">
-        <div className="relative bg-[var(--color-black)] rounded-3xl px-6 md:px-16 lg:px-[145px] py-8 md:py-[37px] text-center overflow-hidden">
+      <section className="relative px-4 pb-12 md:px-8 md:pb-24 lg:px-[121px]">
+        <div className="relative overflow-hidden rounded-3xl bg-[var(--color-black)] px-6 py-8 text-center md:px-16 md:py-[37px] lg:px-[145px]">
           <div className="relative flex flex-col items-center gap-1">
             <p
-              className="font-[family-name:var(--font-body)] text-[28px] md:text-[40px] text-white tracking-[-1px] leading-[36px] md:leading-[48px] inline-flex flex-wrap items-center justify-center gap-2"
+              className="inline-flex flex-wrap items-center justify-center gap-2 font-[family-name:var(--font-body)] text-[28px] leading-[36px] tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               <LoopLogo
                 variant="mark"
                 size="md"
-                className="[&_svg]:size-[30px] inline-block"
+                className="inline-block [&_svg]:size-[30px]"
               />
               <span className="font-bold">Loop</span>
               <span className="font-medium">
@@ -556,13 +556,13 @@ export default function Landing() {
               </span>
             </p>
             <p
-              className="font-[family-name:var(--font-body)] font-medium text-[28px] md:text-[40px] text-white tracking-[-1px] leading-[36px] md:leading-[48px]"
+              className="font-[family-name:var(--font-body)] text-[28px] leading-[36px] font-medium tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               <span ref={highlightRef} className="relative inline-block">
                 <span
                   aria-hidden="true"
-                  className="absolute top-0 bottom-0 -left-2 -right-2 rounded-xl bg-white/40 transition-opacity duration-700 ease-out"
+                  className="absolute top-0 -right-2 bottom-0 -left-2 rounded-xl bg-white/40 transition-opacity duration-700 ease-out"
                   style={{ opacity: isHighlighted ? 1 : 0 }}
                 />
                 <span className="relative">highlights</span>
@@ -574,16 +574,16 @@ export default function Landing() {
       </section>
 
       {/* ── Features ──────────────────────────────────────────────── */}
-      <section className="relative px-4 md:px-8 lg:px-[121px] pb-12 md:pb-24">
-        <div className="max-w-[1038px] mx-auto flex flex-col gap-6">
+      <section className="relative px-4 pb-12 md:px-8 md:pb-24 lg:px-[121px]">
+        <div className="mx-auto flex max-w-[1038px] flex-col gap-6">
           <h2
-            className="font-[family-name:var(--font-body)] font-bold text-[36px] md:text-[48px] leading-[56px] text-[var(--color-black)] text-center tracking-[-0.5px]"
+            className="text-center font-[family-name:var(--font-body)] text-[36px] leading-[56px] font-bold tracking-[-0.5px] text-[var(--color-black)] md:text-[48px]"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Features
           </h2>
 
-          <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex flex-col gap-6 lg:flex-row">
             {/* Card A — Directly in your inbox */}
             <FeatureCard
               variant="primary"
@@ -617,21 +617,21 @@ export default function Landing() {
       {/* ── Final CTA ─────────────────────────────────────────────── */}
       {/* Wave pattern SVG viewBox is 1050×278; wrapper matches that aspect
           ratio so the postage-stamp scallops stay uniform across viewports. */}
-      <section className="relative px-4 md:px-8 lg:px-[121px] pb-12 md:pb-24">
-        <div className="relative max-w-[1038px] mx-auto aspect-[1050/278] overflow-hidden">
+      <section className="relative px-4 pb-12 md:px-8 md:pb-24 lg:px-[121px]">
+        <div className="relative mx-auto aspect-[1050/278] max-w-[1038px] overflow-hidden">
           {/* Wave pattern background */}
           <img
             src={wavePattern}
             alt=""
             loading="lazy"
             decoding="async"
-            className="absolute inset-0 w-full h-full pointer-events-none"
+            className="pointer-events-none absolute inset-0 h-full w-full"
             aria-hidden="true"
           />
 
-          <div className="relative flex flex-col items-center justify-center gap-4 w-full h-full px-6">
+          <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 px-6">
             <h2
-              className="font-[family-name:var(--font-body)] font-bold text-[36px] md:text-[48px] leading-[48px] md:leading-[64px] text-[var(--color-black)] text-center tracking-[-0.5px]"
+              className="text-center font-[family-name:var(--font-body)] text-[36px] leading-[48px] font-bold tracking-[-0.5px] text-[var(--color-black)] md:text-[48px] md:leading-[64px]"
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               Stay in the{" "}
