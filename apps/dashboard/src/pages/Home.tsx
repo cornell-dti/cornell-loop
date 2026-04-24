@@ -19,37 +19,37 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import { SideBar } from '../../../../shared/ui/src/components/SideBar';
-import type { SideBarItemId } from '../../../../shared/ui/src/components/SideBar';
-import { Toggle } from '../../../../shared/ui/src/components/Toggle';
-import { Tag } from '../../../../shared/ui/src/components/Tags';
-import { SearchBar } from '../../../../shared/ui/src/components/SearchBar';
-import { DashboardPost } from '../../../../shared/ui/src/components/Cards/DashboardPost';
-import type { DashboardPostProps } from '../../../../shared/ui/src/components/Cards/DashboardPost';
-import StarIcon from '../assets/star.svg?react';
+import type { ComponentPropsWithoutRef } from "react";
+import { SideBar } from "@app/ui";
+import type { SideBarItemId } from "@app/ui";
+import { Toggle } from "@app/ui";
+import { Tag } from "@app/ui";
+import { SearchBar } from "@app/ui";
+import { DashboardPost } from "@app/ui";
+import type { DashboardPostProps } from "@app/ui";
+import StarIcon from "../assets/star.svg?react";
 
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_SEMIBOLD =
-  'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-semibold " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY2_REGULAR =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const SECTION_TITLE =
-  'font-[family-name:var(--font-body)] font-bold ' +
-  'text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] ' +
-  'tracking-[var(--letter-spacing-body1)] ' +
-  'text-[var(--color-neutral-900)] whitespace-nowrap';
+  "font-[family-name:var(--font-body)] font-bold " +
+  "text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
+  "tracking-[var(--letter-spacing-body1)] " +
+  "text-[var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type FeedTab = 'for-you' | 'following';
+export type FeedTab = "for-you" | "following";
 
 export interface FeedTagItem {
   /** Display label for the filter tag, e.g. "Recruitment". */
@@ -86,7 +86,7 @@ export interface HomeSidePanelProps {
   onShowMore?: () => void;
 }
 
-export interface HomeProps extends ComponentPropsWithoutRef<'div'> {
+export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
   /** Currently active navigation item. Defaults to 'home'. */
   activeNavItem?: SideBarItemId;
@@ -130,11 +130,11 @@ export interface HomeProps extends ComponentPropsWithoutRef<'div'> {
 // ─── Default data ─────────────────────────────────────────────────────────────
 
 const DEFAULT_FEED_TAGS: FeedTagItem[] = [
-  { label: 'Recruitment' },
-  { label: 'Early Career' },
-  { label: 'Tech' },
-  { label: 'Mentorship' },
-  { label: 'Just for Fun' },
+  { label: "Recruitment" },
+  { label: "Early Career" },
+  { label: "Tech" },
+  { label: "Mentorship" },
+  { label: "Just for Fun" },
 ];
 
 // ─── HomeEventRow ─────────────────────────────────────────────────────────────
@@ -148,16 +148,18 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-1)] w-full',
-        'rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]',
-        'cursor-pointer',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
-      ].join(' ')}
+        "flex flex-col gap-[var(--space-1)] w-full",
+        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
+        "cursor-pointer",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
+      ].join(" ")}
     >
       {/* Event title — semibold, single line truncation */}
       <p
-        className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] truncate w-full'}
+        className={
+          BODY2_SEMIBOLD + " text-[var(--color-neutral-700)] truncate w-full"
+        }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {item.title}
@@ -173,11 +175,11 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
            */}
           <span
             className={[
-              'inline-flex items-center justify-center shrink-0',
-              'rounded-full overflow-hidden',
-              'size-[var(--space-6)]',
-              'bg-[var(--color-surface-raised)]',
-            ].join(' ')}
+              "inline-flex items-center justify-center shrink-0",
+              "rounded-full overflow-hidden",
+              "size-[var(--space-6)]",
+              "bg-[var(--color-surface-raised)]",
+            ].join(" ")}
           >
             {item.orgAvatarUrl ? (
               <img
@@ -188,10 +190,10 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
             ) : (
               <span
                 className={
-                  'size-full flex items-center justify-center ' +
-                  'bg-[var(--color-secondary-400)] ' +
-                  'font-[family-name:var(--font-body)] font-semibold ' +
-                  'text-[var(--font-size-body3)] text-[var(--color-secondary-900)]'
+                  "size-full flex items-center justify-center " +
+                  "bg-[var(--color-secondary-400)] " +
+                  "font-[family-name:var(--font-body)] font-semibold " +
+                  "text-[var(--font-size-body3)] text-[var(--color-secondary-900)]"
                 }
               >
                 {item.orgName.charAt(0).toUpperCase()}
@@ -201,7 +203,10 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
 
           {/* Org name */}
           <span
-            className={BODY2_REGULAR + ' text-[var(--color-text-secondary)] whitespace-nowrap'}
+            className={
+              BODY2_REGULAR +
+              " text-[var(--color-text-secondary)] whitespace-nowrap"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {item.orgName}
@@ -214,11 +219,11 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
           {item.hasIndicator && (
             <span
               className={[
-                'inline-flex items-center justify-center',
-                'rounded-full p-[var(--space-1)]',
-                'size-[var(--space-3)]',
-                'bg-[var(--color-neutral-600)]',
-              ].join(' ')}
+                "inline-flex items-center justify-center",
+                "rounded-full p-[var(--space-1)]",
+                "size-[var(--space-3)]",
+                "bg-[var(--color-neutral-600)]",
+              ].join(" ")}
               aria-hidden="true"
             >
               <StarIcon className="size-full" />
@@ -235,16 +240,16 @@ function HomeEventRow({ item }: { item: HomeEventItem }) {
         {item.isForYou && (
           <span
             className={[
-              'inline-flex items-center',
-              'px-[var(--space-3)] py-[var(--space-0-5)]',
-              'rounded-[var(--radius-input)]',
-              'bg-[var(--color-primary-500)]',
-              'font-[family-name:var(--font-body)] font-medium',
-              'text-[var(--font-size-body2)] leading-[var(--space-6)]',
-              'tracking-[var(--letter-spacing-body2)]',
-              'text-[var(--color-primary-800)]',
-              'whitespace-nowrap select-none',
-            ].join(' ')}
+              "inline-flex items-center",
+              "px-[var(--space-3)] py-[var(--space-0-5)]",
+              "rounded-[var(--radius-input)]",
+              "bg-[var(--color-primary-500)]",
+              "font-[family-name:var(--font-body)] font-medium",
+              "text-[var(--font-size-body2)] leading-[var(--space-6)]",
+              "tracking-[var(--letter-spacing-body2)]",
+              "text-[var(--color-primary-800)]",
+              "whitespace-nowrap select-none",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             For you
@@ -268,16 +273,19 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-3)]',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'px-[var(--space-4)] py-[var(--space-3)]',
-        'w-full',
-      ].join(' ')}
+        "flex flex-col gap-[var(--space-3)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--radius-card)]",
+        "px-[var(--space-4)] py-[var(--space-3)]",
+        "w-full",
+      ].join(" ")}
     >
       {/* Section title — DM Sans Bold 18px, Neutral/900 */}
-      <h2 className={SECTION_TITLE} style={{ fontVariationSettings: "'opsz' 14" }}>
+      <h2
+        className={SECTION_TITLE}
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
         {title}
       </h2>
 
@@ -297,12 +305,12 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
           type="button"
           onClick={onShowMore}
           className={[
-            'self-start',
+            "self-start",
             BODY2_REGULAR,
-            'text-[var(--color-link)]',
-            'hover:underline',
-            'cursor-pointer transition-[text-decoration] duration-150',
-          ].join(' ')}
+            "text-[var(--color-link)]",
+            "hover:underline",
+            "cursor-pointer transition-[text-decoration] duration-150",
+          ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Show more
@@ -329,9 +337,9 @@ function HomeSidePanel({ title, items, onShowMore }: HomeSidePanelProps) {
  *   └────────────┴──────────────────────────┴────────────────┘
  */
 export function Home({
-  activeNavItem = 'home',
+  activeNavItem = "home",
   onNavigate,
-  activeTab = 'for-you',
+  activeTab = "for-you",
   onTabChange,
   feedTags = DEFAULT_FEED_TAGS,
   onTagClick,
@@ -346,20 +354,13 @@ export function Home({
 }: HomeProps) {
   return (
     <div
-      className={[
-        'flex h-full w-full',
-        'bg-[var(--color-surface)]',
-        className,
-      ]
+      className={["flex h-full w-full", "bg-[var(--color-surface)]", className]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Left sidebar ── */}
-      <SideBar
-        activeItem={activeNavItem}
-        onNavigate={onNavigate}
-      />
+      <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
 
       {/* ── Main feed ── */}
       <main
@@ -376,8 +377,8 @@ export function Home({
           <div className="px-[var(--space-6)]">
             <Toggle
               options={[
-                { value: 'for-you', label: 'For you' },
-                { value: 'following', label: 'Following' },
+                { value: "for-you", label: "For you" },
+                { value: "following", label: "Following" },
               ]}
               value={activeTab}
               onChange={(v) => onTabChange?.(v as FeedTab)}
@@ -390,9 +391,7 @@ export function Home({
            * Figma (node 263:3540): px 32px, gap 12px.
            * The final "+" tag triggers onAddTag to open a tag picker.
            */}
-          <div
-            className="flex items-center gap-[var(--space-3)] px-[var(--space-8)] overflow-x-auto"
-          >
+          <div className="flex items-center gap-[var(--space-3)] px-[var(--space-8)] overflow-x-auto">
             {feedTags.map((tag) => (
               <Tag
                 key={tag.label}
@@ -444,14 +443,14 @@ export function Home({
        */}
       <aside
         className={[
-          'flex flex-col gap-[var(--space-6)]',
-          'w-[var(--search-panel-width)]',
-          'h-full overflow-y-auto',
-          'bg-[var(--color-surface)]',
-          'border-l border-[var(--color-border)]',
-          'px-[var(--space-6)] py-[var(--space-8)]',
-          'shrink-0',
-        ].join(' ')}
+          "flex flex-col gap-[var(--space-6)]",
+          "w-[var(--search-panel-width)]",
+          "h-full overflow-y-auto",
+          "bg-[var(--color-surface)]",
+          "border-l border-[var(--color-border)]",
+          "px-[var(--space-6)] py-[var(--space-8)]",
+          "shrink-0",
+        ].join(" ")}
         aria-label="Contextual panel"
       >
         {/* Search bar — Figma node 263:3692 */}

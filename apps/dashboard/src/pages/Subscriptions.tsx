@@ -27,29 +27,29 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import { SideBar } from '@app/ui';
-import type { SideBarItemId } from '@app/ui';
-import { SearchBar } from '@app/ui';
-import StarIcon from '../assets/star.svg?react';
+import type { ComponentPropsWithoutRef } from "react";
+import { SideBar } from "@app/ui";
+import type { SideBarItemId } from "@app/ui";
+import { SearchBar } from "@app/ui";
+import StarIcon from "../assets/star.svg?react";
 
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_SEMIBOLD =
-  'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-semibold " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY2_REGULAR =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const SECTION_TITLE =
-  'font-[family-name:var(--font-body)] font-bold ' +
-  'text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] ' +
-  'tracking-[var(--letter-spacing-body1)] ' +
-  'text-[var(--color-neutral-900)] whitespace-nowrap';
+  "font-[family-name:var(--font-body)] font-bold " +
+  "text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
+  "tracking-[var(--letter-spacing-body1)] " +
+  "text-[var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ export interface SidePanelSectionProps {
   onShowMore?: () => void;
 }
 
-export interface SubscriptionsProps extends ComponentPropsWithoutRef<'div'> {
+export interface SubscriptionsProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
   activeNavItem?: SideBarItemId;
   onNavigate?: (id: SideBarItemId) => void;
@@ -138,12 +138,12 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
   return (
     <div
       className={[
-        'flex items-center justify-between w-full',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'px-[var(--space-4)] py-[var(--space-3)]',
-      ].join(' ')}
+        "flex items-center justify-between w-full",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--radius-card)]",
+        "px-[var(--space-4)] py-[var(--space-3)]",
+      ].join(" ")}
     >
       {/* ── Left: avatar + org info ── */}
       <div className="flex items-center gap-[var(--space-4)]">
@@ -154,11 +154,11 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
          */}
         <span
           className={[
-            'inline-flex items-center justify-center shrink-0',
-            'rounded-full overflow-hidden',
-            'size-[3.75rem]',
-            'bg-[var(--color-surface-raised)]',
-          ].join(' ')}
+            "inline-flex items-center justify-center shrink-0",
+            "rounded-full overflow-hidden",
+            "size-[3.75rem]",
+            "bg-[var(--color-surface-raised)]",
+          ].join(" ")}
         >
           {item.orgAvatarUrl ? (
             <img
@@ -169,10 +169,10 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
           ) : (
             <span
               className={
-                'size-full flex items-center justify-center ' +
-                'bg-[var(--color-secondary-400)] ' +
-                'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[var(--font-size-body1)] text-[var(--color-secondary-900)]'
+                "size-full flex items-center justify-center " +
+                "bg-[var(--color-secondary-400)] " +
+                "font-[family-name:var(--font-body)] font-semibold " +
+                "text-[var(--font-size-body1)] text-[var(--color-secondary-900)]"
               }
             >
               {item.orgName.charAt(0).toUpperCase()}
@@ -186,10 +186,10 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
           <div className="flex items-center gap-[var(--space-2)]">
             <span
               className={
-                'font-[family-name:var(--font-body)] font-semibold ' +
-                'text-[var(--font-size-body1)] leading-[var(--line-height-body1)] ' +
-                'tracking-[var(--letter-spacing-body1)] ' +
-                'text-[var(--color-neutral-700)] whitespace-nowrap'
+                "font-[family-name:var(--font-body)] font-semibold " +
+                "text-[var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+                "tracking-[var(--letter-spacing-body1)] " +
+                "text-[var(--color-neutral-700)] whitespace-nowrap"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
@@ -206,12 +206,12 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
               <span
                 title="This is a registered student organization at Cornell"
                 className={[
-                  'inline-flex items-center justify-center',
-                  'rounded-full p-[var(--space-1)]',
-                  'size-[var(--space-5)]',
-                  'bg-[var(--color-neutral-600)]',
-                  'cursor-help shrink-0',
-                ].join(' ')}
+                  "inline-flex items-center justify-center",
+                  "rounded-full p-[var(--space-1)]",
+                  "size-[var(--space-5)]",
+                  "bg-[var(--color-neutral-600)]",
+                  "cursor-help shrink-0",
+                ].join(" ")}
                 aria-label="Registered student organization"
               >
                 <StarIcon aria-hidden="true" className="size-full" />
@@ -226,20 +226,23 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
            * the closest available muted-text token.
            */}
           <p
-            className={BODY2_REGULAR + ' text-[var(--color-text-muted)] whitespace-nowrap'}
+            className={
+              BODY2_REGULAR +
+              " text-[var(--color-text-muted)] whitespace-nowrap"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             <span className="font-semibold">{item.emailsReceived}</span>
-            {' emails received'}
+            {" emails received"}
           </p>
 
           {/* Mailing-list address — italic, muted */}
           <p
             className={
-              'font-[family-name:var(--font-body)] font-normal italic ' +
-              'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-              'tracking-[var(--letter-spacing-body2)] ' +
-              'text-[var(--color-text-muted)] whitespace-nowrap'
+              "font-[family-name:var(--font-body)] font-normal italic " +
+              "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+              "tracking-[var(--letter-spacing-body2)] " +
+              "text-[var(--color-text-muted)] whitespace-nowrap"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -258,18 +261,18 @@ function SubscriptionRow({ item }: { item: SubscriptionItem }) {
         type="button"
         onClick={item.onUnsubscribe}
         className={[
-          'shrink-0 inline-flex items-center justify-center',
-          'px-[var(--space-4)] py-[var(--space-2)]',
-          'rounded-[var(--radius-card)]',
-          'bg-[var(--color-neutral-600)]',
-          'font-[family-name:var(--font-body)] font-semibold',
-          'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
-          'tracking-[var(--letter-spacing-body2)]',
-          'text-[var(--color-white)]',
-          'cursor-pointer whitespace-nowrap',
-          'hover:bg-[var(--color-neutral-700)]',
-          'transition-colors duration-150',
-        ].join(' ')}
+          "shrink-0 inline-flex items-center justify-center",
+          "px-[var(--space-4)] py-[var(--space-2)]",
+          "rounded-[var(--radius-card)]",
+          "bg-[var(--color-neutral-600)]",
+          "font-[family-name:var(--font-body)] font-semibold",
+          "text-[var(--font-size-body2)] leading-[var(--line-height-body2)]",
+          "tracking-[var(--letter-spacing-body2)]",
+          "text-[var(--color-white)]",
+          "cursor-pointer whitespace-nowrap",
+          "hover:bg-[var(--color-neutral-700)]",
+          "transition-colors duration-150",
+        ].join(" ")}
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         Unsubscribe
@@ -288,16 +291,18 @@ function SideEventRow({ item }: { item: SideEventItem }) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-1)] w-full',
-        'rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]',
-        'cursor-pointer',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
-      ].join(' ')}
+        "flex flex-col gap-[var(--space-1)] w-full",
+        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
+        "cursor-pointer",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
+      ].join(" ")}
     >
       {/* Event title */}
       <p
-        className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] truncate w-full'}
+        className={
+          BODY2_SEMIBOLD + " text-[var(--color-neutral-700)] truncate w-full"
+        }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {item.title}
@@ -309,11 +314,11 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           {/* Circle avatar — 24 × 24 px */}
           <span
             className={[
-              'inline-flex items-center justify-center shrink-0',
-              'rounded-full overflow-hidden',
-              'size-[var(--space-6)]',
-              'bg-[var(--color-surface-raised)]',
-            ].join(' ')}
+              "inline-flex items-center justify-center shrink-0",
+              "rounded-full overflow-hidden",
+              "size-[var(--space-6)]",
+              "bg-[var(--color-surface-raised)]",
+            ].join(" ")}
           >
             {item.orgAvatarUrl ? (
               <img
@@ -324,10 +329,10 @@ function SideEventRow({ item }: { item: SideEventItem }) {
             ) : (
               <span
                 className={
-                  'size-full flex items-center justify-center ' +
-                  'bg-[var(--color-secondary-400)] ' +
-                  'font-[family-name:var(--font-body)] font-semibold ' +
-                  'text-[var(--font-size-body3)] text-[var(--color-secondary-900)]'
+                  "size-full flex items-center justify-center " +
+                  "bg-[var(--color-secondary-400)] " +
+                  "font-[family-name:var(--font-body)] font-semibold " +
+                  "text-[var(--font-size-body3)] text-[var(--color-secondary-900)]"
                 }
               >
                 {item.orgName.charAt(0).toUpperCase()}
@@ -337,7 +342,10 @@ function SideEventRow({ item }: { item: SideEventItem }) {
 
           {/* Org name */}
           <span
-            className={BODY2_REGULAR + ' text-[var(--color-text-secondary)] whitespace-nowrap'}
+            className={
+              BODY2_REGULAR +
+              " text-[var(--color-text-secondary)] whitespace-nowrap"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {item.orgName}
@@ -350,11 +358,11 @@ function SideEventRow({ item }: { item: SideEventItem }) {
           {item.hasIndicator && (
             <span
               className={[
-                'inline-flex items-center justify-center',
-                'rounded-full p-[var(--space-1)]',
-                'size-[var(--space-3)]',
-                'bg-[var(--color-neutral-600)]',
-              ].join(' ')}
+                "inline-flex items-center justify-center",
+                "rounded-full p-[var(--space-1)]",
+                "size-[var(--space-3)]",
+                "bg-[var(--color-neutral-600)]",
+              ].join(" ")}
               aria-hidden="true"
             >
               <StarIcon className="size-full" />
@@ -370,16 +378,16 @@ function SideEventRow({ item }: { item: SideEventItem }) {
         {item.isForYou && (
           <span
             className={[
-              'inline-flex items-center',
-              'px-[var(--space-3)] py-[var(--space-0-5)]',
-              'rounded-[var(--radius-input)]',
-              'bg-[var(--color-primary-500)]',
-              'font-[family-name:var(--font-body)] font-medium',
-              'text-[var(--font-size-body2)] leading-[var(--space-6)]',
-              'tracking-[var(--letter-spacing-body2)]',
-              'text-[var(--color-primary-800)]',
-              'whitespace-nowrap select-none',
-            ].join(' ')}
+              "inline-flex items-center",
+              "px-[var(--space-3)] py-[var(--space-0-5)]",
+              "rounded-[var(--radius-input)]",
+              "bg-[var(--color-primary-500)]",
+              "font-[family-name:var(--font-body)] font-medium",
+              "text-[var(--font-size-body2)] leading-[var(--space-6)]",
+              "tracking-[var(--letter-spacing-body2)]",
+              "text-[var(--color-primary-800)]",
+              "whitespace-nowrap select-none",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             For you
@@ -400,15 +408,18 @@ function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-3)]',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'px-[var(--space-4)] py-[var(--space-3)]',
-        'w-full',
-      ].join(' ')}
+        "flex flex-col gap-[var(--space-3)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--radius-card)]",
+        "px-[var(--space-4)] py-[var(--space-3)]",
+        "w-full",
+      ].join(" ")}
     >
-      <h2 className={SECTION_TITLE} style={{ fontVariationSettings: "'opsz' 14" }}>
+      <h2
+        className={SECTION_TITLE}
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
         {title}
       </h2>
 
@@ -427,12 +438,12 @@ function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
           type="button"
           onClick={onShowMore}
           className={[
-            'self-start',
+            "self-start",
             BODY2_REGULAR,
-            'text-[var(--color-link)]',
-            'hover:underline',
-            'cursor-pointer transition-[text-decoration] duration-150',
-          ].join(' ')}
+            "text-[var(--color-link)]",
+            "hover:underline",
+            "cursor-pointer transition-[text-decoration] duration-150",
+          ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Show more
@@ -459,7 +470,7 @@ function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
  *   └────────────┴────────────────────────────────┴────────────────┘
  */
 export function Subscriptions({
-  activeNavItem = 'subscriptions',
+  activeNavItem = "subscriptions",
   onNavigate,
   subscriptionCount,
   searchValue,
@@ -475,20 +486,13 @@ export function Subscriptions({
 }: SubscriptionsProps) {
   return (
     <div
-      className={[
-        'flex h-full w-full',
-        'bg-[var(--color-surface)]',
-        className,
-      ]
+      className={["flex h-full w-full", "bg-[var(--color-surface)]", className]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Left sidebar ── */}
-      <SideBar
-        activeItem={activeNavItem}
-        onNavigate={onNavigate}
-      />
+      <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
 
       {/* ── Main content ── */}
       <main
@@ -505,9 +509,9 @@ export function Subscriptions({
           <div className="flex items-center gap-[var(--space-3)] px-[var(--space-6)]">
             <h1
               className={
-                'font-[family-name:var(--font-brand)] font-bold ' +
-                'text-[var(--font-size-wordmark)] leading-[normal] ' +
-                'text-[var(--color-black)] whitespace-nowrap'
+                "font-[family-name:var(--font-brand)] font-bold " +
+                "text-[var(--font-size-wordmark)] leading-[normal] " +
+                "text-[var(--color-black)] whitespace-nowrap"
               }
             >
               Subscriptions
@@ -521,16 +525,16 @@ export function Subscriptions({
             {subscriptionCount !== undefined && (
               <span
                 className={[
-                  'inline-flex items-center justify-center',
-                  'px-[var(--space-2)] py-[var(--space-0-5)]',
-                  'rounded-[var(--space-3)]',
-                  'bg-[var(--color-neutral-200)]',
-                  'font-[family-name:var(--font-body)] font-normal',
-                  'text-[var(--font-size-body2)] leading-[1.5]',
-                  'tracking-[var(--letter-spacing-body2)]',
-                  'text-[var(--color-text-secondary)]',
-                  'whitespace-nowrap select-none',
-                ].join(' ')}
+                  "inline-flex items-center justify-center",
+                  "px-[var(--space-2)] py-[var(--space-0-5)]",
+                  "rounded-[var(--space-3)]",
+                  "bg-[var(--color-neutral-200)]",
+                  "font-[family-name:var(--font-body)] font-normal",
+                  "text-[var(--font-size-body2)] leading-[1.5]",
+                  "tracking-[var(--letter-spacing-body2)]",
+                  "text-[var(--color-text-secondary)]",
+                  "whitespace-nowrap select-none",
+                ].join(" ")}
                 aria-label={`${subscriptionCount} subscriptions`}
               >
                 {subscriptionCount}
@@ -578,14 +582,14 @@ export function Subscriptions({
        */}
       <aside
         className={[
-          'flex flex-col gap-[var(--space-6)]',
-          'w-[var(--search-panel-width)]',
-          'h-full overflow-y-auto',
-          'bg-[var(--color-surface)]',
-          'border-l border-[var(--color-border)]',
-          'px-[var(--space-6)] py-[var(--space-8)]',
-          'shrink-0',
-        ].join(' ')}
+          "flex flex-col gap-[var(--space-6)]",
+          "w-[var(--search-panel-width)]",
+          "h-full overflow-y-auto",
+          "bg-[var(--color-surface)]",
+          "border-l border-[var(--color-border)]",
+          "px-[var(--space-6)] py-[var(--space-8)]",
+          "shrink-0",
+        ].join(" ")}
         aria-label="Contextual panel"
       >
         {/* Right-panel SearchBar — Figma node 260:2919 */}
