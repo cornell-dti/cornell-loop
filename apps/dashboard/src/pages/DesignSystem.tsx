@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import {
   Button,
+  Dropdown,
   Toggle,
   Tag,
   SearchBar,
@@ -24,7 +25,12 @@ import {
   SearchPanel,
   SearchResultList,
 } from "@app/ui";
-import type { SideBarItemId } from "@app/ui";
+import type { SideBarItemId, Organization } from "@app/ui";
+
+import BookmarkIcon from "@app/ui/assets/bookmark.svg?react";
+import BookmarkFilledIcon from "@app/ui/assets/bookmark-filled.svg?react";
+import CloseTagsIcon from "@app/ui/assets/close_tags.svg?react";
+import CloseSearchIcon from "@app/ui/assets/close_search.svg?react";
 
 // ─── Page-internal layout helpers ─────────────────────────────────────────────
 // These are NOT new design-system components — they are private page layout
@@ -54,8 +60,8 @@ function DS_Section({
         className={[
           "font-[family-name:var(--font-heading)] font-bold",
           "text-[length:var(--font-size-sub1)] leading-[var(--line-height-sub1)]",
-          "text-[var(--color-neutral-900)]",
-          "pb-[var(--space-3)] border-b border-[var(--color-border)]",
+          "text-[color:var(--color-neutral-900)]",
+          "border-b border-[var(--color-border)] pb-[var(--space-3)]",
         ].join(" ")}
       >
         {title}
@@ -71,8 +77,8 @@ function DS_Label({ children }: { children: React.ReactNode }) {
       className={[
         "font-[family-name:var(--font-body)] font-semibold",
         "text-[length:var(--font-size-body3)]",
-        "text-[var(--color-text-secondary)]",
-        "uppercase tracking-[0.08em]",
+        "text-[color:var(--color-text-secondary)]",
+        "tracking-[0.08em] uppercase",
       ].join(" ")}
     >
       {children}
@@ -90,7 +96,7 @@ function DS_Row({
   return (
     <div className="flex flex-col gap-[var(--space-2)]">
       <DS_Label>{label}</DS_Label>
-      <div className="flex flex-wrap gap-[var(--space-3)] items-start">
+      <div className="flex flex-wrap items-start gap-[var(--space-3)]">
         {children}
       </div>
     </div>
@@ -170,7 +176,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-heading)] font-bold " +
       "text-[length:var(--font-size-h1)] leading-[var(--line-height-h1)] " +
-      "tracking-[var(--letter-spacing-h1)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-h1)] text-[color:var(--color-text-default)]",
     sample: "Heading One",
   },
   {
@@ -178,7 +184,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-heading)] font-bold " +
       "text-[length:var(--font-size-h2)] leading-[var(--line-height-h2)] " +
-      "tracking-[var(--letter-spacing-h2)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-h2)] text-[color:var(--color-text-default)]",
     sample: "Heading Two",
   },
   {
@@ -186,7 +192,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-heading)] font-bold " +
       "text-[length:var(--font-size-h3)] leading-[var(--line-height-h3)] " +
-      "tracking-[var(--letter-spacing-h3)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-h3)] text-[color:var(--color-text-default)]",
     sample: "Heading Three",
   },
   {
@@ -194,7 +200,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-body)] font-semibold " +
       "text-[length:var(--font-size-sub1)] leading-[var(--line-height-sub1)] " +
-      "tracking-[var(--letter-spacing-sub1)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-sub1)] text-[color:var(--color-text-default)]",
     sample: "Subtitle One",
   },
   {
@@ -202,7 +208,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-body)] font-semibold " +
       "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
-      "tracking-[var(--letter-spacing-sub2)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-sub2)] text-[color:var(--color-text-default)]",
     sample: "Subtitle Two",
   },
   {
@@ -210,7 +216,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-body)] font-normal " +
       "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
-      "tracking-[var(--letter-spacing-body1)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-body1)] text-[color:var(--color-text-default)]",
     sample: "Body text at 18 px. Used for prominent paragraph copy.",
   },
   {
@@ -218,7 +224,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-body)] font-normal " +
       "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-      "tracking-[var(--letter-spacing-body2)] text-[var(--color-text-default)]",
+      "tracking-[var(--letter-spacing-body2)] text-[color:var(--color-text-default)]",
     sample:
       "Body text at 14 px. The standard UI copy size across cards, inputs, and labels.",
   },
@@ -227,7 +233,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-body)] font-normal " +
       "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] " +
-      "tracking-[var(--letter-spacing-body3)] text-[var(--color-text-secondary)]",
+      "tracking-[var(--letter-spacing-body3)] text-[color:var(--color-text-secondary)]",
     sample: "Body text at 12 px. Used for captions, timestamps, and metadata.",
   },
   {
@@ -235,7 +241,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-brand)] font-bold " +
       "text-[length:var(--font-size-wordmark)] leading-none " +
-      "text-[var(--color-text-default)]",
+      "text-[color:var(--color-text-default)]",
     sample: "Loop",
   },
   {
@@ -243,7 +249,7 @@ const TYPE_STYLES = [
     className:
       "font-[family-name:var(--font-brand)] font-bold " +
       "text-[length:var(--font-size-wordmark-display)] leading-none " +
-      "text-[var(--color-text-default)]",
+      "text-[color:var(--color-text-default)]",
     sample: "Loop",
   },
 ];
@@ -264,9 +270,24 @@ const SAMPLE_EVENT_PROPS = {
   tags: SAMPLE_TAGS,
 };
 
-const SAMPLE_ORGS = [
-  { name: "CDS", avatarUrl: undefined },
-  { name: "Cornell AI", avatarUrl: undefined },
+const SAMPLE_ORGS: Organization[] = [
+  {
+    name: "CDS",
+    following: true,
+    description:
+      "Cornell Data Science builds ML tools and hosts workshops for the Cornell community.",
+    tags: [
+      { label: "For you", color: "blue" as const },
+      { label: "Data Science" },
+    ],
+  },
+  {
+    name: "Cornell AI",
+    following: false,
+    description:
+      "Student-run club exploring artificial intelligence research and applications.",
+    tags: [{ label: "Tech" }, { label: "Research" }],
+  },
 ];
 
 const SAMPLE_EXT_EVENTS = [
@@ -339,18 +360,44 @@ const SAMPLE_RESULT_GROUPS = [
       {
         title: "ML Workshop",
         orgName: "CDS",
-        hasIndicator: true,
+        following: true,
         tag: { label: "CS", color: "neutral" as const },
       },
       {
         title: "Hackathon Kickoff",
         orgName: "Cornell AI",
-        hasIndicator: false,
+        following: false,
         tag: { label: "Open to all", color: "blue" as const },
       },
-      { title: "Pitch Night", orgName: "eLab", hasIndicator: false },
+      { title: "Pitch Night", orgName: "eLab", following: false },
     ],
   },
+];
+
+// ─── BookmarkToggle ───────────────────────────────────────────────────────────
+
+function BookmarkToggle() {
+  const [filled, setFilled] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={filled ? "Remove bookmark" : "Bookmark"}
+      onClick={() => setFilled((f) => !f)}
+      className="group inline-flex cursor-pointer border-none bg-transparent p-0"
+    >
+      {filled ? (
+        <BookmarkFilledIcon className="size-[var(--space-6)] transition-opacity duration-150 group-hover:opacity-70" />
+      ) : (
+        <BookmarkIcon className="size-[var(--space-6)] transition-[filter] duration-150 group-hover:[filter:var(--filter-icon-nav)]" />
+      )}
+    </button>
+  );
+}
+
+const SAMPLE_DROPDOWN_OPTIONS = [
+  { value: "a", label: "Option A" },
+  { value: "b", label: "Option B" },
+  { value: "c", label: "Option C" },
 ];
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -358,8 +405,13 @@ const SAMPLE_RESULT_GROUPS = [
 export default function DesignSystem() {
   const [sidebarActive, setSidebarActive] = useState<SideBarItemId>("home");
   const [bookmarked, setBookmarked] = useState(false);
+  const [following, setFollowing] = useState(true);
+  const [cdsFollowing, setCdsFollowing] = useState(true);
+  const [cornellAiFollowing, setCornellAiFollowing] = useState(false);
   const [toggleCompact, setToggleCompact] = useState("Feed");
   const [toggleDefault, setToggleDefault] = useState("Feed");
+  const [toggleThreeOptions, setToggleThreeOptions] = useState("Home");
+  const [dropdownValue, setDropdownValue] = useState<string>("");
 
   return (
     <div
@@ -376,7 +428,7 @@ export default function DesignSystem() {
           className={[
             "font-[family-name:var(--font-heading)] font-bold",
             "text-[length:var(--font-size-h2)] leading-[var(--line-height-h2)]",
-            "text-[var(--color-neutral-900)]",
+            "text-[color:var(--color-neutral-900)]",
           ].join(" ")}
         >
           Loop Design System
@@ -385,7 +437,7 @@ export default function DesignSystem() {
           className={[
             "font-[family-name:var(--font-body)] font-normal",
             "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)]",
-            "text-[var(--color-text-secondary)]",
+            "text-[color:var(--color-text-secondary)]",
           ].join(" ")}
         >
           Testing Page
@@ -403,7 +455,7 @@ export default function DesignSystem() {
               {swatches.map(({ token, hex }) => (
                 <div
                   key={token}
-                  className="flex flex-col gap-[var(--space-1)] w-[6.5rem]"
+                  className="flex w-[6.5rem] flex-col gap-[var(--space-1)]"
                 >
                   <div
                     className={[
@@ -416,7 +468,7 @@ export default function DesignSystem() {
                     className={[
                       "font-[family-name:var(--font-body)] font-medium",
                       "text-[length:var(--font-size-body3)]",
-                      "text-[var(--color-text-default)]",
+                      "text-[color:var(--color-text-default)]",
                       "break-all",
                     ].join(" ")}
                   >
@@ -426,7 +478,7 @@ export default function DesignSystem() {
                     className={[
                       "font-[family-name:var(--font-body)] font-normal",
                       "text-[length:var(--font-size-body3)]",
-                      "text-[var(--color-text-secondary)]",
+                      "text-[color:var(--color-text-secondary)]",
                     ].join(" ")}
                   >
                     {hex}
@@ -447,7 +499,7 @@ export default function DesignSystem() {
             key={label}
             className={[
               "flex flex-col gap-[var(--space-1)]",
-              "pb-[var(--space-4)] border-b border-[var(--color-surface-subtle)]",
+              "border-b border-[var(--color-surface-subtle)] pb-[var(--space-4)]",
             ].join(" ")}
           >
             <DS_Label>{label}</DS_Label>
@@ -467,7 +519,7 @@ export default function DesignSystem() {
         </DS_Row>
 
         <DS_Row label="Wordmark — dark bg">
-          <div className="flex gap-[var(--space-4)] p-[var(--space-4)] rounded-[var(--radius-input)] bg-[var(--color-neutral-900)]">
+          <div className="flex gap-[var(--space-4)] rounded-[var(--radius-input)] bg-[var(--color-neutral-900)] p-[var(--space-4)]">
             <LoopLogo variant="wordmark-light" size="sm" />
             <LoopLogo variant="wordmark-light" size="md" />
             <LoopLogo variant="wordmark-light" size="lg" />
@@ -481,7 +533,7 @@ export default function DesignSystem() {
         </DS_Row>
 
         <DS_Row label="Mark only — mixed (for coloured backgrounds)">
-          <div className="flex gap-[var(--space-4)] p-[var(--space-4)] rounded-[var(--radius-input)] bg-[var(--color-primary-700)]">
+          <div className="flex gap-[var(--space-4)] rounded-[var(--radius-input)] bg-[var(--color-primary-700)] p-[var(--space-4)]">
             <LoopLogo variant="mark-mixed" size="sm" />
             <LoopLogo variant="mark-mixed" size="md" />
             <LoopLogo variant="mark-mixed" size="lg" />
@@ -529,10 +581,7 @@ export default function DesignSystem() {
 
         <DS_Row label="Disabled state">
           <Button variant="primary" size="md" disabled>
-            Primary disabled
-          </Button>
-          <Button variant="secondary" size="md" disabled>
-            Secondary disabled
+            Disabled
           </Button>
           <Button variant="primary" size="cta" disabled>
             CTA disabled
@@ -565,8 +614,8 @@ export default function DesignSystem() {
         <DS_Row label="Three options">
           <Toggle
             options={["Home", "Bookmarks", "Profile"]}
-            value={toggleDefault}
-            onChange={setToggleDefault}
+            value={toggleThreeOptions}
+            onChange={setToggleThreeOptions}
             size="compact"
           />
         </DS_Row>
@@ -597,7 +646,29 @@ export default function DesignSystem() {
       </DS_Section>
 
       {/* ════════════════════════════════════════
-          7. SEARCH BAR
+          7. ICONS
+         ════════════════════════════════════════ */}
+      <DS_Section id="icons" title="Icons">
+        <DS_Row label="Bookmark">
+          <BookmarkToggle />
+        </DS_Row>
+
+        <DS_Row label="Close / Dismiss">
+          <div className="flex items-center gap-[var(--space-6)]">
+            <div className="flex flex-col items-center gap-[var(--space-2)]">
+              <CloseTagsIcon className="size-[var(--space-4)]" />
+              <DS_Label>Tags</DS_Label>
+            </div>
+            <div className="flex flex-col items-center gap-[var(--space-2)]">
+              <CloseSearchIcon className="size-[var(--space-4)] [filter:var(--filter-icon-nav)]" />
+              <DS_Label>Search</DS_Label>
+            </div>
+          </div>
+        </DS_Row>
+      </DS_Section>
+
+      {/* ════════════════════════════════════════
+          8. SEARCH BAR
          ════════════════════════════════════════ */}
       <DS_Section id="searchbar" title="Search Bar">
         <DS_Row label="Blank (no value)">
@@ -625,32 +696,26 @@ export default function DesignSystem() {
       <DS_Section id="avatar" title="Avatar">
         <DS_Row label="Single — with image URL">
           <Avatar
-            avatars={[
-              { src: "https://i.pravatar.cc/64?img=1", name: "Alice Chen" },
-            ]}
+            avatars={[{ src: "https://i.pravatar.cc/64?img=1", name: "DTI" }]}
           />
         </DS_Row>
 
         <DS_Row label="Single — fallback (no src)">
-          <Avatar avatars={[{ name: "Bob Smith" }]} />
+          <Avatar avatars={[{ name: "WICC" }]} />
         </DS_Row>
 
         <DS_Row label="Multiple — stacked (fallback icons)">
           <Avatar
-            avatars={[
-              { name: "CDS" },
-              { name: "Cornell AI" },
-              { name: "eLab" },
-            ]}
+            avatars={[{ name: "DTI" }, { name: "WICC" }, { name: "DCC" }]}
           />
         </DS_Row>
 
         <DS_Row label="Multiple — stacked (with images)">
           <Avatar
             avatars={[
-              { src: "https://i.pravatar.cc/64?img=2", name: "Alice" },
-              { src: "https://i.pravatar.cc/64?img=3", name: "Bob" },
-              { src: "https://i.pravatar.cc/64?img=4", name: "Carol" },
+              { src: "https://i.pravatar.cc/64?img=2", name: "DTI" },
+              { src: "https://i.pravatar.cc/64?img=3", name: "WICC" },
+              { src: "https://i.pravatar.cc/64?img=4", name: "DCC" },
             ]}
           />
         </DS_Row>
@@ -666,7 +731,7 @@ export default function DesignSystem() {
         </DS_Label>
         <div
           className={[
-            "h-[26rem] rounded-[var(--radius-card)] overflow-hidden",
+            "h-[26rem] overflow-hidden rounded-[var(--radius-card)]",
             "border border-[var(--color-border)]",
           ].join(" ")}
         >
@@ -685,7 +750,7 @@ export default function DesignSystem() {
           <div className="w-[28rem]">
             <DashboardEventCard
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated
+              truncateDescription
               bookmarked={false}
             />
           </div>
@@ -695,7 +760,6 @@ export default function DesignSystem() {
           <div className="w-[28rem]">
             <DashboardEventCard
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated={false}
               bookmarked={bookmarked}
               onBookmark={() => setBookmarked((b) => !b)}
             />
@@ -707,13 +771,54 @@ export default function DesignSystem() {
           11. CARDS — DashboardPost
          ════════════════════════════════════════ */}
       <DS_Section id="dashboard-post" title="Cards — Dashboard Post">
-        <DS_Row label="With org header (avatar stack + indicator badge)">
+        <DS_Row label="With org header (avatar stack + following badge)">
           <div className="w-[28rem]">
             <DashboardPost
-              organizations={SAMPLE_ORGS}
+              organizations={SAMPLE_ORGS.map((org) =>
+                org.name === "CDS"
+                  ? {
+                      ...org,
+                      following: cdsFollowing,
+                      onToggleFollow: () => setCdsFollowing((f) => !f),
+                    }
+                  : org.name === "Cornell AI"
+                    ? {
+                        ...org,
+                        following: cornellAiFollowing,
+                        onToggleFollow: () => setCornellAiFollowing((f) => !f),
+                      }
+                    : org,
+              )}
               postedAt="Mar 12"
               {...SAMPLE_EVENT_PROPS}
-              descriptionTruncated
+              truncateDescription
+              bookmarked={bookmarked}
+              onBookmark={() => setBookmarked((b) => !b)}
+            />
+          </div>
+        </DS_Row>
+
+        <DS_Row label="Single org (following) with hover card">
+          <div className="w-[28rem]">
+            <DashboardPost
+              organizations={[
+                {
+                  name: "IEEE",
+                  following,
+                  description:
+                    "Community of electrical and computer engineers at Cornell.",
+                  tags: [
+                    { label: "For you", color: "blue" as const },
+                    { label: "Tech" },
+                  ],
+                  onToggleFollow: () => setFollowing((f) => !f),
+                },
+              ]}
+              postedAt="Mar 12"
+              {...SAMPLE_EVENT_PROPS}
+              truncateDescription
+              bookmarked={bookmarked}
+              onBookmark={() => setBookmarked((b) => !b)}
             />
           </div>
         </DS_Row>
@@ -725,7 +830,30 @@ export default function DesignSystem() {
       <DS_Section id="loop-summary" title="Cards — Loop Summary">
         <DS_Row label="Default">
           <div className="w-[28rem]">
-            <LoopSummary summary="This week CDS is running an intro ML workshop and Cornell AI is hosting a neural networks deep-dive. Both events are open to all majors and offer free dinner. RSVPs close 48 hours before each session." />
+            <LoopSummary
+              summary="This week CDS is running an intro ML workshop and Cornell AI is hosting a neural networks deep-dive. Both events are open to all majors and offer free dinner. RSVPs close 48 hours before each session."
+              organizations={[
+                {
+                  name: "CDS",
+                  following: true,
+                  description:
+                    "Cornell Data Science builds ML tools and hosts workshops for the Cornell community.",
+                  tags: [
+                    { label: "For you", color: "blue" as const },
+                    { label: "Data Science" },
+                  ],
+                  onToggleFollow: () => {},
+                },
+                {
+                  name: "Cornell AI",
+                  following: false,
+                  description:
+                    "Student-run club exploring artificial intelligence research and applications.",
+                  tags: [{ label: "Tech" }, { label: "Research" }],
+                  onToggleFollow: () => {},
+                },
+              ]}
+            />
           </div>
         </DS_Row>
       </DS_Section>
@@ -747,7 +875,7 @@ export default function DesignSystem() {
         </DS_Row>
 
         <DS_Row label="ExtensionEventRow — default / bookmarked">
-          <div className="w-[22rem] flex flex-col gap-[var(--space-2)]">
+          <div className="flex w-[22rem] flex-col gap-[var(--space-2)]">
             <ExtensionEventRow
               thumbnailVariant="date"
               day={14}
@@ -803,6 +931,21 @@ export default function DesignSystem() {
               onShowMore={() => {}}
             />
           </div>
+        </DS_Row>
+      </DS_Section>
+
+      {/* ════════════════════════════════════════
+          16. DROPDOWN
+         ════════════════════════════════════════ */}
+      <DS_Section id="dropdown" title="Dropdown">
+        <DS_Row label="Default">
+          <Dropdown
+            value={dropdownValue}
+            onChange={setDropdownValue}
+            options={SAMPLE_DROPDOWN_OPTIONS}
+            placeholder="Dropdown"
+            className="w-[11rem]"
+          />
         </DS_Row>
       </DS_Section>
     </div>

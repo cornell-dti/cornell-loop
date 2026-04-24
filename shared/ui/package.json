@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./styles/*": "./src/styles/*"
+    "./styles/*": "./src/styles/*",
+    "./assets/*": "./src/assets/*"
   },
   "peerDependencies": {
+    "lucide-react": "^1.8.0",
     "react": ">=18"
   },
   "devDependencies": {

@@ -25,3 +25,7 @@ dist-ssr
 
 # AI
 CLAUDE.md
+
+# Env
+.env
+.env.local
