@@ -10,7 +10,11 @@ import { Org } from "./pages/Org";
 import { Profile } from "./pages/profile";
 import type { SideBarItemId } from "@app/ui";
 import DesignSystem from "./pages/DesignSystem";
-import { SAMPLE_POSTS, SAMPLE_SIDE_PANELS } from "./data/sampleHome";
+import {
+  SAMPLE_POSTS,
+  SAMPLE_RSVP_GROUPS,
+  SAMPLE_CLUBS,
+} from "./data/sampleHome";
 
 /**
  * Maps a SideBar nav id to its route path.
@@ -55,7 +59,8 @@ function RoutedHome() {
       activeNavItem="home"
       onNavigate={(id) => navigate(pathForNavItem(id))}
       posts={SAMPLE_POSTS}
-      sidePanels={SAMPLE_SIDE_PANELS}
+      rsvpGroups={SAMPLE_RSVP_GROUPS}
+      clubs={SAMPLE_CLUBS}
     />
   );
 }

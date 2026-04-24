@@ -26,15 +26,15 @@
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import type { ComponentPropsWithoutRef } from 'react';
-import { SideBar } from '@app/ui';
-import type { SideBarItemId } from '@app/ui';
-import { SearchBar } from '@app/ui';
-import { LoopSummary } from '@app/ui';
-import { DashboardPost } from '@app/ui';
-import type { DashboardPostProps } from '@app/ui';
-import { Tag } from '@app/ui';
-import StarIcon from '../assets/star.svg?react';
+import type { ComponentPropsWithoutRef } from "react";
+import { SideBar } from "@app/ui";
+import type { SideBarItemId } from "@app/ui";
+import { SearchBar } from "@app/ui";
+import { LoopSummary } from "@app/ui";
+import { DashboardPost } from "@app/ui";
+import type { DashboardPostProps } from "@app/ui";
+import { Tag } from "@app/ui";
+import StarIcon from "../assets/star.svg?react";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -96,20 +96,20 @@ function ChevronDownIcon({ className }: { className?: string }) {
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_SEMIBOLD =
-  'font-[family-name:var(--font-body)] font-semibold ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-semibold " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const BODY2_REGULAR =
-  'font-[family-name:var(--font-body)] font-normal ' +
-  'text-[var(--font-size-body2)] leading-[var(--line-height-body2)] ' +
-  'tracking-[var(--letter-spacing-body2)]';
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "tracking-[var(--letter-spacing-body2)]";
 
 const SECTION_TITLE =
-  'font-[family-name:var(--font-body)] font-bold ' +
-  'text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] ' +
-  'tracking-[var(--letter-spacing-body1)] ' +
-  'text-[var(--color-neutral-900)] whitespace-nowrap';
+  "font-[family-name:var(--font-body)] font-bold " +
+  "text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
+  "tracking-[var(--letter-spacing-body1)] " +
+  "text-[var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -121,7 +121,7 @@ export interface OrgTag {
    * 'neutral' renders a gray category pill (Tag component neutral variant).
    * Defaults to 'neutral'.
    */
-  variant?: 'primary' | 'neutral';
+  variant?: "primary" | "neutral";
 }
 
 /** A single event row rendered inside an OrgSidePanel section. */
@@ -148,7 +148,7 @@ export interface OrgSidePanelProps {
   onShowMore?: () => void;
 }
 
-export interface OrgProps extends ComponentPropsWithoutRef<'div'> {
+export interface OrgProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
   activeNavItem?: SideBarItemId;
   onNavigate?: (id: SideBarItemId) => void;
@@ -204,23 +204,23 @@ export interface OrgProps extends ComponentPropsWithoutRef<'div'> {
  * Uses the Tag design-system component for neutral; a custom span for primary,
  * matching the "For you" badge style used consistently across Home / Subscriptions.
  */
-function OrgTagPill({ label, variant = 'neutral' }: OrgTag) {
-  if (variant === 'neutral') {
+function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
+  if (variant === "neutral") {
     return <Tag color="neutral">{label}</Tag>;
   }
   return (
     <span
       className={[
-        'inline-flex items-center',
-        'px-[var(--space-3)] py-[var(--space-0-5)]',
-        'rounded-[var(--radius-input)]',
-        'bg-[var(--color-primary-500)]',
-        'font-[family-name:var(--font-body)] font-medium',
-        'text-[var(--font-size-body2)] leading-[var(--space-6)]',
-        'tracking-[var(--letter-spacing-body2)]',
-        'text-[var(--color-primary-800)]',
-        'whitespace-nowrap select-none',
-      ].join(' ')}
+        "inline-flex items-center",
+        "px-[var(--space-3)] py-[var(--space-0-5)]",
+        "rounded-[var(--radius-input)]",
+        "bg-[var(--color-primary-500)]",
+        "font-[family-name:var(--font-body)] font-medium",
+        "leading-[var(--space-6)] text-[var(--font-size-body2)]",
+        "tracking-[var(--letter-spacing-body2)]",
+        "text-[var(--color-primary-800)]",
+        "whitespace-nowrap select-none",
+      ].join(" ")}
       style={{ fontVariationSettings: "'opsz' 14" }}
     >
       {label}
@@ -239,16 +239,18 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-1)] w-full',
-        'rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]',
-        'cursor-pointer',
-        'hover:bg-[var(--color-surface-subtle)]',
-        'transition-colors duration-150',
-      ].join(' ')}
+        "flex w-full flex-col gap-[var(--space-1)]",
+        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
+        "cursor-pointer",
+        "hover:bg-[var(--color-surface-subtle)]",
+        "transition-colors duration-150",
+      ].join(" ")}
     >
       {/* Event title — semibold, truncated to one line */}
       <p
-        className={BODY2_SEMIBOLD + ' text-[var(--color-neutral-700)] truncate w-full'}
+        className={
+          BODY2_SEMIBOLD + " w-full truncate text-[var(--color-neutral-700)]"
+        }
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         {item.title}
@@ -260,11 +262,11 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
           {/* Circle avatar — 24 × 24 px (--space-6), initial-letter fallback */}
           <span
             className={[
-              'inline-flex items-center justify-center shrink-0',
-              'rounded-full overflow-hidden',
-              'size-[var(--space-6)]',
-              'bg-[var(--color-surface-raised)]',
-            ].join(' ')}
+              "inline-flex shrink-0 items-center justify-center",
+              "overflow-hidden rounded-full",
+              "size-[var(--space-6)]",
+              "bg-[var(--color-surface-raised)]",
+            ].join(" ")}
           >
             {item.orgAvatarUrl ? (
               <img
@@ -275,10 +277,10 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
             ) : (
               <span
                 className={
-                  'size-full flex items-center justify-center ' +
-                  'bg-[var(--color-secondary-400)] ' +
-                  'font-[family-name:var(--font-body)] font-semibold ' +
-                  'text-[var(--font-size-body3)] text-[var(--color-secondary-900)]'
+                  "flex size-full items-center justify-center " +
+                  "bg-[var(--color-secondary-400)] " +
+                  "font-[family-name:var(--font-body)] font-semibold " +
+                  "text-[var(--color-secondary-900)] text-[var(--font-size-body3)]"
                 }
               >
                 {item.orgName.charAt(0).toUpperCase()}
@@ -288,7 +290,10 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
 
           {/* Org name */}
           <span
-            className={BODY2_REGULAR + ' text-[var(--color-text-secondary)] whitespace-nowrap'}
+            className={
+              BODY2_REGULAR +
+              " whitespace-nowrap text-[var(--color-text-secondary)]"
+            }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {item.orgName}
@@ -301,11 +306,11 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
           {item.hasIndicator && (
             <span
               className={[
-                'inline-flex items-center justify-center',
-                'rounded-full p-[var(--space-1)]',
-                'size-[var(--space-3)]',
-                'bg-[var(--color-neutral-600)]',
-              ].join(' ')}
+                "inline-flex items-center justify-center",
+                "rounded-full p-[var(--space-1)]",
+                "size-[var(--space-3)]",
+                "bg-[var(--color-neutral-600)]",
+              ].join(" ")}
               aria-hidden="true"
             >
               <StarIcon className="size-full" />
@@ -320,16 +325,16 @@ function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
         {item.isForYou && (
           <span
             className={[
-              'inline-flex items-center',
-              'px-[var(--space-3)] py-[var(--space-0-5)]',
-              'rounded-[var(--radius-input)]',
-              'bg-[var(--color-primary-500)]',
-              'font-[family-name:var(--font-body)] font-medium',
-              'text-[var(--font-size-body2)] leading-[var(--space-6)]',
-              'tracking-[var(--letter-spacing-body2)]',
-              'text-[var(--color-primary-800)]',
-              'whitespace-nowrap select-none',
-            ].join(' ')}
+              "inline-flex items-center",
+              "px-[var(--space-3)] py-[var(--space-0-5)]",
+              "rounded-[var(--radius-input)]",
+              "bg-[var(--color-primary-500)]",
+              "font-[family-name:var(--font-body)] font-medium",
+              "leading-[var(--space-6)] text-[var(--font-size-body2)]",
+              "tracking-[var(--letter-spacing-body2)]",
+              "text-[var(--color-primary-800)]",
+              "whitespace-nowrap select-none",
+            ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             For you
@@ -350,19 +355,22 @@ function OrgSidePanelSection({ title, items, onShowMore }: OrgSidePanelProps) {
   return (
     <div
       className={[
-        'flex flex-col gap-[var(--space-3)]',
-        'bg-[var(--color-surface)]',
-        'border border-[var(--color-border)]',
-        'rounded-[var(--radius-card)]',
-        'px-[var(--space-4)] py-[var(--space-3)]',
-        'w-full',
-      ].join(' ')}
+        "flex flex-col gap-[var(--space-3)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "rounded-[var(--radius-card)]",
+        "px-[var(--space-4)] py-[var(--space-3)]",
+        "w-full",
+      ].join(" ")}
     >
-      <h2 className={SECTION_TITLE} style={{ fontVariationSettings: "'opsz' 14" }}>
+      <h2
+        className={SECTION_TITLE}
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
         {title}
       </h2>
 
-      <div className="flex flex-col gap-[var(--space-4)] w-full">
+      <div className="flex w-full flex-col gap-[var(--space-4)]">
         {items.map((item, i) => (
           <OrgSideEventRow key={i} item={item} />
         ))}
@@ -376,12 +384,12 @@ function OrgSidePanelSection({ title, items, onShowMore }: OrgSidePanelProps) {
           type="button"
           onClick={onShowMore}
           className={[
-            'self-start',
+            "self-start",
             BODY2_REGULAR,
-            'text-[var(--color-link)]',
-            'hover:underline',
-            'cursor-pointer transition-[text-decoration] duration-150',
-          ].join(' ')}
+            "text-[var(--color-link)]",
+            "hover:underline",
+            "cursor-pointer transition-[text-decoration] duration-150",
+          ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Show more
@@ -415,8 +423,8 @@ function OrgSidePanelSection({ title, items, onShowMore }: OrgSidePanelProps) {
 export function Org({
   activeNavItem,
   onNavigate,
-  orgName = 'Association of Computer Science Undergraduates (ACSU)',
-  orgDescription = 'CS organization for undergrads looking to find community.',
+  orgName = "Association of Computer Science Undergraduates (ACSU)",
+  orgDescription = "CS organization for undergrads looking to find community.",
   orgAvatarUrl,
   coverImageUrl,
   isVerified,
@@ -430,9 +438,9 @@ export function Org({
   feedSearchValue,
   onFeedSearchChange,
   onFeedSearchClear,
-  tagFilter = 'All tags',
+  tagFilter = "All tags",
   onTagFilterChange,
-  timeFilter = 'All time',
+  timeFilter = "All time",
   onTimeFilterChange,
   sidePanelSearchValue,
   onSidePanelSearchChange,
@@ -443,13 +451,9 @@ export function Org({
 }: OrgProps) {
   return (
     <div
-      className={[
-        'flex h-full w-full',
-        'bg-[var(--color-surface)]',
-        className,
-      ]
+      className={["flex h-full w-full", "bg-[var(--color-surface)]", className]
         .filter(Boolean)
-        .join(' ')}
+        .join(" ")}
       {...rest}
     >
       {/* ── Left sidebar ── */}
@@ -457,7 +461,7 @@ export function Org({
 
       {/* ── Main content ── */}
       <main
-        className="flex-1 min-w-0 flex flex-col overflow-y-auto"
+        className="flex min-w-0 flex-1 flex-col overflow-y-auto"
         aria-label="Organisation"
       >
         {/*
@@ -470,16 +474,16 @@ export function Org({
          * Figma: org-info section starts at top = 296 px with pt = 16 px,
          *        placing the first text line at ~312 px (below the avatar).
          */}
-        <div className="relative shrink-0 w-full">
+        <div className="relative w-full shrink-0">
           {/* Cover banner — Figma: h-240px, bg #d9d9d9 ≈ --color-surface-raised */}
           <div
-            className="h-60 w-full bg-[var(--color-surface-raised)] shrink-0"
+            className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
             style={
               coverImageUrl
                 ? {
                     backgroundImage: `url(${coverImageUrl})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
                   }
                 : undefined
             }
@@ -497,15 +501,15 @@ export function Org({
               aria-label="Visit website"
               onClick={onWebsite}
               className={[
-                'inline-flex items-center justify-center shrink-0',
-                'px-[var(--space-4)] py-[var(--space-2)]',
-                'rounded-[var(--radius-card)]',
-                'bg-[var(--color-surface-raised)]',
-                'text-[var(--color-neutral-700)]',
-                'cursor-pointer',
-                'hover:bg-[var(--color-neutral-300)]',
-                'transition-colors duration-150',
-              ].join(' ')}
+                "inline-flex shrink-0 items-center justify-center",
+                "px-[var(--space-4)] py-[var(--space-2)]",
+                "rounded-[var(--radius-card)]",
+                "bg-[var(--color-surface-raised)]",
+                "text-[var(--color-neutral-700)]",
+                "cursor-pointer",
+                "hover:bg-[var(--color-neutral-300)]",
+                "transition-colors duration-150",
+              ].join(" ")}
             >
               <GlobeIcon className="size-[var(--space-4)]" />
             </button>
@@ -516,15 +520,15 @@ export function Org({
               aria-label="Send email"
               onClick={onEmail}
               className={[
-                'inline-flex items-center justify-center shrink-0',
-                'px-[var(--space-4)] py-[var(--space-2)]',
-                'rounded-[var(--radius-card)]',
-                'bg-[var(--color-surface-raised)]',
-                'text-[var(--color-neutral-700)]',
-                'cursor-pointer',
-                'hover:bg-[var(--color-neutral-300)]',
-                'transition-colors duration-150',
-              ].join(' ')}
+                "inline-flex shrink-0 items-center justify-center",
+                "px-[var(--space-4)] py-[var(--space-2)]",
+                "rounded-[var(--radius-card)]",
+                "bg-[var(--color-surface-raised)]",
+                "text-[var(--color-neutral-700)]",
+                "cursor-pointer",
+                "hover:bg-[var(--color-neutral-300)]",
+                "transition-colors duration-150",
+              ].join(" ")}
             >
               <MailIcon className="size-[var(--space-4)]" />
             </button>
@@ -537,29 +541,29 @@ export function Org({
               type="button"
               onClick={onFollow}
               className={[
-                'inline-flex items-center gap-[var(--space-2)] shrink-0',
-                'px-[var(--space-4)] py-[var(--space-2)]',
-                'rounded-[var(--radius-card)]',
+                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
+                "px-[var(--space-4)] py-[var(--space-2)]",
+                "rounded-[var(--radius-card)]",
                 isFollowing
-                  ? 'bg-[var(--color-surface-raised)] text-[var(--color-neutral-700)]'
-                  : 'bg-[var(--color-neutral-600)] text-[var(--color-white)]',
-                'font-[family-name:var(--font-body)] font-normal',
-                'text-[var(--font-size-body2)] leading-[var(--line-height-body2)]',
-                'tracking-[var(--letter-spacing-body2)]',
-                'whitespace-nowrap cursor-pointer',
-                'hover:opacity-90 transition-opacity duration-150',
-              ].join(' ')}
+                  ? "bg-[var(--color-surface-raised)] text-[var(--color-neutral-700)]"
+                  : "bg-[var(--color-neutral-600)] text-[var(--color-white)]",
+                "font-[family-name:var(--font-body)] font-normal",
+                "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+                "tracking-[var(--letter-spacing-body2)]",
+                "cursor-pointer whitespace-nowrap",
+                "transition-opacity duration-150 hover:opacity-90",
+              ].join(" ")}
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
-              {isFollowing ? 'Following' : 'Follow'}
+              {isFollowing ? "Following" : "Follow"}
               <StarIcon
                 aria-hidden="true"
                 className={[
-                  'size-[var(--space-4)] shrink-0',
+                  "size-[var(--space-4)] shrink-0",
                   isFollowing
-                    ? '[filter:var(--filter-icon-nav)]'
-                    : '[filter:brightness(0)_invert(1)]',
-                ].join(' ')}
+                    ? "[filter:var(--filter-icon-nav)]"
+                    : "[filter:brightness(0)_invert(1)]",
+                ].join(" ")}
               />
             </button>
           </div>
@@ -571,24 +575,28 @@ export function Org({
            */}
           <span
             className={[
-              'absolute left-[var(--space-6)] top-[11.1875rem]',
-              'inline-flex items-center justify-center',
-              'rounded-full overflow-hidden shrink-0',
-              'size-[7.5625rem]',
-              'ring-4 ring-[var(--color-surface)]',
-              'bg-[var(--color-surface-raised)]',
-            ].join(' ')}
+              "absolute top-[11.1875rem] left-[var(--space-6)]",
+              "inline-flex items-center justify-center",
+              "shrink-0 overflow-hidden rounded-full",
+              "size-[7.5625rem]",
+              "ring-4 ring-[var(--color-surface)]",
+              "bg-[var(--color-surface-raised)]",
+            ].join(" ")}
           >
             {orgAvatarUrl ? (
-              <img src={orgAvatarUrl} alt={orgName} className="size-full object-cover" />
+              <img
+                src={orgAvatarUrl}
+                alt={orgName}
+                className="size-full object-cover"
+              />
             ) : (
               <span
                 className={
-                  'size-full flex items-center justify-center ' +
-                  'bg-[var(--color-secondary-400)] ' +
-                  'font-[family-name:var(--font-brand)] font-bold ' +
-                  'text-[var(--font-size-sub1)] ' +
-                  'text-[var(--color-secondary-900)]'
+                  "flex size-full items-center justify-center " +
+                  "bg-[var(--color-secondary-400)] " +
+                  "font-[family-name:var(--font-brand)] font-bold " +
+                  "text-[var(--font-size-sub1)] " +
+                  "text-[var(--color-secondary-900)]"
                 }
               >
                 {orgName.charAt(0).toUpperCase()}
@@ -602,21 +610,19 @@ export function Org({
          * pt-4 (16 px) provides enough clearance below the ~4 px avatar overflow and
          * matches the Figma org-info section's own pt-16 (content starts at ~312 px).
          */}
-        <div className="flex flex-col gap-[var(--space-6)] px-[var(--space-6)] pb-[var(--space-6)] pt-[var(--space-4)]">
-
+        <div className="flex flex-col gap-[var(--space-6)] px-[var(--space-6)] pt-[var(--space-4)] pb-[var(--space-6)]">
           {/* Org name + description + tags */}
           <div className="flex flex-col gap-[var(--space-4)]">
-
             {/* Name row + description */}
             <div className="flex flex-col gap-[var(--space-1)]">
               {/* Org name + optional verified RSO badge */}
-              <div className="flex items-center gap-[var(--space-2)] flex-wrap">
+              <div className="flex flex-wrap items-center gap-[var(--space-2)]">
                 <h1
                   className={
-                    'font-[family-name:var(--font-body)] font-semibold ' +
-                    'text-[1.375rem] leading-[1.5] ' +
-                    'tracking-[var(--letter-spacing-body1)] ' +
-                    'text-[var(--color-neutral-700)]'
+                    "font-[family-name:var(--font-body)] font-semibold " +
+                    "text-[1.375rem] leading-[1.5] " +
+                    "tracking-[var(--letter-spacing-body1)] " +
+                    "text-[var(--color-neutral-700)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -632,12 +638,12 @@ export function Org({
                   <span
                     title="This is a registered student organization at Cornell"
                     className={[
-                      'inline-flex items-center justify-center',
-                      'rounded-full p-[var(--space-1)]',
-                      'size-[var(--space-5)]',
-                      'bg-[var(--color-neutral-600)]',
-                      'cursor-help shrink-0',
-                    ].join(' ')}
+                      "inline-flex items-center justify-center",
+                      "rounded-full p-[var(--space-1)]",
+                      "size-[var(--space-5)]",
+                      "bg-[var(--color-neutral-600)]",
+                      "shrink-0 cursor-help",
+                    ].join(" ")}
                     aria-label="Registered student organization"
                   >
                     <StarIcon aria-hidden="true" className="size-full" />
@@ -648,7 +654,9 @@ export function Org({
               {/* Description — Figma: Inter Regular 16 px, #909090 ≈ --color-text-secondary */}
               {orgDescription && (
                 <p
-                  className={BODY2_REGULAR + ' text-[var(--color-text-secondary)]'}
+                  className={
+                    BODY2_REGULAR + " text-[var(--color-text-secondary)]"
+                  }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
                   {orgDescription}
@@ -658,7 +666,7 @@ export function Org({
 
             {/* Org category / relevance tags */}
             {orgTags.length > 0 && (
-              <div className="flex items-center gap-[var(--space-2)] flex-wrap">
+              <div className="flex flex-wrap items-center gap-[var(--space-2)]">
                 {orgTags.map((tag, i) => (
                   <OrgTagPill key={i} label={tag.label} variant={tag.variant} />
                 ))}
@@ -674,7 +682,7 @@ export function Org({
 
         {/* Horizontal divider — Figma node 121:662 */}
         <div
-          className="h-px w-full bg-[var(--color-border)] shrink-0"
+          className="h-px w-full shrink-0 bg-[var(--color-border)]"
           role="separator"
           aria-hidden="true"
         />
@@ -684,7 +692,6 @@ export function Org({
          * Figma: px-24, pt-16, gap-16 between filter bar and post list.
          */}
         <div className="flex flex-col gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-4)]">
-
           {/* Filter bar: search input (flex-1) + tag filter + time filter */}
           <div className="flex items-center gap-[var(--space-4)]">
             {/* Search — fills remaining width */}
@@ -693,7 +700,7 @@ export function Org({
               onChange={onFeedSearchChange}
               onClear={onFeedSearchClear}
               placeholder="Search"
-              className="flex-1 min-w-0"
+              className="min-w-0 flex-1"
             />
 
             {/*
@@ -705,17 +712,17 @@ export function Org({
               type="button"
               onClick={onTagFilterChange}
               className={[
-                'inline-flex items-center gap-[var(--space-2)] shrink-0',
-                'px-[var(--space-4)] py-[var(--space-2)]',
-                'rounded-[var(--radius-card)]',
-                'bg-[var(--color-surface)]',
-                'border border-[var(--color-border)]',
+                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
+                "px-[var(--space-4)] py-[var(--space-2)]",
+                "rounded-[var(--radius-card)]",
+                "bg-[var(--color-surface)]",
+                "border border-[var(--color-border)]",
                 BODY2_REGULAR,
-                'text-[var(--color-neutral-700)]',
-                'whitespace-nowrap cursor-pointer',
-                'hover:bg-[var(--color-surface-subtle)]',
-                'transition-colors duration-150',
-              ].join(' ')}
+                "text-[var(--color-neutral-700)]",
+                "cursor-pointer whitespace-nowrap",
+                "hover:bg-[var(--color-surface-subtle)]",
+                "transition-colors duration-150",
+              ].join(" ")}
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {tagFilter}
@@ -727,17 +734,17 @@ export function Org({
               type="button"
               onClick={onTimeFilterChange}
               className={[
-                'inline-flex items-center gap-[var(--space-2)] shrink-0',
-                'px-[var(--space-4)] py-[var(--space-2)]',
-                'rounded-[var(--radius-card)]',
-                'bg-[var(--color-surface)]',
-                'border border-[var(--color-border)]',
+                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
+                "px-[var(--space-4)] py-[var(--space-2)]",
+                "rounded-[var(--radius-card)]",
+                "bg-[var(--color-surface)]",
+                "border border-[var(--color-border)]",
                 BODY2_REGULAR,
-                'text-[var(--color-neutral-700)]',
-                'whitespace-nowrap cursor-pointer',
-                'hover:bg-[var(--color-surface-subtle)]',
-                'transition-colors duration-150',
-              ].join(' ')}
+                "text-[var(--color-neutral-700)]",
+                "cursor-pointer whitespace-nowrap",
+                "hover:bg-[var(--color-surface-subtle)]",
+                "transition-colors duration-150",
+              ].join(" ")}
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {timeFilter}
@@ -762,14 +769,14 @@ export function Org({
        */}
       <aside
         className={[
-          'flex flex-col gap-[var(--space-6)]',
-          'w-[var(--search-panel-width)]',
-          'h-full overflow-y-auto',
-          'bg-[var(--color-surface)]',
-          'border-l border-[var(--color-border)]',
-          'px-[var(--space-6)] py-[var(--space-8)]',
-          'shrink-0',
-        ].join(' ')}
+          "flex flex-col gap-[var(--space-6)]",
+          "w-[var(--search-panel-width)]",
+          "h-full overflow-y-auto",
+          "bg-[var(--color-surface)]",
+          "border-l border-[var(--color-border)]",
+          "px-[var(--space-6)] py-[var(--space-8)]",
+          "shrink-0",
+        ].join(" ")}
         aria-label="Contextual panel"
       >
         {/* Right-panel SearchBar — Figma node 119:414 */}
