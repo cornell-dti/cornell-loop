@@ -18,33 +18,38 @@ import type { DashboardPostProps, RsvpGroup, Club, TagItem } from "@app/ui";
  */
 const ORG_PROFILES: Record<
   string,
-  { description: string; tags?: TagItem[]; following?: boolean }
+  { id?: string; description: string; tags?: TagItem[]; following?: boolean }
 > = {
   "Cornell Outing Club": {
+    id: "outing",
     description:
       "Student-run outdoor club running weekly hikes, climbing trips, and backcountry weekends across the Finger Lakes.",
     tags: [{ label: "Outdoors" }, { label: "Just for Fun" }],
     following: true,
   },
   WICC: {
+    id: "wicc",
     description:
       "Women in Computing at Cornell — mentorship circles, tech talks, and social events for women and non-binary folks in CS.",
     tags: [{ label: "For you", color: "blue" }, { label: "Tech" }],
     following: true,
   },
   CUAUV: {
+    id: "cuauv",
     description:
       "Cornell University Autonomous Underwater Vehicle — project team designing and building AUVs for the international RoboSub competition.",
     tags: [{ label: "Project team" }, { label: "Robotics" }],
     following: false,
   },
   "Cornell Fintech Club": {
+    id: "fintech",
     description:
       "Workshops, speaker events, and project groups exploring quantitative finance, trading systems, and payments infrastructure.",
     tags: [{ label: "Finance" }, { label: "Mentorship" }],
     following: true,
   },
   "Big Red Robotics": {
+    id: "brr",
     description:
       "Undergraduate robotics team building competition robots and running open lab nights for newcomers each semester.",
     tags: [{ label: "Tech" }, { label: "Project team" }],
@@ -63,7 +68,7 @@ export const SAMPLE_POSTS: DashboardPostProps[] = [
     location: "Taughannock Falls trailhead",
     description:
       "Start the weekend early with a guided sunrise hike along the gorge trail. We'll meet at the trailhead, watch the sun come up over the falls, and be back in time for brunch. All experience levels welcome — we'll keep the pace easygoing.",
-    descriptionTruncated: true,
+    truncateDescription: true,
     tags: [{ label: "Outdoors" }, { label: "Just for Fun" }],
   },
   {
@@ -74,7 +79,7 @@ export const SAMPLE_POSTS: DashboardPostProps[] = [
     location: "Duffield Hall Atrium",
     description:
       "Meet Cornell engineering alumni working at early-stage startups and mid-sized tech companies. Casual format — snacks, drinks, and roundtables grouped by discipline. Bring questions about the first two years of an engineering career.",
-    descriptionTruncated: true,
+    truncateDescription: true,
     tags: [
       { label: "You're free!", color: "blue" },
       { label: "Early Career" },
@@ -89,7 +94,7 @@ export const SAMPLE_POSTS: DashboardPostProps[] = [
     location: "Statler Hall 265",
     description:
       "A hands-on session on building and rebalancing a long-only equity portfolio. No finance background required — we'll walk through the math and run through a paper-trading exercise together.",
-    descriptionTruncated: true,
+    truncateDescription: true,
     tags: [{ label: "Mentorship" }, { label: "Finance" }],
   },
   {
@@ -100,7 +105,7 @@ export const SAMPLE_POSTS: DashboardPostProps[] = [
     location: "Upson Hall B17",
     description:
       "Drop by the lab for a tour of our current build, chat with sub-team leads, and see live demos of the drivetrain and vision stack. Pizza while it lasts.",
-    descriptionTruncated: true,
+    truncateDescription: true,
     tags: [{ label: "Recruitment" }, { label: "Tech" }],
   },
 ];

@@ -1,86 +1,29 @@
 /**
  * Bookmarks — Loop Dashboard Page
  *
- * Source: Figma "Incubator-design-file" › node 260:2325 "Home" (Bookmarks view)
+ * Mirrors the Home page shell (SideBar + main feed + SearchPanel) so the
+ * dashboard surfaces feel consistent across routes. The main column shows
+ * bookmarked posts with `bookmarked={true}`. The right rail is the shared
+ * design-system SearchPanel showing "Your RSVPs" + "Your Clubs".
  *
- * Three-column page layout:
- *   • SideBar (left)        — navigation rail, "Bookmarks" active
- *   • Main content (center) — heading, SearchBar, tag filter bar, bookmarked post list
- *   • Right panel           — SearchBar, "This week" + "Trending" event sections
- *
- * The main content renders one DashboardPost per bookmarked item, each with
- * `bookmarked={true}` to show the filled bookmark icon state.
- *
- * The tag filter bar mirrors the Home page filter bar (Recruitment, Early Career, etc.)
- * and sits directly below the SearchBar in a shared px-32px column.
- *
- * Right-panel sections (SideEventRow, SidePanelSection) mirror the pattern
- * from Subscriptions.tsx.
- *
- * All colours, spacing, and font values reference CSS custom properties from
- * src/styles/tokens.css — nothing is hardcoded.
+ * The design system is the source of truth for the right rail layout — no
+ * custom asides or per-page section components.
  */
 
 import type { ComponentPropsWithoutRef } from "react";
-import { SideBar } from "@app/ui";
-import type { SideBarItemId } from "@app/ui";
-import { SearchBar } from "@app/ui";
-import { Tag } from "@app/ui";
-import { DashboardPost } from "@app/ui";
-import type { DashboardPostProps } from "@app/ui";
-import StarIcon from "../assets/star.svg?react";
-
-// ─── Shared typography class strings ─────────────────────────────────────────
-
-const BODY2_SEMIBOLD =
-  "font-[family-name:var(--font-body)] font-semibold " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-  "tracking-[var(--letter-spacing-body2)]";
-
-const BODY2_REGULAR =
-  "font-[family-name:var(--font-body)] font-normal " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-  "tracking-[var(--letter-spacing-body2)]";
-
-const SECTION_TITLE =
-  "font-[family-name:var(--font-body)] font-bold " +
-  "text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
-  "tracking-[var(--letter-spacing-body1)] " +
-  "text-[var(--color-neutral-900)] whitespace-nowrap";
+import { SideBar, SearchBar, SearchPanel, Tag, DashboardPost } from "@app/ui";
+import type {
+  SideBarItemId,
+  DashboardPostProps,
+  RsvpGroup,
+  Club,
+  Organization,
+} from "@app/ui";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-/** A single tag in the filter bar, e.g. "Recruitment". */
 export interface FeedTagItem {
   label: string;
-}
-
-/**
- * A single event row inside a right-panel section ("This week" / "Trending").
- * Mirrors the SideEventItem pattern from Subscriptions.tsx.
- */
-export interface SideEventItem {
-  title: string;
-  orgName: string;
-  orgAvatarUrl?: string;
-  /**
-   * When true a small indicator badge (star icon) is shown beside the org name.
-   * Figma bg: #949494 ≈ --color-neutral-600.
-   */
-  hasIndicator?: boolean;
-  /**
-   * When true an orange "For you" badge is rendered to the right of the org row.
-   * Figma: bg #ffe4d5 / text #b54400 — approximated with
-   * --color-primary-500 / --color-primary-800.
-   */
-  isForYou?: boolean;
-}
-
-/** Props for a right-panel contextual section card ("This week" / "Trending"). */
-export interface SidePanelSectionProps {
-  title: string;
-  items: SideEventItem[];
-  onShowMore?: () => void;
 }
 
 export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
@@ -101,16 +44,13 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   // ── Bookmarked posts ──
   posts?: DashboardPostProps[];
 
-  // ── Right panel search ──
-  sidePanelSearchValue?: string;
-  onSidePanelSearchChange?: (value: string) => void;
-  onSidePanelSearchClear?: () => void;
-
-  // ── Right panel sections ──
-  sidePanels?: SidePanelSectionProps[];
+  // ── Right panel (shared SearchPanel) ──
+  rsvpGroups?: RsvpGroup[];
+  clubs?: Club[];
+  onClubClick?: (club: Club) => void;
+  /** Called when an org name in a post header is clicked. */
+  onOrgClick?: (org: Organization) => void;
 }
-
-// ─── Default data ─────────────────────────────────────────────────────────────
 
 const DEFAULT_FEED_TAGS: FeedTagItem[] = [
   { label: "Recruitment" },
@@ -120,194 +60,8 @@ const DEFAULT_FEED_TAGS: FeedTagItem[] = [
   { label: "Just for Fun" },
 ];
 
-// ─── SideEventRow ─────────────────────────────────────────────────────────────
-
-/**
- * A single event row inside a right-panel section.
- * Matches Figma nodes 260:2513–260:2539 and 260:2544–260:2568.
- */
-function SideEventRow({ item }: { item: SideEventItem }) {
-  return (
-    <div
-      className={[
-        "flex w-full flex-col gap-[var(--space-1)]",
-        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
-        "cursor-pointer",
-        "hover:bg-[var(--color-surface-subtle)]",
-        "transition-colors duration-150",
-      ].join(" ")}
-    >
-      {/* Event title */}
-      <p
-        className={
-          BODY2_SEMIBOLD + " w-full truncate text-[var(--color-neutral-700)]"
-        }
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {item.title}
-      </p>
-
-      {/* Org row: avatar + name + optional indicator + optional "For you" tag */}
-      <div className="flex items-center gap-[var(--space-3)]">
-        <div className="flex items-center gap-[var(--space-2)]">
-          {/* Circle avatar — 24 × 24 px */}
-          <span
-            className={[
-              "inline-flex shrink-0 items-center justify-center",
-              "overflow-hidden rounded-full",
-              "size-[var(--space-6)]",
-              "bg-[var(--color-surface-raised)]",
-            ].join(" ")}
-          >
-            {item.orgAvatarUrl ? (
-              <img
-                src={item.orgAvatarUrl}
-                alt={item.orgName}
-                className="size-full object-cover"
-              />
-            ) : (
-              <span
-                className={
-                  "flex size-full items-center justify-center " +
-                  "bg-[var(--color-secondary-400)] " +
-                  "font-[family-name:var(--font-body)] font-semibold " +
-                  "text-[var(--color-secondary-900)] text-[var(--font-size-body3)]"
-                }
-              >
-                {item.orgName.charAt(0).toUpperCase()}
-              </span>
-            )}
-          </span>
-
-          {/* Org name */}
-          <span
-            className={
-              BODY2_REGULAR +
-              " whitespace-nowrap text-[var(--color-text-secondary)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {item.orgName}
-          </span>
-
-          {/*
-           * Indicator badge — small circular pill with a star icon.
-           * Figma bg: #949494 ≈ --color-neutral-600.
-           */}
-          {item.hasIndicator && (
-            <span
-              className={[
-                "inline-flex items-center justify-center",
-                "rounded-full p-[var(--space-1)]",
-                "size-[var(--space-3)]",
-                "bg-[var(--color-neutral-600)]",
-              ].join(" ")}
-              aria-hidden="true"
-            >
-              <StarIcon className="size-full" />
-            </span>
-          )}
-        </div>
-
-        {/*
-         * "For you" badge.
-         * Figma: bg #ffe4d5 / text #b54400 — approximated with
-         * --color-primary-500 (#ffcaaa) / --color-primary-800 (#a74409).
-         */}
-        {item.isForYou && (
-          <span
-            className={[
-              "inline-flex items-center",
-              "px-[var(--space-3)] py-[var(--space-0-5)]",
-              "rounded-[var(--radius-input)]",
-              "bg-[var(--color-primary-500)]",
-              "font-[family-name:var(--font-body)] font-medium",
-              "leading-[var(--space-6)] text-[var(--font-size-body2)]",
-              "tracking-[var(--letter-spacing-body2)]",
-              "text-[var(--color-primary-800)]",
-              "whitespace-nowrap select-none",
-            ].join(" ")}
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            For you
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── SidePanelSection ─────────────────────────────────────────────────────────
-
-/**
- * A contextual event section card in the right panel ("This week" / "Trending").
- * Matches Figma nodes 260:2510 and 260:2541.
- */
-function SidePanelSection({ title, items, onShowMore }: SidePanelSectionProps) {
-  return (
-    <div
-      className={[
-        "flex flex-col gap-[var(--space-3)]",
-        "bg-[var(--color-surface)]",
-        "border border-[var(--color-border)]",
-        "rounded-[var(--radius-card)]",
-        "px-[var(--space-4)] py-[var(--space-3)]",
-        "w-full",
-      ].join(" ")}
-    >
-      <h2
-        className={SECTION_TITLE}
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {title}
-      </h2>
-
-      <div className="flex w-full flex-col gap-[var(--space-4)]">
-        {items.map((item, i) => (
-          <SideEventRow key={i} item={item} />
-        ))}
-      </div>
-
-      {/*
-       * "Show more" link — Figma: #0074bc.
-       * --color-link maps to --color-secondary-600 (#427fb4), the closest token.
-       */}
-      {onShowMore && (
-        <button
-          type="button"
-          onClick={onShowMore}
-          className={[
-            "self-start",
-            BODY2_REGULAR,
-            "text-[var(--color-link)]",
-            "hover:underline",
-            "cursor-pointer transition-[text-decoration] duration-150",
-          ].join(" ")}
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          Show more
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ─── Bookmarks ────────────────────────────────────────────────────────────────
 
-/**
- * Bookmarks page layout — three-column shell:
- *
- *   ┌────────────┬────────────────────────────────┬────────────────┐
- *   │  SideBar   │  Main content                  │  Right panel   │
- *   │ (215px)    │  (flex-1)                      │ (334px)        │
- *   │            │  "Bookmarks" heading            │  SearchBar     │
- *   │  Home      │  SearchBar + tag filter bar     │  This week     │
- *   │  Bookmarks ●  ──────────────────────────    │  Trending      │
- *   │  Subs      │  DashboardPost (bookmarked) × n │                │
- *   │  ────────  │                                 │                │
- *   │  Profile   │                                 │                │
- *   └────────────┴────────────────────────────────┴────────────────┘
- */
 export function Bookmarks({
   activeNavItem = "bookmarks",
   onNavigate,
@@ -318,139 +72,105 @@ export function Bookmarks({
   onTagClick,
   onAddTag,
   posts = [],
-  sidePanelSearchValue,
-  onSidePanelSearchChange,
-  onSidePanelSearchClear,
-  sidePanels = [],
+  rsvpGroups,
+  clubs,
+  onClubClick,
+  onOrgClick,
   className,
   ...rest
 }: BookmarksProps) {
   return (
     <div
-      className={["flex h-full w-full", "bg-[var(--color-surface)]", className]
+      className={[
+        // Match Home shell: full viewport with per-column scroll so SideBar
+        // and SearchPanel stay visually fixed while only the feed scrolls.
+        "flex h-screen w-full overflow-hidden",
+        "bg-[var(--color-surface)]",
+        className,
+      ]
         .filter(Boolean)
         .join(" ")}
       {...rest}
     >
-      {/* ── Left sidebar ── */}
-      <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
+      {/* ── Left sidebar — design system ── */}
+      <div className="h-full shrink-0 overflow-y-auto">
+        <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
+      </div>
 
-      {/* ── Main content ── */}
+      {/* ── Main feed ── */}
       <main
-        className="flex min-w-0 flex-1 flex-col gap-[var(--space-6)] overflow-y-auto py-[var(--space-6)]"
+        className={[
+          "flex min-w-0 flex-1 flex-col gap-[var(--space-6)]",
+          "overflow-y-auto bg-[var(--color-surface-subtle)] py-[var(--space-6)]",
+          "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        ].join(" ")}
         aria-label="Bookmarks"
       >
         {/* ── Page header ── */}
-        <div className="flex w-full shrink-0 flex-col gap-[var(--space-6)]">
-          {/*
-           * Heading — Figma (node 260:2577): px 24px.
-           * Typography: Manrope Bold ~31px = --font-brand + --font-size-wordmark.
-           */}
-          <div className="px-[var(--space-6)]">
-            <h1
-              className={
-                "font-[family-name:var(--font-brand)] font-bold " +
-                "leading-[normal] text-[var(--font-size-wordmark)] " +
-                "whitespace-nowrap text-[var(--color-black)]"
-              }
-            >
-              Bookmarks
-            </h1>
-          </div>
+        <div className="flex w-full shrink-0 flex-col gap-[var(--space-4)] px-[var(--space-8)]">
+          <h1
+            className={
+              "font-[family-name:var(--font-brand)] font-bold " +
+              "leading-[normal] text-[var(--font-size-wordmark)] " +
+              "whitespace-nowrap text-[var(--color-black)]"
+            }
+          >
+            Bookmarks
+          </h1>
 
-          {/*
-           * SearchBar + tag filter — Figma (node 260:2372): px 32px, stacked vertically.
-           */}
-          <div className="flex flex-col gap-[var(--space-3)] px-[var(--space-8)]">
-            <SearchBar
-              value={searchValue}
-              onChange={onSearchChange}
-              onClear={onSearchClear}
-              placeholder="Search"
-              className="w-full"
-            />
+          <SearchBar
+            value={searchValue}
+            onChange={onSearchChange}
+            onClear={onSearchClear}
+            placeholder="Search"
+            className="w-full shrink-0"
+          />
 
-            {/*
-             * Tag filter bar — Figma (node 260:2593): horizontal row of neutral Tag chips.
-             * The final "+" tag triggers onAddTag to open a tag picker.
-             */}
-            <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-              {feedTags.map((tag) => (
-                <Tag
-                  key={tag.label}
-                  color="neutral"
-                  onClick={() => onTagClick?.(tag.label)}
-                  className="shrink-0 cursor-pointer"
-                  style={{ fontVariationSettings: "'opsz' 14" }}
-                >
-                  {tag.label}
-                </Tag>
-              ))}
-
-              {/* "+" tag — opens tag picker */}
+          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
+            {feedTags.map((tag) => (
               <Tag
+                key={tag.label}
                 color="neutral"
-                onClick={onAddTag}
+                onClick={() => onTagClick?.(tag.label)}
                 className="shrink-0 cursor-pointer"
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >
-                +
+                {tag.label}
               </Tag>
-            </div>
+            ))}
+            <Tag
+              color="neutral"
+              onClick={onAddTag}
+              className="shrink-0 cursor-pointer"
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              +
+            </Tag>
           </div>
         </div>
 
-        {/* Horizontal divider — Figma node 260:2389 */}
+        {/* Divider */}
         <div
           className="h-px w-full shrink-0 bg-[var(--color-border)]"
           role="separator"
           aria-hidden="true"
         />
 
-        {/* ── Bookmarked post list — Figma node 260:2390 ── */}
-        {/*
-         * Figma: px 24px, pb 24px, gap 32px between posts.
-         * Each post is rendered with bookmarked=true (filled bookmark icon).
-         */}
-        <div className="flex flex-col gap-[var(--space-8)] px-[var(--space-6)] pb-[var(--space-6)]">
+        {/* ── Bookmarked post list ── */}
+        <div className="flex flex-col gap-[var(--space-5)] px-[var(--space-8)] pb-[var(--space-8)]">
           {posts.map((post, i) => (
-            <DashboardPost key={i} {...post} />
+            <DashboardPost key={i} {...post} onOrgClick={onOrgClick} />
           ))}
         </div>
       </main>
 
-      {/* ── Right panel ── */}
-      {/*
-       * Mirrors the right-panel layout from Home and Subscriptions pages.
-       * Figma (node 260:2506): w-326px, px 24px, py 32px, gap 24px, left border.
-       * Uses --search-panel-width (334px) as the closest layout token.
-       */}
-      <aside
-        className={[
-          "flex flex-col gap-[var(--space-6)]",
-          "w-[var(--search-panel-width)]",
-          "h-full overflow-y-auto",
-          "bg-[var(--color-surface)]",
-          "border-l border-[var(--color-border)]",
-          "px-[var(--space-6)] py-[var(--space-8)]",
-          "shrink-0",
-        ].join(" ")}
-        aria-label="Contextual panel"
-      >
-        {/* Right-panel SearchBar — Figma node 260:2507 */}
-        <SearchBar
-          value={sidePanelSearchValue}
-          onChange={onSidePanelSearchChange}
-          onClear={onSidePanelSearchClear}
-          placeholder="Search"
-          className="w-full shrink-0"
-        />
-
-        {/* Contextual event sections — "This week", "Trending", etc. */}
-        {sidePanels.map((panel, i) => (
-          <SidePanelSection key={i} {...panel} />
-        ))}
-      </aside>
+      {/* ── Right panel — design-system SearchPanel ── */}
+      <SearchPanel
+        rsvpGroups={rsvpGroups}
+        clubs={clubs}
+        onClubClick={onClubClick}
+        className="h-full shrink-0 overflow-visible"
+      />
     </div>
   );
 }

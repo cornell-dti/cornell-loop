@@ -27,14 +27,22 @@
  */
 
 import type { ComponentPropsWithoutRef } from "react";
-import { SideBar } from "@app/ui";
-import type { SideBarItemId } from "@app/ui";
-import { SearchBar } from "@app/ui";
-import { LoopSummary } from "@app/ui";
-import { DashboardPost } from "@app/ui";
-import type { DashboardPostProps } from "@app/ui";
-import { Tag } from "@app/ui";
-import StarIcon from "../assets/star.svg?react";
+import {
+  SideBar,
+  SearchBar,
+  SearchPanel,
+  LoopSummary,
+  DashboardPost,
+  Tag,
+  Button,
+} from "@app/ui";
+import type {
+  SideBarItemId,
+  DashboardPostProps,
+  RsvpGroup,
+  Club,
+  Organization,
+} from "@app/ui";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -95,21 +103,10 @@ function ChevronDownIcon({ className }: { className?: string }) {
 
 // ─── Shared typography class strings ─────────────────────────────────────────
 
-const BODY2_SEMIBOLD =
-  "font-[family-name:var(--font-body)] font-semibold " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-  "tracking-[var(--letter-spacing-body2)]";
-
 const BODY2_REGULAR =
   "font-[family-name:var(--font-body)] font-normal " +
   "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
-
-const SECTION_TITLE =
-  "font-[family-name:var(--font-body)] font-bold " +
-  "text-[var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
-  "tracking-[var(--letter-spacing-body1)] " +
-  "text-[var(--color-neutral-900)] whitespace-nowrap";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -122,30 +119,6 @@ export interface OrgTag {
    * Defaults to 'neutral'.
    */
   variant?: "primary" | "neutral";
-}
-
-/** A single event row rendered inside an OrgSidePanel section. */
-export interface OrgSideEventItem {
-  title: string;
-  orgName: string;
-  orgAvatarUrl?: string;
-  /**
-   * When true a small indicator badge (star icon) is shown beside the org name.
-   * Figma bg: #949494 ≈ --color-neutral-600.
-   */
-  hasIndicator?: boolean;
-  /**
-   * When true an orange "For you" badge is rendered beside the org row.
-   * Figma: bg #ffe4d5 / text #b54400 ≈ --color-primary-500 / --color-primary-800.
-   */
-  isForYou?: boolean;
-}
-
-/** Props for a single right-panel section card ("This week" / "Trending"). */
-export interface OrgSidePanelProps {
-  title: string;
-  items: OrgSideEventItem[];
-  onShowMore?: () => void;
 }
 
 export interface OrgProps extends ComponentPropsWithoutRef<"div"> {
@@ -190,11 +163,12 @@ export interface OrgProps extends ComponentPropsWithoutRef<"div"> {
   /** Called when the time filter button is clicked (caller shows a picker). */
   onTimeFilterChange?: () => void;
 
-  // ── Right panel ──
-  sidePanelSearchValue?: string;
-  onSidePanelSearchChange?: (value: string) => void;
-  onSidePanelSearchClear?: () => void;
-  sidePanels?: OrgSidePanelProps[];
+  // ── Right panel (shared SearchPanel) ──
+  rsvpGroups?: RsvpGroup[];
+  clubs?: Club[];
+  onClubClick?: (club: Club) => void;
+  /** Called when an org name in a post header is clicked. */
+  onOrgClick?: (org: Organization) => void;
 }
 
 // ─── OrgTagPill ───────────────────────────────────────────────────────────────
@@ -208,15 +182,18 @@ function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
   if (variant === "neutral") {
     return <Tag color="neutral">{label}</Tag>;
   }
+  // Primary "For you" pill — match design-system Tag dimensions exactly so
+  // primary and neutral pills align in height. Same px/py/radius/font as Tag,
+  // only the colour palette differs.
   return (
     <span
       className={[
-        "inline-flex items-center",
+        "inline-flex items-center gap-[var(--space-2)]",
         "px-[var(--space-3)] py-[var(--space-0-5)]",
         "rounded-[var(--radius-input)]",
         "bg-[var(--color-primary-500)]",
         "font-[family-name:var(--font-body)] font-medium",
-        "leading-[var(--space-6)] text-[var(--font-size-body2)]",
+        "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
         "tracking-[var(--letter-spacing-body2)]",
         "text-[var(--color-primary-800)]",
         "whitespace-nowrap select-none",
@@ -225,177 +202,6 @@ function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
     >
       {label}
     </span>
-  );
-}
-
-// ─── OrgSideEventRow ─────────────────────────────────────────────────────────
-
-/**
- * A single event row inside a right-panel section.
- * Matches Figma nodes 119:420–119:478; mirrors the SideEventRow pattern from
- * Subscriptions.tsx.
- */
-function OrgSideEventRow({ item }: { item: OrgSideEventItem }) {
-  return (
-    <div
-      className={[
-        "flex w-full flex-col gap-[var(--space-1)]",
-        "rounded-[var(--radius-input)] px-[var(--space-1-5)] py-[var(--space-1)]",
-        "cursor-pointer",
-        "hover:bg-[var(--color-surface-subtle)]",
-        "transition-colors duration-150",
-      ].join(" ")}
-    >
-      {/* Event title — semibold, truncated to one line */}
-      <p
-        className={
-          BODY2_SEMIBOLD + " w-full truncate text-[var(--color-neutral-700)]"
-        }
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {item.title}
-      </p>
-
-      {/* Org row: avatar + name + optional indicator + optional "For you" tag */}
-      <div className="flex items-center gap-[var(--space-3)]">
-        <div className="flex items-center gap-[var(--space-2)]">
-          {/* Circle avatar — 24 × 24 px (--space-6), initial-letter fallback */}
-          <span
-            className={[
-              "inline-flex shrink-0 items-center justify-center",
-              "overflow-hidden rounded-full",
-              "size-[var(--space-6)]",
-              "bg-[var(--color-surface-raised)]",
-            ].join(" ")}
-          >
-            {item.orgAvatarUrl ? (
-              <img
-                src={item.orgAvatarUrl}
-                alt={item.orgName}
-                className="size-full object-cover"
-              />
-            ) : (
-              <span
-                className={
-                  "flex size-full items-center justify-center " +
-                  "bg-[var(--color-secondary-400)] " +
-                  "font-[family-name:var(--font-body)] font-semibold " +
-                  "text-[var(--color-secondary-900)] text-[var(--font-size-body3)]"
-                }
-              >
-                {item.orgName.charAt(0).toUpperCase()}
-              </span>
-            )}
-          </span>
-
-          {/* Org name */}
-          <span
-            className={
-              BODY2_REGULAR +
-              " whitespace-nowrap text-[var(--color-text-secondary)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {item.orgName}
-          </span>
-
-          {/*
-           * Indicator badge — small circular pill with a star icon.
-           * Figma bg: #949494 ≈ --color-neutral-600.
-           */}
-          {item.hasIndicator && (
-            <span
-              className={[
-                "inline-flex items-center justify-center",
-                "rounded-full p-[var(--space-1)]",
-                "size-[var(--space-3)]",
-                "bg-[var(--color-neutral-600)]",
-              ].join(" ")}
-              aria-hidden="true"
-            >
-              <StarIcon className="size-full" />
-            </span>
-          )}
-        </div>
-
-        {/*
-         * "For you" badge.
-         * Figma: bg #ffe4d5 / text #b54400 ≈ --color-primary-500 / --color-primary-800.
-         */}
-        {item.isForYou && (
-          <span
-            className={[
-              "inline-flex items-center",
-              "px-[var(--space-3)] py-[var(--space-0-5)]",
-              "rounded-[var(--radius-input)]",
-              "bg-[var(--color-primary-500)]",
-              "font-[family-name:var(--font-body)] font-medium",
-              "leading-[var(--space-6)] text-[var(--font-size-body2)]",
-              "tracking-[var(--letter-spacing-body2)]",
-              "text-[var(--color-primary-800)]",
-              "whitespace-nowrap select-none",
-            ].join(" ")}
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            For you
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── OrgSidePanelSection ──────────────────────────────────────────────────────
-
-/**
- * A contextual event section card in the right panel ("This week" / "Trending").
- * Mirrors the SidePanelSection pattern from Subscriptions.tsx.
- */
-function OrgSidePanelSection({ title, items, onShowMore }: OrgSidePanelProps) {
-  return (
-    <div
-      className={[
-        "flex flex-col gap-[var(--space-3)]",
-        "bg-[var(--color-surface)]",
-        "border border-[var(--color-border)]",
-        "rounded-[var(--radius-card)]",
-        "px-[var(--space-4)] py-[var(--space-3)]",
-        "w-full",
-      ].join(" ")}
-    >
-      <h2
-        className={SECTION_TITLE}
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {title}
-      </h2>
-
-      <div className="flex w-full flex-col gap-[var(--space-4)]">
-        {items.map((item, i) => (
-          <OrgSideEventRow key={i} item={item} />
-        ))}
-      </div>
-
-      {/*
-       * "Show more" link — Figma: #0074bc ≈ --color-link (--color-secondary-600 #427fb4).
-       */}
-      {onShowMore && (
-        <button
-          type="button"
-          onClick={onShowMore}
-          className={[
-            "self-start",
-            BODY2_REGULAR,
-            "text-[var(--color-link)]",
-            "hover:underline",
-            "cursor-pointer transition-[text-decoration] duration-150",
-          ].join(" ")}
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          Show more
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -427,7 +233,6 @@ export function Org({
   orgDescription = "CS organization for undergrads looking to find community.",
   orgAvatarUrl,
   coverImageUrl,
-  isVerified,
   orgTags = [],
   loopSummary,
   isFollowing = false,
@@ -442,26 +247,36 @@ export function Org({
   onTagFilterChange,
   timeFilter = "All time",
   onTimeFilterChange,
-  sidePanelSearchValue,
-  onSidePanelSearchChange,
-  onSidePanelSearchClear,
-  sidePanels = [],
+  rsvpGroups,
+  clubs,
+  onClubClick,
+  onOrgClick,
   className,
   ...rest
 }: OrgProps) {
   return (
     <div
-      className={["flex h-full w-full", "bg-[var(--color-surface)]", className]
+      className={[
+        "flex h-screen w-full overflow-hidden",
+        "bg-[var(--color-surface)]",
+        className,
+      ]
         .filter(Boolean)
         .join(" ")}
       {...rest}
     >
-      {/* ── Left sidebar ── */}
-      <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
+      {/* ── Left sidebar — design system ── */}
+      <div className="h-full shrink-0 overflow-y-auto">
+        <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
+      </div>
 
       {/* ── Main content ── */}
       <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto"
+        className={[
+          "flex min-w-0 flex-1 flex-col",
+          "overflow-y-auto bg-[var(--color-surface-subtle)]",
+          "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        ].join(" ")}
         aria-label="Organisation"
       >
         {/*
@@ -475,7 +290,13 @@ export function Org({
          *        placing the first text line at ~312 px (below the avatar).
          */}
         <div className="relative w-full shrink-0">
-          {/* Cover banner — Figma: h-240px, bg #d9d9d9 ≈ --color-surface-raised */}
+          {/*
+           * Cover banner — Figma node 613:4241 shows a sky/cloud image. We render
+           * a tasteful sky gradient as the no-asset fallback so the org page has
+           * a visual treatment matching the Figma frame's atmosphere instead of
+           * a flat gray block. When a real `coverImageUrl` is provided it
+           * overrides the gradient.
+           */}
           <div
             className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
             style={
@@ -485,7 +306,10 @@ export function Org({
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }
-                : undefined
+                : {
+                    backgroundImage:
+                      "linear-gradient(180deg, var(--color-secondary-500) 0%, var(--color-secondary-300) 100%)",
+                  }
             }
           />
 
@@ -534,38 +358,16 @@ export function Org({
             </button>
 
             {/*
-             * Follow button — Figma: bg #909090 ≈ --color-neutral-600, white text + star icon.
-             * Toggles to a lighter "Following" state when isFollowing is true.
+             * Follow / Following button — design-system Button.
+             * Primary while following (filled orange), secondary when not.
              */}
-            <button
-              type="button"
+            <Button
+              variant={isFollowing ? "primary" : "secondary"}
+              size="sm"
               onClick={onFollow}
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                isFollowing
-                  ? "bg-[var(--color-surface-raised)] text-[var(--color-neutral-700)]"
-                  : "bg-[var(--color-neutral-600)] text-[var(--color-white)]",
-                "font-[family-name:var(--font-body)] font-normal",
-                "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
-                "tracking-[var(--letter-spacing-body2)]",
-                "cursor-pointer whitespace-nowrap",
-                "transition-opacity duration-150 hover:opacity-90",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {isFollowing ? "Following" : "Follow"}
-              <StarIcon
-                aria-hidden="true"
-                className={[
-                  "size-[var(--space-4)] shrink-0",
-                  isFollowing
-                    ? "[filter:var(--filter-icon-nav)]"
-                    : "[filter:brightness(0)_invert(1)]",
-                ].join(" ")}
-              />
-            </button>
+            </Button>
           </div>
 
           {/*
@@ -620,9 +422,9 @@ export function Org({
                 <h1
                   className={
                     "font-[family-name:var(--font-body)] font-semibold " +
-                    "text-[1.375rem] leading-[1.5] " +
+                    "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
                     "tracking-[var(--letter-spacing-body1)] " +
-                    "text-[var(--color-neutral-700)]"
+                    "text-[var(--color-neutral-900)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -630,25 +432,10 @@ export function Org({
                 </h1>
 
                 {/*
-                 * Verified RSO badge — Figma annotation: "Hover to show : this is a
-                 * registered student organization at Cornell". Native `title` tooltip.
-                 * Bg: #949494 ≈ --color-neutral-600; size ~20 px = --space-5.
+                 * Verified RSO indicator omitted — the star icon is no longer
+                 * used in the redesign. The `isVerified` prop remains on the
+                 * interface for future re-introduction of a non-star badge.
                  */}
-                {isVerified && (
-                  <span
-                    title="This is a registered student organization at Cornell"
-                    className={[
-                      "inline-flex items-center justify-center",
-                      "rounded-full p-[var(--space-1)]",
-                      "size-[var(--space-5)]",
-                      "bg-[var(--color-neutral-600)]",
-                      "shrink-0 cursor-help",
-                    ].join(" ")}
-                    aria-label="Registered student organization"
-                  >
-                    <StarIcon aria-hidden="true" className="size-full" />
-                  </span>
-                )}
               </div>
 
               {/* Description — Figma: Inter Regular 16 px, #909090 ≈ --color-text-secondary */}
@@ -755,7 +542,7 @@ export function Org({
           {/* Post list — Figma: gap-16 px between posts, pb-24 px */}
           <div className="flex flex-col gap-[var(--space-8)] pb-[var(--space-6)]">
             {posts.map((post, i) => (
-              <DashboardPost key={i} {...post} />
+              <DashboardPost key={i} {...post} onOrgClick={onOrgClick} />
             ))}
           </div>
         </div>
@@ -767,32 +554,13 @@ export function Org({
        * Figma (node 119:413): w-326px, px-24, py-32, gap-24, left border.
        * Uses --search-panel-width (334px) as the closest layout token.
        */}
-      <aside
-        className={[
-          "flex flex-col gap-[var(--space-6)]",
-          "w-[var(--search-panel-width)]",
-          "h-full overflow-y-auto",
-          "bg-[var(--color-surface)]",
-          "border-l border-[var(--color-border)]",
-          "px-[var(--space-6)] py-[var(--space-8)]",
-          "shrink-0",
-        ].join(" ")}
-        aria-label="Contextual panel"
-      >
-        {/* Right-panel SearchBar — Figma node 119:414 */}
-        <SearchBar
-          value={sidePanelSearchValue}
-          onChange={onSidePanelSearchChange}
-          onClear={onSidePanelSearchClear}
-          placeholder="Search"
-          className="w-full shrink-0"
-        />
-
-        {/* Contextual event sections — "This week", "Trending", etc. */}
-        {sidePanels.map((panel, i) => (
-          <OrgSidePanelSection key={i} {...panel} />
-        ))}
-      </aside>
+      {/* ── Right panel — design-system SearchPanel ── */}
+      <SearchPanel
+        rsvpGroups={rsvpGroups}
+        clubs={clubs}
+        onClubClick={onClubClick}
+        className="h-full shrink-0 overflow-visible"
+      />
     </div>
   );
 }

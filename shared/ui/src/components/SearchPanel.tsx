@@ -82,6 +82,13 @@ export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
   rsvpGroups?: RsvpGroup[];
   /** Subscribed clubs shown in a wrap grid. */
   clubs?: Club[];
+  /**
+   * Called when a club row is clicked.
+   * Hover still triggers the OrgHoverCard preview regardless of this handler.
+   */
+  onClubClick?: (club: Club) => void;
+  /** Called when an RSVP'd event row is clicked. */
+  onRsvpClick?: (event: RsvpEvent) => void;
 }
 
 // ── SearchResultList types ────────────────────────────────────────────────────
@@ -139,23 +146,46 @@ const SECTION_TITLE =
 
 // ─── RsvpEventRow ─────────────────────────────────────────────────────────────
 
-function RsvpEventRow({ event }: { event: RsvpEvent }) {
+function RsvpEventRow({
+  event,
+  onClick,
+}: {
+  event: RsvpEvent;
+  onClick?: () => void;
+}) {
+  const interactive = Boolean(onClick);
   return (
     /*
      * Interactive states:
      *   Normal  → white bg, no shadow
      *   Hover   → surface-subtle bg (Figma: the same subtle wash used in nav tabs)
      * Matches Figma node 510:706 (RSVP card row)
+     *
+     * Renders as a button when clickable so keyboard activation + focus rings work.
      */
     <div
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       className={[
         "flex w-full items-center gap-[var(--space-3)]",
         "p-[var(--space-1-5)]",
         "rounded-[var(--radius-input)]",
         "bg-[var(--color-surface)]",
-        "cursor-pointer",
+        interactive ? "cursor-pointer" : "",
         "hover:bg-[var(--color-surface-subtle)]",
         "transition-colors duration-150",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary-700)]",
       ].join(" ")}
     >
       <DateBadge day={event.day} month={event.month} />
@@ -188,7 +218,7 @@ function RsvpEventRow({ event }: { event: RsvpEvent }) {
 
 // ─── ClubItem ─────────────────────────────────────────────────────────────────
 
-function ClubItem({ club }: { club: Club }) {
+function ClubItem({ club, onClick }: { club: Club; onClick?: () => void }) {
   const count = club.notificationCount ?? 0;
   const fallback = fallbackColorsForName(club.name);
 
@@ -232,18 +262,34 @@ function ClubItem({ club }: { club: Club }) {
     following: true,
   };
 
+  const interactive = Boolean(onClick);
   return (
     <div
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? `Open ${club.name}` : undefined}
       className={[
         "relative",
         "flex w-full items-center gap-[var(--space-3)]",
         "p-[var(--space-1-5)]",
         "rounded-[var(--radius-input)]",
-        "cursor-pointer",
+        interactive ? "cursor-pointer" : "",
         "hover:bg-[var(--color-surface-subtle)]",
         "transition-colors duration-150",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary-700)]",
       ].join(" ")}
     >
       <OrgHoverCard org={org} visible={hovered} placement="left" />
@@ -314,6 +360,8 @@ function ClubItem({ club }: { club: Club }) {
 export function SearchPanel({
   rsvpGroups = [],
   clubs = [],
+  onClubClick,
+  onRsvpClick,
   className,
   ...rest
 }: SearchPanelProps) {
@@ -356,7 +404,11 @@ export function SearchPanel({
                 </p>
 
                 {group.events.map((event, i) => (
-                  <RsvpEventRow key={i} event={event} />
+                  <RsvpEventRow
+                    key={i}
+                    event={event}
+                    onClick={onRsvpClick ? () => onRsvpClick(event) : undefined}
+                  />
                 ))}
               </div>
             ))}
@@ -371,7 +423,11 @@ export function SearchPanel({
 
           <div className="flex flex-col gap-[var(--space-1)]">
             {clubs.map((club) => (
-              <ClubItem key={club.id} club={club} />
+              <ClubItem
+                key={club.id}
+                club={club}
+                onClick={onClubClick ? () => onClubClick(club) : undefined}
+              />
             ))}
           </div>
         </section>

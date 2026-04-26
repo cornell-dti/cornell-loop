@@ -1,46 +1,38 @@
 /**
  * Profile — Loop Dashboard Popup
  *
- * Source: Figma "Incubator-design-file" › node 350:504 "Input"
+ * Source: Figma "Incubator-design-file"
+ *   • Default modal: node 633:4436
+ *   • Saved state:   node 633:4779 ("Recalibrating your feed…" + progress bar)
  *
- * A centred modal card for collecting initial user profile information:
- *   • Greeting — "Hi {userName}!" centred at the top; falls back to "Hi there!"
- *   • Major field — styled dropdown trigger (flex-1)
- *   • Grad Year field — styled dropdown trigger (shrink-0, content-width)
- *   • Minor field — optional, styled dropdown trigger (full-width)
- *   • Interests — editable neutral tag list with an "add" (+) trigger
- *   • Close button (×) — absolutely positioned in the top-right corner
+ * The card houses a profile-setup form: Major, Grad Year, Minor, Interests.
+ * Pickers are inline popovers built on a small <ProfilePicker> primitive — the
+ * design-system <Dropdown> component renders its own pill-shaped trigger which
+ * doesn't match this Figma's bare-text trigger inside the labelled field, so
+ * the trigger is rendered locally and only the option menu is shared logic.
  *
- * This component renders only the card itself.  The caller is responsible for
- * the backdrop overlay and centring, e.g.:
+ * Saved state — when `saved` is true the card swaps to a smaller variant with
+ * the headline "Recalibrating your feed…" and a horizontal progress bar that
+ * fills from 0 → 100% over ~1.2s, matching Figma node 633:4803/5107/5108.
  *
- *   <div className="fixed inset-0 flex items-center justify-center
- *                   bg-black/20 z-50">
- *     <Profile ... />
- *   </div>
+ * Card shadow: Figma specifies drop-shadow(0px 3px 3px rgba(33,37,41,0.15))
+ *              + drop-shadow(0px 0px 0.5px rgba(33,37,41,0.32)) — closest token
+ *              is --shadow-1 which uses 6px / 1px radii (visually equivalent).
  *
- * Select-like fields: Figma shows pill inputs with a chevron-down icon.
- * Each field exposes an `onClick` callback so the caller can mount a native
- * <select>, sheet, or popover; the card itself is display-only for the value.
- *
- * Card shadow: Figma specifies 0px 0px 6.5px 0px rgba(149,149,149,0.25) —
- * used directly as there is no matching token in tokens.css.
- *
- * Greeting / field-label font size: Figma 22 px — used directly (1.375 rem)
- * as no token covers this exact value, matching the Org.tsx precedent.
- *
- * Field label colour: Figma #949494 — approximated with --color-text-muted
- * (--color-neutral-500 #adb5bd), the closest available muted-text token.
- *
- * All other colours, spacing, and font values reference CSS custom properties
- * from src/styles/tokens.css — nothing else is hardcoded.
+ * All colours, spacing, and font values reference CSS custom properties from
+ * src/styles/tokens.css — nothing else is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from "react";
-import { Tag } from "@app/ui";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
+import { Tag, Button } from "@app/ui";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
-// ChevronDownIcon and XIcon are not in shared/ui/src/assets; defined inline.
 
 function ChevronDownIcon({ className }: { className?: string }) {
   return (
@@ -76,6 +68,23 @@ function XIcon({ className }: { className?: string }) {
   );
 }
 
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <line x1={8} y1={3} x2={8} y2={13} />
+      <line x1={3} y1={8} x2={13} y2={8} />
+    </svg>
+  );
+}
+
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_REGULAR =
@@ -83,68 +92,235 @@ const BODY2_REGULAR =
   "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
+// ─── Default option lists ─────────────────────────────────────────────────────
+
+const DEFAULT_MAJOR_OPTIONS: readonly string[] = [
+  "Computer Science",
+  "Information Science",
+  "ECE",
+  "ORIE",
+  "Mechanical Engineering",
+  "Economics",
+  "Biology",
+  "Government",
+  "Psychology",
+  "Mathematics",
+];
+
+const DEFAULT_GRAD_YEAR_OPTIONS: readonly string[] = [
+  "2026",
+  "2027",
+  "2028",
+  "2029",
+];
+
+const DEFAULT_MINOR_OPTIONS: readonly string[] = [
+  "Linguistics",
+  "Business",
+  "Data Science",
+  "Game Design",
+  "Music",
+  "Inequality Studies",
+  "Statistics",
+  "Creative Writing",
+];
+
+const DEFAULT_INTEREST_OPTIONS: readonly string[] = [
+  "Tech",
+  "Finance",
+  "Health",
+  "Education",
+  "Outdoors",
+  "Mentorship",
+  "Just for Fun",
+  "Entrepreneurship",
+  "Arts",
+  "Sports",
+  "Service",
+  "Research",
+];
+
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export interface ProfileProps extends ComponentPropsWithoutRef<"div"> {
-  /** First name shown in the greeting, e.g. "Alex" → "Hi Alex!". Falls back to "Hi there!" when omitted. */
+  /** First name shown in the greeting. Falls back to "there!" when omitted. */
   userName?: string;
 
-  // ── Major ──
   major?: string;
-  /** Called when the Major field is clicked so the caller can show a picker. */
-  onMajorChange?: () => void;
+  onMajorChange?: (next: string) => void;
+  majorOptions?: readonly string[];
 
-  // ── Grad Year ──
   gradYear?: string;
-  /** Called when the Grad Year field is clicked so the caller can show a picker. */
-  onGradYearChange?: () => void;
+  onGradYearChange?: (next: string) => void;
+  gradYearOptions?: readonly string[];
 
-  // ── Minor ──
   minor?: string;
-  /** Called when the Minor field is clicked so the caller can show a picker. */
-  onMinorChange?: () => void;
+  onMinorChange?: (next: string) => void;
+  minorOptions?: readonly string[];
 
-  // ── Interests ──
-  /** Tag labels currently selected, e.g. ["Internships", "Early Career", "Tech"]. */
+  /** Selected interest tag labels, e.g. ["Tech", "Health"]. */
   interests?: string[];
-  /** Called when the "+" add-interest chip is clicked. */
-  onAddInterest?: () => void;
+  onInterestsChange?: (next: string[]) => void;
+  interestOptions?: readonly string[];
 
-  // ── Dialog ──
-  /** Called when the × close button is clicked. */
+  /** When true, render the post-save confirmation variant. */
+  saved?: boolean;
+  /** Called when "Save changes" is clicked. */
+  onSave?: () => void;
+  /** Called when × is clicked. */
   onClose?: () => void;
+}
+
+// ─── ProfilePicker — inline popover used by every select-like field ───────────
+
+interface ProfilePickerProps {
+  open: boolean;
+  options: readonly string[];
+  selected?: string;
+  onSelect: (value: string) => void;
+  onRequestClose: () => void;
+  /** Listbox accessibility id linked to the trigger. */
+  listboxId: string;
+  /** Tailwind alignment for the menu — "start" left-aligns, "end" right-aligns. */
+  align?: "start" | "end";
+}
+
+function ProfilePicker({
+  open,
+  options,
+  selected,
+  onSelect,
+  onRequestClose,
+  listboxId,
+  align = "start",
+}: ProfilePickerProps) {
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (
+        popRef.current &&
+        e.target instanceof Node &&
+        !popRef.current.contains(e.target)
+      ) {
+        onRequestClose();
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onRequestClose();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onRequestClose]);
+
+  if (!open) return null;
+
+  const alignClass = align === "end" ? "right-0" : "left-0";
+
+  return (
+    <div
+      ref={popRef}
+      id={listboxId}
+      role="listbox"
+      className={[
+        "absolute top-[calc(100%+var(--space-1))] z-20",
+        alignClass,
+        "max-h-[14rem] min-w-full overflow-y-auto",
+        "flex flex-col",
+        "border border-[var(--color-border)] bg-[var(--color-surface)]",
+        "rounded-[var(--radius-card)] shadow-[var(--shadow-1)]",
+        "p-[var(--space-1)]",
+      ].join(" ")}
+    >
+      {options.map((opt) => {
+        const isSelected = opt === selected;
+        return (
+          <button
+            key={opt}
+            type="button"
+            role="option"
+            aria-selected={isSelected}
+            onClick={() => onSelect(opt)}
+            className={[
+              BODY2_REGULAR,
+              "cursor-pointer text-left whitespace-nowrap",
+              "px-[var(--space-3)] py-[var(--space-1-5)]",
+              "rounded-[var(--radius-input)]",
+              "transition-colors duration-150",
+              isSelected
+                ? "bg-[var(--color-primary-400)] text-[var(--color-primary-800)]"
+                : "text-[var(--color-neutral-900)] hover:bg-[var(--color-surface-subtle)]",
+            ].join(" ")}
+            style={{ fontVariationSettings: "'opsz' 14" }}
+          >
+            {opt}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── ProfileSelectField ───────────────────────────────────────────────────────
 
-/**
- * A labelled select-like trigger.
- * Renders a muted text label above a pill-shaped button that shows the current
- * value and a chevron-down icon. Clicking calls `onClick`.
- *
- * Figma: bg white, Neutral/300 border, rounded-[16px], px-16, py-8,
- *        body-2 regular, Neutral/700 text, 24 × 24 chevron icon.
- */
+interface ProfileSelectFieldProps {
+  label: string;
+  value?: string;
+  placeholder?: string;
+  options: readonly string[];
+  onSelect: (value: string) => void;
+  className?: string;
+  pickerAlign?: "start" | "end";
+  /** When true the trigger uses content-width (Grad Year). */
+  compact?: boolean;
+}
+
 function ProfileSelectField({
   label,
   value,
   placeholder,
-  onClick,
+  options,
+  onSelect,
   className,
-}: {
-  label: string;
-  value?: string;
-  placeholder?: string;
-  onClick?: () => void;
-  className?: string;
-}) {
+  pickerAlign,
+  compact = false,
+}: ProfileSelectFieldProps) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const reactId = useId();
+  const listboxId = `${reactId}-listbox`;
+
+  // Close picker when major/year/minor changes externally
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (
+        wrapperRef.current &&
+        e.target instanceof Node &&
+        !wrapperRef.current.contains(e.target)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+
   return (
     <div
-      className={["flex flex-col items-start gap-[var(--space-2)]", className]
+      ref={wrapperRef}
+      className={[
+        "relative flex flex-col items-start gap-[var(--space-1)]",
+        className,
+      ]
         .filter(Boolean)
         .join(" ")}
     >
-      {/* Field label — Figma: Regular 16 px, #949494 ≈ --color-text-muted */}
       <span
         className={
           BODY2_REGULAR + " whitespace-nowrap text-[var(--color-text-muted)]"
@@ -154,18 +330,23 @@ function ProfileSelectField({
         {label}
       </span>
 
-      {/* Trigger button — bg white, Neutral/300 border, rounded-card */}
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
         className={[
-          "flex w-full items-center justify-between",
-          "px-[var(--space-4)] py-[var(--space-2)]",
+          "flex items-center justify-between",
+          compact ? "gap-[var(--space-2)]" : "w-full",
+          "px-[var(--space-4)] py-[var(--space-1-5)]",
           "rounded-[var(--radius-card)]",
           "bg-[var(--color-surface)]",
           "border border-[var(--color-border)]",
           BODY2_REGULAR,
-          "text-[var(--color-neutral-700)]",
+          value
+            ? "text-[var(--color-neutral-900)]"
+            : "text-[var(--color-neutral-500)]",
           "cursor-pointer whitespace-nowrap",
           "hover:bg-[var(--color-surface-subtle)]",
           "transition-colors duration-150",
@@ -173,62 +354,207 @@ function ProfileSelectField({
         style={{ fontVariationSettings: "'opsz' 14" }}
       >
         <span>{value ?? placeholder ?? ""}</span>
-        <ChevronDownIcon className="size-[var(--space-6)] shrink-0 text-[var(--color-neutral-700)]" />
+        <ChevronDownIcon
+          className={[
+            "size-[var(--space-4)] shrink-0 text-[var(--color-neutral-700)]",
+            "transition-transform duration-150",
+            open ? "rotate-180" : "",
+          ].join(" ")}
+        />
       </button>
+
+      <ProfilePicker
+        open={open}
+        options={options}
+        selected={value}
+        listboxId={listboxId}
+        align={pickerAlign}
+        onRequestClose={() => setOpen(false)}
+        onSelect={(next) => {
+          onSelect(next);
+          setOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── InterestPicker ───────────────────────────────────────────────────────────
+
+interface InterestPickerProps {
+  options: readonly string[];
+  selected: string[];
+  onSelect: (value: string) => void;
+  onRequestClose: () => void;
+}
+
+function InterestPicker({
+  options,
+  selected,
+  onSelect,
+  onRequestClose,
+}: InterestPickerProps) {
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (
+        popRef.current &&
+        e.target instanceof Node &&
+        !popRef.current.contains(e.target)
+      ) {
+        onRequestClose();
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onRequestClose();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onRequestClose]);
+
+  const remaining = options.filter((o) => !selected.includes(o));
+
+  return (
+    <div
+      ref={popRef}
+      role="dialog"
+      aria-label="Add interest"
+      className={[
+        "absolute top-[calc(100%+var(--space-2))] left-0 z-20",
+        "flex flex-wrap gap-[var(--space-2)]",
+        "max-w-[20rem]",
+        "p-[var(--space-3)]",
+        "border border-[var(--color-border)] bg-[var(--color-surface)]",
+        "rounded-[var(--radius-card)] shadow-[var(--shadow-1)]",
+      ].join(" ")}
+    >
+      {remaining.length === 0 ? (
+        <span
+          className={
+            BODY2_REGULAR +
+            " px-[var(--space-1)] text-[var(--color-text-muted)]"
+          }
+        >
+          All set!
+        </span>
+      ) : (
+        remaining.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onSelect(opt)}
+            className="cursor-pointer transition-transform duration-150 hover:-translate-y-[1px]"
+          >
+            <Tag color="neutral">{opt}</Tag>
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ─── SavedState — "Recalibrating your feed…" variant (Figma 633:4779) ────────
+
+function SavedState() {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    // Animate 0 → 100% over ~1.2s using a single rAF-driven setTimeout chain.
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const pct = Math.min(100, ((now - start) / 1200) * 100);
+      setProgress(pct);
+      if (pct < 100) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div className="flex w-full flex-col items-center gap-[var(--space-6)]">
+      <h2
+        className={
+          "font-[family-name:var(--font-heading)] font-bold " +
+          "leading-[var(--line-height-body1)] text-[var(--font-size-body1)] " +
+          "tracking-[var(--letter-spacing-body1)] " +
+          "text-center text-[var(--color-neutral-900)]"
+        }
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
+        Recalibrating your feed…
+      </h2>
+      <div
+        role="progressbar"
+        aria-valuenow={Math.round(progress)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Saving your profile"
+        className={[
+          "relative h-[10px] w-[20.1875rem]" /* 323px from Figma */,
+          "overflow-hidden rounded-[var(--space-3)] bg-[var(--color-primary-400)]",
+        ].join(" ")}
+      >
+        <div
+          className="h-full rounded-[var(--space-3)] bg-[var(--color-primary-700)]"
+          style={{
+            width: `${progress}%`,
+            transition: "width 16ms linear",
+          }}
+        />
+      </div>
     </div>
   );
 }
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
-/**
- * Profile popup card layout:
- *
- *   ┌──────────────────────────────────────┐
- *   │                                    × │  ← close button (absolute, top-right)
- *   │           Hi {userName}!             │  ← greeting, centred
- *   │                                      │
- *   │  Major ──────────────── Grad Year    │  ← side-by-side, major flex-1
- *   │  [ Select major          ▾ ]  [Year▾]│
- *   │                                      │
- *   │  Minor (optional)                    │
- *   │  [ Select minor             ▾ ]      │
- *   │                                      │
- *   │  Interests                           │
- *   │  [Internships] [Early Career] [Tech] │
- *   │  [+]                                 │
- *   └──────────────────────────────────────┘
- */
 export function Profile({
   userName,
   major,
   onMajorChange,
+  majorOptions = DEFAULT_MAJOR_OPTIONS,
   gradYear,
   onGradYearChange,
+  gradYearOptions = DEFAULT_GRAD_YEAR_OPTIONS,
   minor,
   onMinorChange,
+  minorOptions = DEFAULT_MINOR_OPTIONS,
   interests = [],
-  onAddInterest,
+  onInterestsChange,
+  interestOptions = DEFAULT_INTEREST_OPTIONS,
+  saved = false,
+  onSave,
   onClose,
   className,
   ...rest
 }: ProfileProps) {
+  const [interestPickerOpen, setInterestPickerOpen] = useState(false);
+
+  const handleRemoveInterest = (label: string) => {
+    onInterestsChange?.(interests.filter((i) => i !== label));
+  };
+
+  const handleAddInterest = (label: string) => {
+    if (interests.includes(label)) return;
+    onInterestsChange?.([...interests, label]);
+    setInterestPickerOpen(false);
+  };
+
   return (
     <div
       className={[
-        /*
-         * Figma (node 350:504): w-518px, bg white, rounded-[16px], px-24 py-32,
-         * gap-24, shadow 0px 0px 6.5px 0px rgba(149,149,149,0.25).
-         * The gap-24 separates the one flow child (form section) from any siblings;
-         * since the close button is absolute it does not participate in flex layout.
-         */
         "relative flex flex-col items-center gap-[var(--space-6)]",
-        "w-[32.375rem]" /* 518 px — no layout token covers this value */,
+        "w-[30.5rem]" /* 488px — Figma card width */,
         "px-[var(--space-6)] py-[var(--space-8)]",
         "rounded-[var(--radius-card)]",
         "bg-[var(--color-surface)]",
-        /* Figma shadow — no matching token in tokens.css */
-        "shadow-[0px_0px_6.5px_0px_rgba(149,149,149,0.25)]",
+        "shadow-[var(--shadow-1)]",
         className,
       ]
         .filter(Boolean)
@@ -238,10 +564,7 @@ export function Profile({
       aria-label="Profile setup"
       {...rest}
     >
-      {/*
-       * Close button — absolutely positioned top-right.
-       * Figma (node 350:513): pr-16 pt-16, icon 16 × 16 px.
-       */}
+      {/* Close button (always visible, top-right) */}
       <button
         type="button"
         aria-label="Close"
@@ -259,95 +582,118 @@ export function Profile({
         <XIcon className="size-full" />
       </button>
 
-      {/* ── Form fields (node 350:528) — gap-16 between each field group ── */}
-      <div className="flex w-full flex-col items-start gap-[var(--space-4)]">
-        {/*
-         * Greeting — Figma: Inter SemiBold 22 px, #5f5f5f ≈ --color-neutral-700,
-         * centred within a full-width row.
-         * 22 px (1.375 rem) is used directly; no token covers this exact size.
-         */}
-        <div className="flex w-full flex-col items-center">
+      {saved ? (
+        <SavedState />
+      ) : (
+        <>
+          {/* Greeting — Figma: DM Sans Bold 18px, centred */}
           <h2
             className={
-              "font-[family-name:var(--font-body)] font-semibold " +
-              "text-[1.375rem] leading-[1.5] " +
+              "font-[family-name:var(--font-heading)] font-bold " +
+              "leading-[var(--line-height-body1)] text-[var(--font-size-body1)] " +
               "tracking-[var(--letter-spacing-body1)] " +
-              "whitespace-nowrap text-[var(--color-neutral-700)]"
+              "w-full text-center text-[var(--color-neutral-900)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             {userName ? `Hi ${userName}!` : "Hi there!"}
           </h2>
-        </div>
 
-        {/*
-         * Major + Grad Year row — Figma (node 350:816): flex gap-16 items-start.
-         * Major uses flex-1 (stretches); Grad Year uses shrink-0 (content-width).
-         */}
-        <div className="flex w-full items-start gap-[var(--space-4)]">
-          <ProfileSelectField
-            label="Major"
-            value={major}
-            placeholder="Select major"
-            onClick={onMajorChange}
-            className="min-w-0 flex-1"
-          />
-          <ProfileSelectField
-            label="Grad Year"
-            value={gradYear}
-            placeholder="Year"
-            onClick={onGradYearChange}
-            className="shrink-0"
-          />
-        </div>
+          {/* Form fields */}
+          <div className="flex w-full flex-col items-start gap-[var(--space-3)]">
+            {/* Major + Grad Year row */}
+            <div className="flex w-full items-start gap-[var(--space-4)]">
+              <ProfileSelectField
+                label="Major"
+                value={major}
+                placeholder="Select major"
+                options={majorOptions}
+                onSelect={(v) => onMajorChange?.(v)}
+                className="min-w-0 flex-1"
+              />
+              <ProfileSelectField
+                label="Grad Year"
+                value={gradYear}
+                placeholder="Year"
+                options={gradYearOptions}
+                onSelect={(v) => onGradYearChange?.(v)}
+                className="shrink-0"
+                pickerAlign="end"
+                compact
+              />
+            </div>
 
-        {/* Minor row — Figma (node 350:823): flex items-start, field flex-1 */}
-        <div className="flex w-full items-start">
-          <ProfileSelectField
-            label="Minor (optional)"
-            value={minor}
-            placeholder="Select minor"
-            onClick={onMinorChange}
-            className="min-w-0 flex-1"
-          />
-        </div>
+            {/* Minor */}
+            <div className="flex w-full items-start">
+              <ProfileSelectField
+                label="Minor"
+                value={minor}
+                placeholder="Select minor"
+                options={minorOptions}
+                onSelect={(v) => onMinorChange?.(v)}
+                className="min-w-0 flex-1"
+              />
+            </div>
 
-        {/* Interests — Figma (node 350:544): flex-col gap-8, label + tag chips */}
-        <div className="flex w-full flex-col items-start gap-[var(--space-2)]">
-          {/* Label — same muted style as field labels */}
-          <span
-            className={
-              BODY2_REGULAR +
-              " whitespace-nowrap text-[var(--color-text-muted)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            Interests
-          </span>
+            {/* Interests */}
+            <div className="relative flex w-full flex-col items-start gap-[var(--space-1)]">
+              <span
+                className={
+                  BODY2_REGULAR +
+                  " whitespace-nowrap text-[var(--color-text-muted)]"
+                }
+                style={{ fontVariationSettings: "'opsz' 14" }}
+              >
+                Interests
+              </span>
 
-          {/*
-           * Tag chips — Figma (node 350:804): flex gap-8 items-start.
-           * Each selected interest is a neutral Tag. The "+" chip at the end
-           * triggers onAddInterest; its radius in Figma is rounded-[8px] which
-           * matches the Tag component's --radius-input (8px) default.
-           */}
-          <div className="flex flex-wrap items-start gap-[var(--space-2)]">
-            {interests.map((interest) => (
-              <Tag key={interest} color="neutral">
-                {interest}
-              </Tag>
-            ))}
+              <div className="flex flex-wrap items-start gap-[var(--space-2)]">
+                {interests.map((label) => (
+                  <Tag
+                    key={label}
+                    color="neutral"
+                    onDismiss={() => handleRemoveInterest(label)}
+                  >
+                    {label}
+                  </Tag>
+                ))}
 
-            <Tag
-              color="neutral"
-              onClick={() => onAddInterest?.()}
-              className="cursor-pointer"
-            >
-              +
-            </Tag>
+                <button
+                  type="button"
+                  aria-label="Add interest"
+                  aria-expanded={interestPickerOpen}
+                  onClick={() => setInterestPickerOpen((v) => !v)}
+                  className={[
+                    "inline-flex items-center justify-center",
+                    "px-[var(--space-2)] py-[var(--space-0-5)]",
+                    "rounded-[var(--radius-input)]",
+                    "bg-[var(--color-neutral-300)]",
+                    "text-[var(--color-neutral-700)]",
+                    "hover:bg-[var(--color-neutral-400)]",
+                    "cursor-pointer transition-colors duration-150",
+                  ].join(" ")}
+                >
+                  <PlusIcon className="size-[var(--space-4)]" />
+                </button>
+              </div>
+
+              {interestPickerOpen && (
+                <InterestPicker
+                  options={interestOptions}
+                  selected={interests}
+                  onSelect={handleAddInterest}
+                  onRequestClose={() => setInterestPickerOpen(false)}
+                />
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+
+          {/* Save changes */}
+          <Button variant="secondary" size="sm" onClick={() => onSave?.()}>
+            Save changes
+          </Button>
+        </>
+      )}
     </div>
   );
 }
