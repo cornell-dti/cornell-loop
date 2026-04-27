@@ -112,7 +112,17 @@ export default function Admin() {
   const [manualName, setManualName] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [joinDraft, setJoinDraft] = useState<JoinDraft | null>(null);
-  const [activeTab, setActiveTab] = useState<AdminTab>("setup");
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => {
+    const param = new URLSearchParams(window.location.search).get("tab");
+    return (ADMIN_TABS.some((t) => t.id === param) ? param : "setup") as AdminTab;
+  });
+
+  function handleTabChange(tab: AdminTab) {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", url.toString());
+  }
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgType, setNewOrgType] = useState<Organization["type"]>("club");
   const [message, setMessage] = useState<string | null>(null);
@@ -295,7 +305,7 @@ export default function Admin() {
           <MetricCard label="Gmail" value={gmailConnection?.status ?? (gmailConnection === undefined ? "Loading" : "Not connected")} />
         </section>
 
-        <TabNav activeTab={activeTab} onChange={setActiveTab} />
+        <TabNav activeTab={activeTab} onChange={handleTabChange} />
 
         <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
           {activeTab === "setup" && (
