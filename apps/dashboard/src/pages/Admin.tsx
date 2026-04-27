@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -76,7 +76,13 @@ type JoinDraft = {
 };
 
 type JoinStrategy = NonNullable<Listserv["joinStrategy"]>;
-type OrgType = "club" | "department" | "official" | "publication" | "company" | "other";
+type OrgType =
+  | "club"
+  | "department"
+  | "official"
+  | "publication"
+  | "company"
+  | "other";
 
 type UnassignedSender = {
   senderEmail: string;
@@ -110,6 +116,21 @@ type ConfirmationItem = {
   receivedAt: number;
   clearedAt?: number;
   link?: string;
+};
+
+type OrgUpdatePayload = {
+  name: string;
+  type: OrgType;
+  status: "active" | "hidden";
+  description: string;
+  website: string;
+  email: string;
+  tags: string[];
+  isVerified: boolean;
+  loopSummary: string;
+  /** undefined = no change; null = clear; Id = set new image */
+  avatarStorageId?: Id<"_storage"> | null;
+  coverStorageId?: Id<"_storage"> | null;
 };
 
 type AdminTab = "setup" | "sources" | "join" | "ingest" | "publish";
@@ -201,6 +222,9 @@ export default function Admin() {
   const assignSourceOrg = useMutation(api.sourceAdmin.assignSourceOrganization);
   const createOrg = useMutation(api.sourceAdmin.createOrganization);
   const updateOrg = useMutation(api.sourceAdmin.updateOrganization);
+  const generateUploadUrl = useMutation(
+    api.sourceAdmin.generateOrgImageUploadUrl,
+  );
   const ignoreSender = useMutation(api.sourceAdmin.ignoreSender);
   const unignoreSource = useMutation(api.sourceAdmin.unignoreSource);
   const updateListservStatus = useMutation(
@@ -417,18 +441,26 @@ export default function Admin() {
             onCreateOrg={(name, type) =>
               act(`${name} created.`, () => createOrg({ token, name, type }))
             }
-            onUpdateOrg={(orgId, name, type) =>
+            onUpdateOrg={(orgId, payload) =>
               act("Organization updated.", () =>
                 updateOrg({
                   token,
                   organizationId: orgId,
-                  name,
-                  type,
-                  status: "active",
-                  tags: [],
+                  name: payload.name,
+                  type: payload.type,
+                  status: payload.status,
+                  description: payload.description,
+                  website: payload.website,
+                  email: payload.email,
+                  tags: payload.tags,
+                  isVerified: payload.isVerified,
+                  loopSummary: payload.loopSummary,
+                  avatarStorageId: payload.avatarStorageId,
+                  coverStorageId: payload.coverStorageId,
                 }),
               )
             }
+            onGenerateUploadUrl={() => generateUploadUrl({ token })}
           />
         )}
 
@@ -695,6 +727,7 @@ function SourcesTab({
   onUnignoreSource,
   onCreateOrg,
   onUpdateOrg,
+  onGenerateUploadUrl,
 }: {
   candidates: Candidate[];
   listservs: Listserv[];
@@ -702,19 +735,13 @@ function SourcesTab({
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSource: (
-    listservId: Id<"listservs">,
-    orgId: Id<"orgs">,
-  ) => void;
+  onAssignSource: (listservId: Id<"listservs">, orgId: Id<"orgs">) => void;
   onCreateAndAssignSource: (
     listservId: Id<"listservs">,
     name: string,
     type: OrgType,
   ) => void;
-  onAssignInboxSenderToOrg: (
-    senderEmail: string,
-    orgId: Id<"orgs">,
-  ) => void;
+  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"orgs">) => void;
   onCreateAndAssignInboxSender: (
     senderEmail: string,
     name: string,
@@ -725,11 +752,8 @@ function SourcesTab({
   onIgnoreSender: (senderEmail: string) => void;
   onUnignoreSource: (listservId: Id<"listservs">) => void;
   onCreateOrg: (name: string, type: OrgType) => void;
-  onUpdateOrg: (
-    orgId: Id<"orgs">,
-    name: string,
-    type: OrgType,
-  ) => void;
+  onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
+  onGenerateUploadUrl: () => Promise<string>;
 }) {
   // Partition listservs into three buckets
   const unassignedSources = listservs.filter(
@@ -929,7 +953,8 @@ function SourcesTab({
                 sourceCount={
                   listservs.filter((s) => s.organizationId === org._id).length
                 }
-                onUpdate={(name, type) => onUpdateOrg(org._id, name, type)}
+                onUpdate={(payload) => onUpdateOrg(org._id, payload)}
+                onGenerateUploadUrl={onGenerateUploadUrl}
               />
             ))}
           </div>
@@ -1065,79 +1090,461 @@ function IgnoredSourceRow({
   );
 }
 
+type ImageUploadState = {
+  status: "idle" | "uploading" | "done" | "error";
+  preview: string | null;
+  storageId: Id<"_storage"> | null;
+  error: string | null;
+};
+
+function useImageUpload(
+  initialUrl: string | undefined,
+  onGenerateUploadUrl: () => Promise<string>,
+) {
+  const [state, setState] = useState<ImageUploadState>({
+    status: "idle",
+    preview: initialUrl ?? null,
+    storageId: null,
+    error: null,
+  });
+
+  const upload = useCallback(
+    async (file: File) => {
+      setState((s) => ({ ...s, status: "uploading", error: null }));
+      try {
+        const uploadUrl = await onGenerateUploadUrl();
+        const res = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const { storageId } = (await res.json()) as {
+          storageId: Id<"_storage">;
+        };
+        const preview = URL.createObjectURL(file);
+        setState({ status: "done", preview, storageId, error: null });
+      } catch (e) {
+        setState((s) => ({
+          ...s,
+          status: "error",
+          error: e instanceof Error ? e.message : "Upload failed",
+        }));
+      }
+    },
+    [onGenerateUploadUrl],
+  );
+
+  const clear = useCallback(() => {
+    setState({ status: "idle", preview: null, storageId: null, error: null });
+  }, []);
+
+  const reset = useCallback((url: string | undefined) => {
+    setState({
+      status: "idle",
+      preview: url ?? null,
+      storageId: null,
+      error: null,
+    });
+  }, []);
+
+  return { state, upload, clear, reset };
+}
+
+function ImageUploadField({
+  label,
+  state,
+  onFile,
+  onClear,
+  aspect,
+}: {
+  label: string;
+  state: ImageUploadState;
+  onFile: (file: File) => void;
+  onClear: () => void;
+  aspect: "square" | "wide";
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const previewClass =
+    aspect === "square"
+      ? "size-16 rounded-full object-cover"
+      : "h-16 w-full rounded-lg object-cover";
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+        {label}
+      </span>
+      <div className="flex items-center gap-3">
+        {state.preview ? (
+          <img src={state.preview} alt={label} className={previewClass} />
+        ) : (
+          <div
+            className={[
+              aspect === "square"
+                ? "size-16 rounded-full"
+                : "h-16 w-32 rounded-lg",
+              "flex items-center justify-center",
+              "bg-[var(--color-neutral-200)]",
+              "text-[length:var(--font-size-body3)]",
+              "text-[color:var(--color-text-muted)]",
+            ].join(" ")}
+          >
+            None
+          </div>
+        )}
+        <div className="flex flex-col gap-1">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Btn
+            onClick={() => inputRef.current?.click()}
+            disabled={state.status === "uploading"}
+          >
+            {state.status === "uploading" ? "Uploading…" : "Choose file"}
+          </Btn>
+          {state.preview && (
+            <Btn danger onClick={onClear}>
+              Remove
+            </Btn>
+          )}
+        </div>
+        {state.error && (
+          <span className="text-[length:var(--font-size-body3)] text-red-600">
+            {state.error}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OrgRow({
   org,
   sourceCount,
   onUpdate,
+  onGenerateUploadUrl,
 }: {
   org: Organization;
   sourceCount: number;
-  onUpdate: (name: string, type: OrgType) => void;
+  onUpdate: (payload: OrgUpdatePayload) => void;
+  onGenerateUploadUrl: () => Promise<string>;
 }) {
   const [editing, setEditing] = useState(false);
+
+  // Draft fields
   const [name, setName] = useState(org.name);
   const [type, setType] = useState<OrgType>(org.orgType ?? "club");
+  const [status, setStatus] = useState<"active" | "hidden">(
+    org.orgStatus ?? "active",
+  );
+  const [description, setDescription] = useState(org.description ?? "");
+  const [tagsRaw, setTagsRaw] = useState((org.tags ?? []).join(", "));
+  const [website, setWebsite] = useState(org.websiteUrl ?? "");
+  const [email, setEmail] = useState(org.email ?? "");
+  const [isVerified, setIsVerified] = useState(org.isVerified ?? false);
+  const [loopSummary, setLoopSummary] = useState(org.loopSummary ?? "");
 
-  // Reset draft if org prop changes (e.g. after save)
-  const savedName = org.name;
-  const savedType = org.orgType ?? "club";
+  const avatarUpload = useImageUpload(org.avatarUrl, onGenerateUploadUrl);
+  const coverUpload = useImageUpload(org.coverImageUrl, onGenerateUploadUrl);
+
+  // Keep local state in sync if org doc updates (e.g. after save)
+  const prevId = useRef(org._id);
+  useEffect(() => {
+    if (org._id !== prevId.current) return;
+    // Only reset non-upload fields when the org prop changes after a save
+    setName(org.name);
+    setType(org.orgType ?? "club");
+    setStatus(org.orgStatus ?? "active");
+    setDescription(org.description ?? "");
+    setTagsRaw((org.tags ?? []).join(", "));
+    setWebsite(org.websiteUrl ?? "");
+    setEmail(org.email ?? "");
+    setIsVerified(org.isVerified ?? false);
+    setLoopSummary(org.loopSummary ?? "");
+    avatarUpload.reset(org.avatarUrl);
+    coverUpload.reset(org.coverImageUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    org.name,
+    org.orgType,
+    org.orgStatus,
+    org.description,
+    org.tags,
+    org.websiteUrl,
+    org.email,
+    org.isVerified,
+    org.loopSummary,
+    org.avatarUrl,
+    org.coverImageUrl,
+  ]);
+
+  function cancel() {
+    setName(org.name);
+    setType(org.orgType ?? "club");
+    setStatus(org.orgStatus ?? "active");
+    setDescription(org.description ?? "");
+    setTagsRaw((org.tags ?? []).join(", "));
+    setWebsite(org.websiteUrl ?? "");
+    setEmail(org.email ?? "");
+    setIsVerified(org.isVerified ?? false);
+    setLoopSummary(org.loopSummary ?? "");
+    avatarUpload.reset(org.avatarUrl);
+    coverUpload.reset(org.coverImageUrl);
+    setEditing(false);
+  }
+
+  function save() {
+    const tags = tagsRaw
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    // avatarStorageId: if a new file was uploaded use its id;
+    // if preview was cleared and there was an original, pass null to remove;
+    // otherwise undefined (no change).
+    const avatarStorageId: Id<"_storage"> | null | undefined =
+      avatarUpload.state.storageId !== null
+        ? avatarUpload.state.storageId
+        : avatarUpload.state.preview === null && org.avatarUrl
+          ? null
+          : undefined;
+
+    const coverStorageId: Id<"_storage"> | null | undefined =
+      coverUpload.state.storageId !== null
+        ? coverUpload.state.storageId
+        : coverUpload.state.preview === null && org.coverImageUrl
+          ? null
+          : undefined;
+
+    onUpdate({
+      name: name.trim() || org.name,
+      type,
+      status,
+      description,
+      website,
+      email,
+      tags,
+      isVerified,
+      loopSummary,
+      avatarStorageId,
+      coverStorageId,
+    });
+    setEditing(false);
+  }
+
+  const uploading =
+    avatarUpload.state.status === "uploading" ||
+    coverUpload.state.status === "uploading";
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      {/* Collapsed row */}
       <div className="flex items-center gap-3 px-4 py-3">
-        {editing ? (
-          <>
-            <div className="min-w-0 flex-1">
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className={input()}
-                autoFocus
+        {/* Avatar thumbnail */}
+        <span
+          className={[
+            "inline-flex shrink-0 items-center justify-center",
+            "size-9 overflow-hidden rounded-full",
+            "bg-[var(--color-neutral-200)]",
+            "text-[length:var(--font-size-body3)] font-semibold",
+          ].join(" ")}
+        >
+          {org.avatarUrl ? (
+            <img
+              src={org.avatarUrl}
+              alt=""
+              className="size-full object-cover"
+            />
+          ) : (
+            org.name.charAt(0).toUpperCase()
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-semibold">
+          {org.name}
+        </span>
+        <Tag>{org.orgType ?? "—"}</Tag>
+        {org.orgStatus === "hidden" && <Tag variant="amber">hidden</Tag>}
+        <span className="shrink-0 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          {sourceCount} source{sourceCount !== 1 ? "s" : ""}
+        </span>
+        <Btn onClick={() => setEditing((v) => !v)}>
+          {editing ? "Close" : "Edit"}
+        </Btn>
+      </div>
+
+      {/* Expanded edit form */}
+      {editing && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+          <div className="grid gap-4">
+            {/* Row 1: Name + Type + Status */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
+              <div className="flex flex-col gap-1">
+                <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Name
+                </label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className={input()}
+                  autoFocus
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Type
+                </label>
+                <div className="w-36">
+                  <select
+                    value={type}
+                    onChange={(e) => setType(e.target.value as OrgType)}
+                    className={input()}
+                  >
+                    {ORG_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Status
+                </label>
+                <div className="w-28">
+                  <select
+                    value={status}
+                    onChange={(e) =>
+                      setStatus(e.target.value as "active" | "hidden")
+                    }
+                    className={input()}
+                  >
+                    <option value="active">active</option>
+                    <option value="hidden">hidden</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2: Description */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Description
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className={`${input()} resize-y`}
               />
             </div>
-            <div className="w-36 shrink-0">
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as OrgType)}
+
+            {/* Row 3: Tags */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Tags{" "}
+                <span className="font-normal normal-case">
+                  (comma-separated)
+                </span>
+              </label>
+              <input
+                value={tagsRaw}
+                onChange={(e) => setTagsRaw(e.target.value)}
+                placeholder="e.g. technology, engineering, open to all"
                 className={input()}
-              >
-                {ORG_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
-            <Btn
-              primary
-              onClick={() => {
-                onUpdate(name.trim() || savedName, type);
-                setEditing(false);
-              }}
-            >
-              Save
-            </Btn>
-            <Btn
-              onClick={() => {
-                setName(savedName);
-                setType(savedType);
-                setEditing(false);
-              }}
-            >
-              Cancel
-            </Btn>
-          </>
-        ) : (
-          <>
-            <span className="flex-1 font-semibold">{org.name}</span>
-            <Tag>{org.orgType ?? "—"}</Tag>
-            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-              {sourceCount} source{sourceCount !== 1 ? "s" : ""}
-            </span>
-            <Btn onClick={() => setEditing(true)}>Edit</Btn>
-          </>
-        )}
-      </div>
+
+            {/* Row 4: Website + Email */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Website URL
+                </label>
+                <input
+                  value={website}
+                  onChange={(e) => setWebsite(e.target.value)}
+                  type="url"
+                  placeholder="https://…"
+                  className={input()}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Contact email
+                </label>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="email"
+                  placeholder="club@cornell.edu"
+                  className={input()}
+                />
+              </div>
+            </div>
+
+            {/* Row 5: Images */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <ImageUploadField
+                label="Avatar"
+                state={avatarUpload.state}
+                onFile={avatarUpload.upload}
+                onClear={avatarUpload.clear}
+                aspect="square"
+              />
+              <ImageUploadField
+                label="Cover image"
+                state={coverUpload.state}
+                onFile={coverUpload.upload}
+                onClear={coverUpload.clear}
+                aspect="wide"
+              />
+            </div>
+
+            {/* Row 6: Loop summary */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Loop summary
+              </label>
+              <textarea
+                value={loopSummary}
+                onChange={(e) => setLoopSummary(e.target.value)}
+                rows={2}
+                placeholder="Short AI-generated summary shown on the org page."
+                className={`${input()} resize-y`}
+              />
+            </div>
+
+            {/* Row 7: Verified checkbox */}
+            <label className="flex cursor-pointer items-center gap-2 text-[length:var(--font-size-body2)] select-none">
+              <input
+                type="checkbox"
+                checked={isVerified}
+                onChange={(e) => setIsVerified(e.target.checked)}
+                className="size-4 accent-[var(--color-primary-700)]"
+              />
+              Verified organization
+            </label>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-1">
+              <Btn primary onClick={save} disabled={uploading}>
+                {uploading ? "Uploading…" : "Save"}
+              </Btn>
+              <Btn onClick={cancel}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

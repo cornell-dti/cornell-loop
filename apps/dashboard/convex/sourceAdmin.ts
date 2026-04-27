@@ -13,7 +13,13 @@ const ORG_TYPES = v.union(
   v.literal("other"),
 );
 
-type OrgType = "club" | "department" | "official" | "publication" | "company" | "other";
+type OrgType =
+  | "club"
+  | "department"
+  | "official"
+  | "publication"
+  | "company"
+  | "other";
 
 export const overview = query({
   args: { token: v.string() },
@@ -111,21 +117,67 @@ export const updateOrganization = mutation({
     type: ORG_TYPES,
     description: v.optional(v.string()),
     website: v.optional(v.string()),
+    email: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     status: v.union(v.literal("active"), v.literal("hidden")),
+    // Convex storage IDs for images — when provided the permanent URL is
+    // resolved and stored; pass null to explicitly clear a field.
+    avatarStorageId: v.optional(v.union(v.id("_storage"), v.null())),
+    coverStorageId: v.optional(v.union(v.id("_storage"), v.null())),
+    isVerified: v.optional(v.boolean()),
+    loopSummary: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    await ctx.db.patch(args.organizationId, {
+
+    // Resolve storage IDs to permanent URLs if supplied.
+    let avatarUrl: string | null | undefined = undefined; // undefined = don't touch
+    if (args.avatarStorageId !== undefined) {
+      avatarUrl =
+        args.avatarStorageId !== null
+          ? await ctx.storage.getUrl(args.avatarStorageId)
+          : null;
+    }
+    let coverImageUrl: string | null | undefined = undefined;
+    if (args.coverStorageId !== undefined) {
+      coverImageUrl =
+        args.coverStorageId !== null
+          ? await ctx.storage.getUrl(args.coverStorageId)
+          : null;
+    }
+
+    const patch: Record<string, unknown> = {
       name: args.name.trim(),
       slug: slugify(args.name),
       orgType: args.type,
       description: cleanOptional(args.description) ?? "",
-      websiteUrl: cleanOptional(args.website),
-      tags: args.tags ?? [],
+      websiteUrl: cleanOptional(args.website) ?? undefined,
+      email: cleanOptional(args.email) ?? undefined,
+      tags: (args.tags ?? []).map((t) => t.trim()).filter(Boolean),
       orgStatus: args.status,
+      isVerified: args.isVerified ?? false,
       updatedAt: Date.now(),
-    });
+    };
+    if (loopSummaryClean(args.loopSummary) !== undefined) {
+      patch.loopSummary = loopSummaryClean(args.loopSummary);
+    }
+    if (avatarUrl !== undefined) {
+      patch.avatarUrl = avatarUrl ?? undefined;
+    }
+    if (coverImageUrl !== undefined) {
+      patch.coverImageUrl = coverImageUrl ?? undefined;
+    }
+
+    await ctx.db.patch(args.organizationId, patch);
+  },
+});
+
+/** Generate a short-lived upload URL for org images (avatar or cover). */
+export const generateOrgImageUploadUrl = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await ctx.storage.generateUploadUrl();
   },
 });
 
@@ -391,6 +443,12 @@ function normalizeEmail(value: string) {
 }
 
 function cleanOptional(value: string | undefined) {
+  const cleaned = value?.trim();
+  return cleaned ? cleaned : undefined;
+}
+
+/** Returns the trimmed loop summary, or undefined if blank (to omit from patch). */
+function loopSummaryClean(value: string | undefined): string | undefined {
   const cleaned = value?.trim();
   return cleaned ? cleaned : undefined;
 }

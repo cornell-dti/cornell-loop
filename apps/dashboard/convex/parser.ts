@@ -202,7 +202,10 @@ export const publishEvent = mutation({
     requireAdminToken(args.token);
     const now = Date.now();
 
-    await ctx.db.patch(args.eventId, { visibility: "published", updatedAt: now });
+    await ctx.db.patch(args.eventId, {
+      visibility: "published",
+      updatedAt: now,
+    });
 
     // Insert the eventOrgs join so the org name appears in the feed post header.
     // organizationId now points directly to `orgs`, so no cross-table sync needed.
