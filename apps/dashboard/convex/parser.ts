@@ -83,7 +83,7 @@ type ParsedItem = {
 
 type SourceMessage = Doc<"listservMessages"> & {
   listserv?: Doc<"listservs"> | null;
-  organization?: Doc<"organizations"> | null;
+  organization?: Doc<"orgs"> | null;
 };
 
 export const runParseNow = action({
@@ -200,10 +200,28 @@ export const publishEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    await ctx.db.patch(args.eventId, {
-      visibility: "published",
-      updatedAt: Date.now(),
-    });
+    const now = Date.now();
+
+    await ctx.db.patch(args.eventId, { visibility: "published", updatedAt: now });
+
+    // Insert the eventOrgs join so the org name appears in the feed post header.
+    // organizationId now points directly to `orgs`, so no cross-table sync needed.
+    const event = await ctx.db.get(args.eventId);
+    if (!event?.organizationId) return;
+
+    const existing = await ctx.db
+      .query("eventOrgs")
+      .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
+      .filter((q) => q.eq(q.field("orgId"), event.organizationId!))
+      .unique();
+
+    if (existing === null) {
+      await ctx.db.insert("eventOrgs", {
+        eventId: args.eventId,
+        orgId: event.organizationId,
+        eventCreationTime: event._creationTime,
+      });
+    }
   },
 });
 
@@ -596,7 +614,7 @@ function getGeminiConfig(): AIConfig | null {
 function buildParsePrompt(message: SourceMessage) {
   const input = {
     sourceOrganization: message.organization?.name,
-    sourceOrganizationType: message.organization?.type,
+    sourceOrganizationType: message.organization?.orgType,
     sourceEmail: message.senderEmail,
     sourceName: message.listserv?.name,
     subject: message.subject,

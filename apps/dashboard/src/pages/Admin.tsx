@@ -55,7 +55,7 @@ type ParseMessage = Pick<
   | "listservId"
   | "receivedAt"
 >;
-type Organization = Doc<"organizations">;
+type Organization = Doc<"orgs">;
 type EventDoc = Doc<"events">;
 type ParseRun = Doc<"parseRuns">;
 type JoinAttempt = Doc<"joinAttempts">;
@@ -76,7 +76,7 @@ type JoinDraft = {
 };
 
 type JoinStrategy = NonNullable<Listserv["joinStrategy"]>;
-type OrgType = Organization["type"];
+type OrgType = "club" | "department" | "official" | "publication" | "company" | "other";
 
 type UnassignedSender = {
   senderEmail: string;
@@ -704,7 +704,7 @@ function SourcesTab({
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
   onAssignSource: (
     listservId: Id<"listservs">,
-    orgId: Id<"organizations">,
+    orgId: Id<"orgs">,
   ) => void;
   onCreateAndAssignSource: (
     listservId: Id<"listservs">,
@@ -713,7 +713,7 @@ function SourcesTab({
   ) => void;
   onAssignInboxSenderToOrg: (
     senderEmail: string,
-    orgId: Id<"organizations">,
+    orgId: Id<"orgs">,
   ) => void;
   onCreateAndAssignInboxSender: (
     senderEmail: string,
@@ -726,7 +726,7 @@ function SourcesTab({
   onUnignoreSource: (listservId: Id<"listservs">) => void;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (
-    orgId: Id<"organizations">,
+    orgId: Id<"orgs">,
     name: string,
     type: OrgType,
   ) => void;
@@ -950,7 +950,7 @@ function AssignedSourceRow({
   source: Listserv;
   orgName: string;
   organizations: Organization[];
-  onReassign: (orgId: Id<"organizations">) => void;
+  onReassign: (orgId: Id<"orgs">) => void;
   onIgnore: () => void;
 }) {
   const [reassigning, setReassigning] = useState(false);
@@ -983,7 +983,7 @@ function AssignedSourceRow({
               defaultValue={source.organizationId ?? ""}
               onChange={(e) => {
                 if (e.target.value) {
-                  onReassign(e.target.value as Id<"organizations">);
+                  onReassign(e.target.value as Id<"orgs">);
                   setReassigning(false);
                 }
               }}
@@ -1013,7 +1013,7 @@ function IgnoredSourceRow({
   source: Listserv;
   organizations: Organization[];
   onReactivate: () => void;
-  onAssign: (orgId: Id<"organizations">) => void;
+  onAssign: (orgId: Id<"orgs">) => void;
 }) {
   const [assigning, setAssigning] = useState(false);
   return (
@@ -1044,7 +1044,7 @@ function IgnoredSourceRow({
               defaultValue=""
               onChange={(e) => {
                 if (e.target.value) {
-                  onAssign(e.target.value as Id<"organizations">);
+                  onAssign(e.target.value as Id<"orgs">);
                   setAssigning(false);
                 }
               }}
@@ -1076,11 +1076,11 @@ function OrgRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(org.name);
-  const [type, setType] = useState<OrgType>(org.type);
+  const [type, setType] = useState<OrgType>(org.orgType ?? "club");
 
   // Reset draft if org prop changes (e.g. after save)
   const savedName = org.name;
-  const savedType = org.type;
+  const savedType = org.orgType ?? "club";
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -1126,7 +1126,7 @@ function OrgRow({
         ) : (
           <>
             <span className="flex-1 font-semibold">{org.name}</span>
-            <Tag>{org.type}</Tag>
+            <Tag>{org.orgType ?? "—"}</Tag>
             <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               {sourceCount} source{sourceCount !== 1 ? "s" : ""}
             </span>
@@ -1161,7 +1161,7 @@ function UnassignedRow({
   messageCount: number | undefined;
   sampleSubjects: string[];
   organizations: Organization[];
-  onAssignToOrg: (orgId: Id<"organizations">) => void;
+  onAssignToOrg: (orgId: Id<"orgs">) => void;
   onCreateAndAssign: (name: string, type: OrgType) => void;
   onIgnore: () => void;
 }) {
@@ -1210,7 +1210,7 @@ function UnassignedRow({
               defaultValue=""
               onChange={(e) => {
                 if (e.target.value) {
-                  onAssignToOrg(e.target.value as Id<"organizations">);
+                  onAssignToOrg(e.target.value as Id<"orgs">);
                   setMode("idle");
                 }
               }}

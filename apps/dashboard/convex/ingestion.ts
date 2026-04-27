@@ -72,12 +72,12 @@ type ParsedEmail = {
 
 type StoredParsedEmail = ParsedEmail & {
   listservId?: Id<"listservs">;
-  organizationId?: Id<"organizations">;
+  organizationId?: Id<"orgs">;
 };
 
 type MatchableListserv = {
   _id: Id<"listservs">;
-  organizationId?: Id<"organizations">;
+  organizationId?: Id<"orgs">;
   listEmail: string;
   senderEmails: string[];
 };
@@ -374,7 +374,7 @@ export const storeParsedMessages = internalMutation({
         gmailMessageId: v.string(),
         threadId: v.optional(v.string()),
         listservId: v.optional(v.id("listservs")),
-        organizationId: v.optional(v.id("organizations")),
+        organizationId: v.optional(v.id("orgs")),
         sender: v.string(),
         senderEmail: v.string(),
         to: v.array(v.string()),

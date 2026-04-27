@@ -17,7 +17,8 @@ export default defineSchema({
     isSeed: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
-  // Organizations (clubs) — first-class entity for follows + org page
+  // Organizations (clubs) — canonical table for all org data, user-facing and
+  // admin/listserv pipeline. Merged from the former `organizations` table.
   orgs: defineTable({
     slug: v.string(),
     name: v.string(),
@@ -28,8 +29,21 @@ export default defineSchema({
     websiteUrl: v.optional(v.string()),
     email: v.optional(v.string()),
     isVerified: v.boolean(),
-    loopSummary: v.optional(v.string()), // populated by seed/AI branch later
+    loopSummary: v.optional(v.string()),
     isSeed: v.optional(v.boolean()),
+    // Fields from the former `organizations` admin table:
+    orgType: v.optional(
+      v.union(
+        v.literal("club"),
+        v.literal("department"),
+        v.literal("official"),
+        v.literal("publication"),
+        v.literal("company"),
+        v.literal("other"),
+      ),
+    ),
+    orgStatus: v.optional(v.union(v.literal("active"), v.literal("hidden"))),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_slug", ["slug"])
     .index("by_seed", ["isSeed"])
@@ -91,27 +105,6 @@ export default defineSchema({
     .index("by_listserv", ["listserv"])
     .index("by_seed", ["isSeed"]),
 
-  organizations: defineTable({
-    name: v.string(),
-    slug: v.string(),
-    type: v.union(
-      v.literal("club"),
-      v.literal("department"),
-      v.literal("official"),
-      v.literal("publication"),
-      v.literal("company"),
-      v.literal("other"),
-    ),
-    description: v.optional(v.string()),
-    website: v.optional(v.string()),
-    tags: v.array(v.string()),
-    status: v.union(v.literal("active"), v.literal("hidden")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_slug", ["slug"])
-    .index("by_status", ["status"]),
-
   listservCandidates: defineTable({
     email: v.string(),
     displayName: v.optional(v.string()),
@@ -140,7 +133,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     listEmail: v.string(),
     senderEmails: v.array(v.string()),
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.optional(v.id("orgs")),
     sourceType: v.optional(
       v.union(
         v.literal("lyris"),
@@ -208,7 +201,7 @@ export default defineSchema({
     gmailMessageId: v.string(),
     threadId: v.optional(v.string()),
     listservId: v.optional(v.id("listservs")),
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.optional(v.id("orgs")),
     sender: v.string(),
     senderEmail: v.string(),
     to: v.array(v.string()),
@@ -341,12 +334,12 @@ export default defineSchema({
     adminNonce: v.optional(v.boolean()),
   }).index("by_state", ["state"]),
 
-  // One row per listserv item
+  // One row per parsed listserv event
   events: defineTable({
     listservEmailId: v.optional(v.id("listservEmails")), // legacy link to the listserv email data
     sourceMessageId: v.optional(v.id("listservMessages")),
     listservId: v.optional(v.id("listservs")),
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.optional(v.id("orgs")),
     listserv: v.string(),
     listservSection: v.string(),
 
@@ -430,7 +423,6 @@ export default defineSchema({
     tags: v.array(v.string()),
     targetAudience: v.optional(
       v.union(
-        // decide if we need all or define more
         v.literal("all"),
         v.literal("first_year"),
         v.literal("women_nonbinary"),

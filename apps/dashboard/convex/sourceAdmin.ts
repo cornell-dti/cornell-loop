@@ -13,13 +13,15 @@ const ORG_TYPES = v.union(
   v.literal("other"),
 );
 
+type OrgType = "club" | "department" | "official" | "publication" | "company" | "other";
+
 export const overview = query({
   args: { token: v.string() },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
     const [organizations, listservs, messages] = await Promise.all([
-      ctx.db.query("organizations").order("asc").collect(),
+      ctx.db.query("orgs").order("asc").collect(),
       ctx.db.query("listservs").order("asc").collect(),
       ctx.db
         .query("listservMessages")
@@ -91,7 +93,7 @@ export const createOrganization = mutation({
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    return getOrCreateOrganization(ctx, {
+    return getOrCreateOrg(ctx, {
       name: args.name,
       type: args.type,
       description: cleanOptional(args.description),
@@ -104,7 +106,7 @@ export const createOrganization = mutation({
 export const updateOrganization = mutation({
   args: {
     token: v.string(),
-    organizationId: v.id("organizations"),
+    organizationId: v.id("orgs"),
     name: v.string(),
     type: ORG_TYPES,
     description: v.optional(v.string()),
@@ -117,11 +119,11 @@ export const updateOrganization = mutation({
     await ctx.db.patch(args.organizationId, {
       name: args.name.trim(),
       slug: slugify(args.name),
-      type: args.type,
-      description: cleanOptional(args.description),
-      website: cleanOptional(args.website),
+      orgType: args.type,
+      description: cleanOptional(args.description) ?? "",
+      websiteUrl: cleanOptional(args.website),
       tags: args.tags ?? [],
-      status: args.status,
+      orgStatus: args.status,
       updatedAt: Date.now(),
     });
   },
@@ -131,7 +133,7 @@ export const assignSender = mutation({
   args: {
     token: v.string(),
     senderEmail: v.string(),
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.optional(v.id("orgs")),
     organizationName: v.optional(v.string()),
     organizationType: v.optional(ORG_TYPES),
     sourceName: v.optional(v.string()),
@@ -152,7 +154,7 @@ export const assignSender = mutation({
     const suggestion = suggestSource(senderEmail);
     const organizationId =
       args.organizationId ??
-      (await getOrCreateOrganization(ctx, {
+      (await getOrCreateOrg(ctx, {
         name:
           cleanOptional(args.organizationName) ?? suggestion.organizationName,
         type: args.organizationType ?? suggestion.organizationType,
@@ -256,7 +258,7 @@ export const assignSourceOrganization = mutation({
   args: {
     token: v.string(),
     listservId: v.id("listservs"),
-    organizationId: v.id("organizations"),
+    organizationId: v.id("orgs"),
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
@@ -275,42 +277,36 @@ export const assignSourceOrganization = mutation({
   },
 });
 
-async function getOrCreateOrganization(
+async function getOrCreateOrg(
   ctx: MutationCtx,
   params: {
     name: string;
-    type:
-      | "club"
-      | "department"
-      | "official"
-      | "publication"
-      | "company"
-      | "other";
+    type: OrgType;
     description?: string;
     website?: string;
     tags: string[];
   },
-): Promise<Id<"organizations">> {
+): Promise<Id<"orgs">> {
   const name = params.name.trim();
   if (!name) throw new Error("Organization name is required.");
 
   const slug = slugify(name);
   const existing = await ctx.db
-    .query("organizations")
+    .query("orgs")
     .withIndex("by_slug", (q) => q.eq("slug", slug))
     .unique();
   if (existing) return existing._id;
 
   const now = Date.now();
-  return ctx.db.insert("organizations", {
+  return ctx.db.insert("orgs", {
     name,
     slug,
-    type: params.type,
-    description: params.description,
-    website: params.website,
+    orgType: params.type,
+    description: params.description ?? "",
+    websiteUrl: params.website,
     tags: params.tags,
-    status: "active",
-    createdAt: now,
+    isVerified: false,
+    orgStatus: "active",
     updatedAt: now,
   });
 }
