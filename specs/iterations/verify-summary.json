@@ -1,0 +1,17 @@
+{
+  "fresh": {
+    "file": "/Users/meganyap/Desktop/projects.nosync/cornell-loop/specs/iterations/verify-fresh.png",
+    "articles": 8,
+    "buttons": 0,
+    "sidebarEmpty": false
+  },
+  "afterOnboarding": {
+    "file": "/Users/meganyap/Desktop/projects.nosync/cornell-loop/specs/iterations/verify-after-onboarding.png",
+    "articles": 8,
+    "buttons": 0,
+    "sidebarEmpty": false
+  },
+  "designSystem": {
+    "file": "/Users/meganyap/Desktop/projects.nosync/cornell-loop/specs/iterations/verify-design-system.png"
+  }
+}

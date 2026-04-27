@@ -2,29 +2,24 @@ import {
   Routes,
   Route,
   Navigate,
+  useLocation,
   useNavigate,
-  useParams,
 } from "react-router-dom";
 import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import "./App.css";
 import Landing from "./pages/Landing";
 import { Home } from "./pages/Home";
 import { Bookmarks } from "./pages/Bookmarks";
 import { Subscriptions } from "./pages/Subscriptions";
 import { Org } from "./pages/Org";
-import { Profile } from "./pages/profile";
+import { ProfileModalRoute } from "./pages/profile";
+import { DevAutoSignIn } from "./components/DevAutoSignIn";
 import { Search } from "./pages/Search";
+import Onboarding from "./pages/Onboarding";
+import { useCurrentProfile } from "./lib/useCurrentProfile";
 import type { SideBarItemId } from "@app/ui";
 import DesignSystem from "./pages/DesignSystem";
-import {
-  SAMPLE_POSTS,
-  SAMPLE_RSVP_GROUPS,
-  SAMPLE_CLUBS,
-} from "./data/sampleHome";
-import { SAMPLE_BOOKMARKED_POSTS } from "./data/sampleBookmarks";
-import { SAMPLE_ORGS } from "./data/sampleOrgs";
-import { SAMPLE_SUBSCRIPTIONS } from "./data/sampleSubscriptions";
 import type { Club, Organization } from "@app/ui";
 
 /**
@@ -36,11 +31,66 @@ function pathForNavItem(id: SideBarItemId): string {
 }
 
 /**
+ * OnboardingGate — renders children when the current user has completed
+ * onboarding, otherwise redirects to /onboarding. Read by ProtectedRoute below.
+ *
+ * The gate only fires for resolved users. While the `currentUser` query is
+ * loading we render children (the page can show its own loading state); the
+ * dev-bypass flow without a real user row also passes through unchanged.
+ */
+function OnboardingGate({ children }: { children: ReactNode }) {
+  const { user, loading, isOnboarded } = useCurrentProfile();
+  const location = useLocation();
+
+  if (loading) return <>{children}</>;
+  if (user === null) return <>{children}</>;
+  if (isOnboarded) return <>{children}</>;
+  if (location.pathname === "/onboarding") return <>{children}</>;
+
+  return <Navigate to="/onboarding" replace />;
+}
+
+/**
  * Route gate: shows a loading state while auth resolves, renders children when
  * authenticated, and redirects unauthenticated users back to the Landing page.
+ *
+ * Onboarding redirect:
+ *   • In PROD, gate on Convex `<Authenticated>` and additionally check that
+ *     the user has finished onboarding (via OnboardingGate). Unfinished users
+ *     bounce to /onboarding.
+ *   • In DEV, keep the existing bypass so engineers can navigate freely
+ *     without signing in. The OnboardingGate only redirects when a real user
+ *     row resolves with `!isOnboarded` — so unauthenticated DEV navigation
+ *     continues to render normally.
  */
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  // Dev bypass: skip auth gate during local development for easier iteration.
+  if (import.meta.env.DEV) {
+    return <OnboardingGate>{children}</OnboardingGate>;
+  }
+
+  return (
+    <>
+      <AuthLoading>
+        <div className="flex h-screen w-screen items-center justify-center">
+          <p>Loading…</p>
+        </div>
+      </AuthLoading>
+      <Authenticated>
+        <OnboardingGate>{children}</OnboardingGate>
+      </Authenticated>
+      <Unauthenticated>
+        <Navigate to="/" replace />
+      </Unauthenticated>
+    </>
+  );
+}
+
+/**
+ * AuthOnlyRoute — gates on auth without applying the onboarding redirect.
+ * Used for /onboarding so an unfinished user can stay on the page instead of
+ * being bounced into a redirect loop.
+ */
+function AuthOnlyRoute({ children }: { children: ReactNode }) {
   if (import.meta.env.DEV) return <>{children}</>;
 
   return (
@@ -95,9 +145,6 @@ function RoutedHome() {
     <Home
       activeNavItem="home"
       onNavigate={(id) => navigate(pathForNavItem(id))}
-      posts={SAMPLE_POSTS}
-      rsvpGroups={SAMPLE_RSVP_GROUPS}
-      clubs={SAMPLE_CLUBS}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
       // Pressing Enter from /home pushes to /search?q=… so the search has a
@@ -119,9 +166,6 @@ function RoutedBookmarks() {
     <Bookmarks
       activeNavItem="bookmarks"
       onNavigate={(id) => navigate(pathForNavItem(id))}
-      posts={SAMPLE_BOOKMARKED_POSTS}
-      rsvpGroups={SAMPLE_RSVP_GROUPS}
-      clubs={SAMPLE_CLUBS}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
     />
@@ -138,162 +182,34 @@ function RoutedSubscriptions() {
     <Subscriptions
       activeNavItem="subscriptions"
       onNavigate={(id) => navigate(pathForNavItem(id))}
-      subscriptionCount={SAMPLE_SUBSCRIPTIONS.length}
-      subscriptions={SAMPLE_SUBSCRIPTIONS}
       sortLabel={SORT_OPTIONS[sortIndex]}
       onSortChange={() => setSortIndex((i) => (i + 1) % SORT_OPTIONS.length)}
-      rsvpGroups={SAMPLE_RSVP_GROUPS}
-      clubs={SAMPLE_CLUBS}
       onClubClick={onClubClick}
     />
   );
 }
 
 /**
- * Renders the Org page for a given URL slug.
+ * RoutedOrg — thin wrapper around the self-contained <Org> page.
  *
- * Lookup logic:
- *   • Read `slug` from useParams.
- *   • If the slug is missing or absent from SAMPLE_ORGS, render an inline
- *     "not found" state alongside the SideBar so navigation remains accessible.
- *     (We chose inline-not-found over redirect so users see context for the
- *     broken link instead of a silent bounce to /home.)
- *   • Otherwise, hydrate the Org page with the matched profile.
- *
- * Local state:
- *   • `isFollowing` is seeded from the profile and toggled by the Follow button.
- *   • `feedSearchValue` powers the in-page posts feed search input.
- *   • `sidePanelSearchValue` powers the right-rail search input.
- *   • `tagFilter` / `timeFilter` cycle through a small set of options when the
- *     filter chips are clicked, so the buttons feel interactive even though
- *     filtering is not yet wired to data.
+ * Phase 2F: <Org> now reads the slug from useParams and self-fetches all of
+ * its data (org doc, events, RSVPs, followed orgs) from Convex. This wrapper
+ * exists only to keep the route tree symmetrical with other dashboard pages.
  */
-const TAG_FILTER_OPTIONS = ["All tags", "Tech", "Outdoors", "For you"] as const;
-const TIME_FILTER_OPTIONS = [
-  "All time",
-  "This week",
-  "This month",
-  "Past events",
-] as const;
-
 function RoutedOrg() {
-  const navigate = useNavigate();
-  const onClubClick = useClubClick();
-  const onOrgClick = useOrgClick();
-  const { slug } = useParams<{ slug: string }>();
-  const profile = slug ? SAMPLE_ORGS[slug] : undefined;
-
-  // Hooks must run unconditionally — declare them above any early return.
-  const [isFollowing, setIsFollowing] = useState<boolean>(
-    profile?.isFollowing ?? false,
-  );
-  const [feedSearchValue, setFeedSearchValue] = useState("");
-  const [tagFilterIndex, setTagFilterIndex] = useState(0);
-  const [timeFilterIndex, setTimeFilterIndex] = useState(0);
-
-  if (!profile) {
-    return (
-      <Org
-        onNavigate={(id) => navigate(pathForNavItem(id))}
-        orgName="Organization not found"
-        orgDescription={
-          slug
-            ? `We couldn't find an organization with the slug "${slug}". It may have been removed or renamed.`
-            : "No organization slug was provided."
-        }
-        orgTags={[]}
-        posts={[]}
-        rsvpGroups={SAMPLE_RSVP_GROUPS}
-        clubs={SAMPLE_CLUBS}
-        onClubClick={onClubClick}
-        onOrgClick={onOrgClick}
-      />
-    );
-  }
-
-  return (
-    <Org
-      onNavigate={(id) => navigate(pathForNavItem(id))}
-      orgName={profile.orgName}
-      orgDescription={profile.orgDescription}
-      orgAvatarUrl={profile.orgAvatarUrl}
-      coverImageUrl={profile.coverImageUrl}
-      isVerified={profile.isVerified}
-      orgTags={profile.orgTags}
-      loopSummary={profile.loopSummary}
-      isFollowing={isFollowing}
-      onFollow={() => setIsFollowing((prev) => !prev)}
-      onWebsite={() =>
-        window.open(profile.websiteUrl, "_blank", "noopener,noreferrer")
-      }
-      onEmail={() => {
-        window.location.href = `mailto:${profile.email}`;
-      }}
-      posts={profile.posts}
-      feedSearchValue={feedSearchValue}
-      onFeedSearchChange={setFeedSearchValue}
-      onFeedSearchClear={() => setFeedSearchValue("")}
-      tagFilter={TAG_FILTER_OPTIONS[tagFilterIndex]}
-      onTagFilterChange={() =>
-        setTagFilterIndex((i) => (i + 1) % TAG_FILTER_OPTIONS.length)
-      }
-      timeFilter={TIME_FILTER_OPTIONS[timeFilterIndex]}
-      onTimeFilterChange={() =>
-        setTimeFilterIndex((i) => (i + 1) % TIME_FILTER_OPTIONS.length)
-      }
-      rsvpGroups={SAMPLE_RSVP_GROUPS}
-      clubs={SAMPLE_CLUBS}
-      onClubClick={onClubClick}
-      onOrgClick={onOrgClick}
-    />
-  );
+  return <Org />;
 }
 
 /**
- * RoutedProfile — owns the profile-modal state.
+ * RoutedProfile — owns the profile-modal route.
  *
- * Wraps the Profile dialog with a backdrop and centred layout. Manages selected
- * Major / Grad Year / Minor / Interests, plus a `saved` flag that swaps the
- * dialog body to the "Recalibrating your feed…" confirmation. After ~1500 ms in
- * the saved state the modal auto-dismisses by navigating back to /home.
+ * Wraps the Profile dialog with a backdrop and centred layout. The form's
+ * persisted state and the save mutation live inside `<ProfileModalRoute>`;
+ * this wrapper handles the backdrop click + post-save dismiss navigation.
  */
 function RoutedProfile() {
   const navigate = useNavigate();
-  const [major, setMajor] = useState<string>("Computer Science");
-  const [gradYear, setGradYear] = useState<string>("2027");
-  const [minor, setMinor] = useState<string>("Linguistics");
-  const [interests, setInterests] = useState<string[]>([
-    "Tech",
-    "Health",
-    "Finance",
-    "Education",
-  ]);
-  const [saved, setSaved] = useState(false);
-  const dismissTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (dismissTimer.current !== null) {
-        window.clearTimeout(dismissTimer.current);
-      }
-    };
-  }, []);
-
-  const handleSave = () => {
-    setSaved(true);
-    dismissTimer.current = window.setTimeout(() => {
-      navigate("/home");
-    }, 1500);
-  };
-
-  const handleClose = () => {
-    if (dismissTimer.current !== null) {
-      window.clearTimeout(dismissTimer.current);
-      dismissTimer.current = null;
-    }
-    navigate("/home");
-  };
-
+  const handleDismiss = () => navigate("/home");
   return (
     <>
       {/*
@@ -305,30 +221,25 @@ function RoutedProfile() {
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
         onClick={(e) => {
-          // Click outside the card closes the modal.
-          if (e.target === e.currentTarget) handleClose();
+          if (e.target === e.currentTarget) handleDismiss();
         }}
       >
-        <Profile
-          userName="Megan"
-          major={major}
-          onMajorChange={setMajor}
-          gradYear={gradYear}
-          onGradYearChange={setGradYear}
-          minor={minor}
-          onMinorChange={setMinor}
-          interests={interests}
-          onInterestsChange={setInterests}
-          saved={saved}
-          onSave={handleSave}
-          onClose={handleClose}
-        />
+        <ProfileModalRoute onDismiss={handleDismiss} />
       </div>
     </>
   );
 }
 
 function App() {
+  return (
+    <>
+      <DevAutoSignIn />
+      <AppRoutes />
+    </>
+  );
+}
+
+function AppRoutes() {
   return (
     <Routes>
       {/* Public */}
@@ -381,6 +292,14 @@ function App() {
           <ProtectedRoute>
             <RoutedSearch />
           </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/onboarding"
+        element={
+          <AuthOnlyRoute>
+            <Onboarding />
+          </AuthOnlyRoute>
         }
       />
 

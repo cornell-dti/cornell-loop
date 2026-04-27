@@ -9,24 +9,26 @@
  *                             Loop Summary card, posts feed with search/filter bar
  *   • Right panel           — SearchBar, "This week" + "Trending" event sections
  *
+ * Phase 2F: this page now self-fetches against Convex via:
+ *   • api.orgs.getBySlug      — org doc + isFollowing flag
+ *   • api.events.byOrg        — paginated events for the org
+ *   • api.rsvps.myRsvps       — right-rail "Your RSVPs" data
+ *   • api.orgs.listFollowed   — right-rail "Your Clubs" data
+ *
  * Cover banner: 240 px tall full-width area; pass `coverImageUrl` for a real image.
  * Org avatar: 121 × 121 px circle, overlaps the cover bottom at left = 24 px.
- *   Figma: top = 179 px = 11.1875 rem within the relative cover/action wrapper.
- *
- * Verified badge: Figma annotation "Hover to show : this is a registered student
- * organization at Cornell". Rendered as a small rounded indicator with a native tooltip.
  *
  * Follow button bg: Figma #909090 — approximated with --color-neutral-600 (#616972).
  * "For you" org tag: Figma bg #ffe4d5 / text #b54400 — approximated with
  *   --color-primary-500 (#ffcaaa) / --color-primary-800 (#a74409).
- * Org name font size: Figma 22 px — used directly (1.375 rem) as no token covers
- *   this exact value, matching the precedent in Subscriptions.tsx (size-[3.75rem]).
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import type { ComponentPropsWithoutRef } from "react";
+import { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
   SearchBar,
@@ -39,10 +41,16 @@ import {
 import type {
   SideBarItemId,
   DashboardPostProps,
-  RsvpGroup,
   Club,
   Organization,
 } from "@app/ui";
+import { api } from "../../convex/_generated/api";
+import type { Doc } from "../../convex/_generated/dataModel";
+import {
+  eventToPost,
+  orgsToClubs,
+  rsvpsToRsvpGroups,
+} from "../lib/eventToPost";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -108,83 +116,44 @@ const BODY2_REGULAR =
   "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
-// ─── Public types ─────────────────────────────────────────────────────────────
+// ─── Tag/time placeholder cycles ─────────────────────────────────────────────
+// Phase 2F note: these chips cycle through display labels but do NOT yet
+// filter the underlying events query. Real filtering lands separately.
 
-export interface OrgTag {
-  label: string;
-  /**
-   * 'primary' renders an orange "For you" style pill
-   * (Figma: bg #ffe4d5 / text #b54400 ≈ --color-primary-500 / --color-primary-800).
-   * 'neutral' renders a gray category pill (Tag component neutral variant).
-   * Defaults to 'neutral'.
-   */
-  variant?: "primary" | "neutral";
-}
+const TAG_FILTER_OPTIONS = ["All tags", "Tech", "Outdoors", "For you"] as const;
+const TIME_FILTER_OPTIONS = [
+  "All time",
+  "This week",
+  "This month",
+  "Past events",
+] as const;
 
-export interface OrgProps extends ComponentPropsWithoutRef<"div"> {
-  // ── Sidebar ──
-  activeNavItem?: SideBarItemId;
-  onNavigate?: (id: SideBarItemId) => void;
+// ─── Sidebar nav ─────────────────────────────────────────────────────────────
 
-  // ── Org info ──
-  orgName?: string;
-  orgDescription?: string;
-  orgAvatarUrl?: string;
-  /** Background image URL for the cover banner. Falls back to the neutral surface colour. */
-  coverImageUrl?: string;
-  /**
-   * When true a "verified RSO" badge is shown beside the org name.
-   * Figma annotation: "Hover to show : this is a registered student organization at Cornell".
-   */
-  isVerified?: boolean;
-  /** Category and relevance tags shown beneath the org description. */
-  orgTags?: OrgTag[];
-
-  // ── Loop Summary ──
-  loopSummary?: string;
-
-  // ── Action buttons ──
-  isFollowing?: boolean;
-  onFollow?: () => void;
-  onWebsite?: () => void;
-  onEmail?: () => void;
-
-  // ── Posts feed ──
-  posts?: DashboardPostProps[];
-  feedSearchValue?: string;
-  onFeedSearchChange?: (value: string) => void;
-  onFeedSearchClear?: () => void;
-  /** Display label for the tag filter button, e.g. "All tags". */
-  tagFilter?: string;
-  /** Called when the tag filter button is clicked (caller shows a picker). */
-  onTagFilterChange?: () => void;
-  /** Display label for the time filter button, e.g. "All time". */
-  timeFilter?: string;
-  /** Called when the time filter button is clicked (caller shows a picker). */
-  onTimeFilterChange?: () => void;
-
-  // ── Right panel (shared SearchPanel) ──
-  rsvpGroups?: RsvpGroup[];
-  clubs?: Club[];
-  onClubClick?: (club: Club) => void;
-  /** Called when an org name in a post header is clicked. */
-  onOrgClick?: (org: Organization) => void;
+function pathForNavItem(id: SideBarItemId): string {
+  return `/${id}`;
 }
 
 // ─── OrgTagPill ───────────────────────────────────────────────────────────────
+
+interface OrgTagSpec {
+  label: string;
+  variant: "primary" | "neutral";
+}
 
 /**
  * Renders a neutral or primary (orange "For you") pill tag for the org header.
  * Uses the Tag design-system component for neutral; a custom span for primary,
  * matching the "For you" badge style used consistently across Home / Subscriptions.
  */
-function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
+function OrgTagPill({ label, variant }: OrgTagSpec) {
   if (variant === "neutral") {
     return <Tag color="neutral">{label}</Tag>;
   }
   // Primary "For you" pill — match design-system Tag dimensions exactly so
   // primary and neutral pills align in height. Same px/py/radius/font as Tag,
-  // only the colour palette differs.
+  // only the colour palette differs. Uses primary-900 fg on primary-500 bg
+  // to clear WCAG AA 4.5:1 contrast at body text sizes (primary-800 is ~4.11).
   return (
     <span
       className={[
@@ -195,7 +164,7 @@ function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
         "font-[family-name:var(--font-body)] font-medium",
         "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
         "tracking-[var(--letter-spacing-body2)]",
-        "text-[var(--color-primary-800)]",
+        "text-[var(--color-primary-900)]",
         "whitespace-nowrap select-none",
       ].join(" ")}
       style={{ fontVariationSettings: "'opsz' 14" }}
@@ -205,69 +174,186 @@ function OrgTagPill({ label, variant = "neutral" }: OrgTag) {
   );
 }
 
-// ─── Org ──────────────────────────────────────────────────────────────────────
+// ─── Page-level loading & not-found shells ───────────────────────────────────
 
-/**
- * Org page layout — three-column shell:
- *
- *   ┌────────────┬──────────────────────────────────┬────────────────┐
- *   │  SideBar   │  Main content                    │  Right panel   │
- *   │ (215px)    │  (flex-1)                        │ (334px)        │
- *   │            │  ┌ Cover banner (240 px) ──────┐ │  SearchBar     │
- *   │  Home      │  │  [action buttons]           │ │  This week     │
- *   │  Bookmarks │  └─────────────────────────────┘ │  Trending      │
- *   │  Subs      │  [org avatar, overlapping cover]  │                │
- *   │  ────────  │  Org name + verified badge        │                │
- *   │  Profile   │  Description                      │                │
- *   │            │  Tags                             │                │
- *   │            │  Loop Summary card                │                │
- *   │            │  ─────────────────────────────    │                │
- *   │            │  [search] [All tags] [All time]   │                │
- *   │            │  DashboardPost × n                │                │
- *   └────────────┴──────────────────────────────────┴────────────────┘
- */
-export function Org({
-  activeNavItem,
-  onNavigate,
-  orgName = "Association of Computer Science Undergraduates (ACSU)",
-  orgDescription = "CS organization for undergrads looking to find community.",
-  orgAvatarUrl,
-  coverImageUrl,
-  orgTags = [],
-  loopSummary,
-  isFollowing = false,
-  onFollow,
-  onWebsite,
-  onEmail,
-  posts = [],
-  feedSearchValue,
-  onFeedSearchChange,
-  onFeedSearchClear,
-  tagFilter = "All tags",
-  onTagFilterChange,
-  timeFilter = "All time",
-  onTimeFilterChange,
-  rsvpGroups,
-  clubs,
-  onClubClick,
-  onOrgClick,
-  className,
-  ...rest
-}: OrgProps) {
+function ShellWithSidebar({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
   return (
     <div
       className={[
         "flex h-screen w-full overflow-hidden",
         "bg-[var(--color-surface)]",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      {...rest}
+      ].join(" ")}
+    >
+      <div className="h-full shrink-0 overflow-y-auto">
+        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+      </div>
+      <main
+        className={[
+          "flex min-w-0 flex-1 flex-col items-center justify-center",
+          "overflow-y-auto bg-[var(--color-surface-subtle)]",
+          "px-[var(--space-8)] py-[var(--space-8)]",
+        ].join(" ")}
+      >
+        {children}
+      </main>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <ShellWithSidebar>
+      <div
+        className={[
+          "flex flex-col items-center gap-[var(--space-3)]",
+          "text-[var(--color-text-secondary)]",
+          BODY2_REGULAR,
+        ].join(" ")}
+      >
+        <div
+          aria-hidden="true"
+          className={[
+            "size-[var(--space-8)] animate-spin rounded-full",
+            "border-2 border-[var(--color-neutral-300)]",
+            "border-t-[var(--color-primary-700)]",
+          ].join(" ")}
+        />
+        <p>Loading organisation…</p>
+      </div>
+    </ShellWithSidebar>
+  );
+}
+
+function NotFoundState({ slug }: { slug: string | undefined }) {
+  return (
+    <ShellWithSidebar>
+      <div
+        className={[
+          "flex flex-col items-center gap-[var(--space-2)] text-center",
+          "max-w-[40rem]",
+        ].join(" ")}
+      >
+        <h1
+          className={[
+            "font-[family-name:var(--font-body)] font-semibold",
+            "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+            "tracking-[var(--letter-spacing-body1)]",
+            "text-[var(--color-neutral-900)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          Organization not found
+        </h1>
+        <p
+          className={[BODY2_REGULAR, "text-[var(--color-text-secondary)]"].join(
+            " ",
+          )}
+        >
+          {slug
+            ? `We couldn't find an organization with the slug "${slug}". It may have been removed or renamed.`
+            : "No organization slug was provided."}
+        </p>
+      </div>
+    </ShellWithSidebar>
+  );
+}
+
+// ─── Org page ────────────────────────────────────────────────────────────────
+
+export function Org() {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+
+  const orgQuery = useQuery(api.orgs.getBySlug, slug ? { slug } : "skip");
+  const eventsQuery = useQuery(
+    api.events.byOrg,
+    slug ? { slug, paginationOpts: { numItems: 50, cursor: null } } : "skip",
+  );
+  const followedOrgs = useQuery(api.orgs.listFollowed, {});
+  const myRsvps = useQuery(api.rsvps.myRsvps, {});
+
+  const followMutation = useMutation(api.follows.follow);
+  const unfollowMutation = useMutation(api.follows.unfollow);
+
+  // Optimistic local toggle. We seed from the server result and let the
+  // mutation propagate; on next query refresh the server value wins.
+  const [optimisticFollowing, setOptimisticFollowing] = useState<
+    boolean | null
+  >(null);
+
+  // Cycling chip state — labels only, no real filtering applied yet.
+  const [tagFilterIndex, setTagFilterIndex] = useState(0);
+  const [timeFilterIndex, setTimeFilterIndex] = useState(0);
+  const [feedSearchValue, setFeedSearchValue] = useState("");
+
+  const posts: DashboardPostProps[] = useMemo(() => {
+    if (!eventsQuery) return [];
+    return eventsQuery.page.map(eventToPost);
+  }, [eventsQuery]);
+
+  const clubs: Club[] = useMemo(
+    () => orgsToClubs(followedOrgs),
+    [followedOrgs],
+  );
+  const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // Loading / not-found gating. `orgQuery === undefined` is the loading state.
+  if (slug === undefined) {
+    return <NotFoundState slug={undefined} />;
+  }
+  if (orgQuery === undefined) {
+    return <LoadingState />;
+  }
+  if (orgQuery.org === null) {
+    return <NotFoundState slug={slug} />;
+  }
+
+  const org: Doc<"orgs"> = orgQuery.org;
+  const serverIsFollowing = orgQuery.isFollowing;
+  const isFollowing = optimisticFollowing ?? serverIsFollowing;
+
+  const handleFollowToggle = () => {
+    const next = !isFollowing;
+    setOptimisticFollowing(next);
+    const promise = next
+      ? followMutation({ orgId: org._id })
+      : unfollowMutation({ orgId: org._id });
+    void promise.catch(() => {
+      // Roll back optimistic state on failure.
+      setOptimisticFollowing(!next);
+    });
+  };
+
+  const handleClubClick = (club: Club) => {
+    navigate(`/orgs/${club.id}`);
+  };
+
+  const handleOrgClick = (postOrg: Organization) => {
+    if (postOrg.id) navigate(`/orgs/${postOrg.id}`);
+  };
+
+  const tagFilter = TAG_FILTER_OPTIONS[tagFilterIndex];
+  const timeFilter = TIME_FILTER_OPTIONS[timeFilterIndex];
+
+  // Build the org tag chips. The schema-level tags are all "neutral"; we add
+  // a synthetic "For you" primary chip when the user is following the org so
+  // the visual treatment matches the Figma reference for subscribed clubs.
+  const orgTags: OrgTagSpec[] = [
+    ...org.tags.map<OrgTagSpec>((label) => ({ label, variant: "neutral" })),
+    ...(isFollowing ? [{ label: "For you", variant: "primary" as const }] : []),
+  ];
+
+  return (
+    <div
+      className={[
+        "flex h-screen w-full overflow-hidden",
+        "bg-[var(--color-surface)]",
+      ].join(" ")}
     >
       {/* ── Left sidebar — design system ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar activeItem={activeNavItem} onNavigate={onNavigate} />
+        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
       </div>
 
       {/* ── Main content ── */}
@@ -283,26 +369,18 @@ export function Org({
          * Relative wrapper: contains the cover banner and the action buttons row.
          * The org avatar is absolutely positioned within this wrapper so it
          * overlaps the bottom edge of the cover.
-         *
-         * Wrapper height ≈ cover (240 px) + action row (~56 px) = ~296 px.
-         * Avatar: top = 179 px, size = 121 px → bottom at 300 px (~4 px overflow).
-         * Figma: org-info section starts at top = 296 px with pt = 16 px,
-         *        placing the first text line at ~312 px (below the avatar).
          */}
         <div className="relative w-full shrink-0">
           {/*
            * Cover banner — Figma node 613:4241 shows a sky/cloud image. We render
-           * a tasteful sky gradient as the no-asset fallback so the org page has
-           * a visual treatment matching the Figma frame's atmosphere instead of
-           * a flat gray block. When a real `coverImageUrl` is provided it
-           * overrides the gradient.
+           * a tasteful sky gradient as the no-asset fallback.
            */}
           <div
             className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
             style={
-              coverImageUrl
+              org.coverImageUrl
                 ? {
-                    backgroundImage: `url(${coverImageUrl})`,
+                    backgroundImage: `url(${org.coverImageUrl})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }
@@ -315,56 +393,58 @@ export function Org({
 
           {/*
            * Action buttons row — right-aligned below the cover banner.
-           * py-2 (8 px × 2) + button height (~40 px) ≈ 56 px total,
-           * placing the org-info section at ~296 px from the wrapper top.
+           * Website / email buttons are hidden when the org has no such field.
            */}
           <div className="flex items-start justify-end gap-[var(--space-2)] px-[var(--space-4)] py-[var(--space-2)]">
-            {/* Website / globe button — icon-only, bg Neutral/200 */}
-            <button
-              type="button"
-              aria-label="Visit website"
-              onClick={onWebsite}
-              className={[
-                "inline-flex shrink-0 items-center justify-center",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface-raised)]",
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer",
-                "hover:bg-[var(--color-neutral-300)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-            >
-              <GlobeIcon className="size-[var(--space-4)]" />
-            </button>
+            {org.websiteUrl && (
+              <button
+                type="button"
+                aria-label="Visit website"
+                onClick={() =>
+                  window.open(org.websiteUrl, "_blank", "noopener,noreferrer")
+                }
+                className={[
+                  "inline-flex shrink-0 items-center justify-center",
+                  "px-[var(--space-4)] py-[var(--space-2)]",
+                  "rounded-[var(--radius-card)]",
+                  "bg-[var(--color-surface-raised)]",
+                  "text-[var(--color-neutral-700)]",
+                  "cursor-pointer",
+                  "hover:bg-[var(--color-neutral-300)]",
+                  "transition-colors duration-150",
+                ].join(" ")}
+              >
+                <GlobeIcon className="size-[var(--space-4)]" />
+              </button>
+            )}
 
-            {/* Email button — icon-only, bg Neutral/200 */}
-            <button
-              type="button"
-              aria-label="Send email"
-              onClick={onEmail}
-              className={[
-                "inline-flex shrink-0 items-center justify-center",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface-raised)]",
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer",
-                "hover:bg-[var(--color-neutral-300)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-            >
-              <MailIcon className="size-[var(--space-4)]" />
-            </button>
+            {org.email && (
+              <button
+                type="button"
+                aria-label="Send email"
+                onClick={() => {
+                  window.location.href = `mailto:${org.email}`;
+                }}
+                className={[
+                  "inline-flex shrink-0 items-center justify-center",
+                  "px-[var(--space-4)] py-[var(--space-2)]",
+                  "rounded-[var(--radius-card)]",
+                  "bg-[var(--color-surface-raised)]",
+                  "text-[var(--color-neutral-700)]",
+                  "cursor-pointer",
+                  "hover:bg-[var(--color-neutral-300)]",
+                  "transition-colors duration-150",
+                ].join(" ")}
+              >
+                <MailIcon className="size-[var(--space-4)]" />
+              </button>
+            )}
 
-            {/*
-             * Follow / Following button — design-system Button.
-             * Primary while following (filled orange), secondary when not.
-             */}
             <Button
               variant={isFollowing ? "primary" : "secondary"}
               size="sm"
-              onClick={onFollow}
+              onClick={handleFollowToggle}
+              aria-pressed={isFollowing}
             >
               {isFollowing ? "Following" : "Follow"}
             </Button>
@@ -373,7 +453,6 @@ export function Org({
           {/*
            * Org avatar — 121 × 121 px circle, absolutely positioned to overlap the
            * cover banner.  Figma: left = 24 px, top = 179 px (= 11.1875 rem).
-           * Ring provides visual separation from the cover image.
            */}
           <span
             className={[
@@ -385,10 +464,10 @@ export function Org({
               "bg-[var(--color-surface-raised)]",
             ].join(" ")}
           >
-            {orgAvatarUrl ? (
+            {org.avatarUrl ? (
               <img
-                src={orgAvatarUrl}
-                alt={orgName}
+                src={org.avatarUrl}
+                alt={org.name}
                 className="size-full object-cover"
               />
             ) : (
@@ -401,23 +480,16 @@ export function Org({
                   "text-[var(--color-secondary-900)]"
                 }
               >
-                {orgName.charAt(0).toUpperCase()}
+                {org.name.charAt(0).toUpperCase()}
               </span>
             )}
           </span>
         </div>
 
         {/* ── Org info section ── */}
-        {/*
-         * pt-4 (16 px) provides enough clearance below the ~4 px avatar overflow and
-         * matches the Figma org-info section's own pt-16 (content starts at ~312 px).
-         */}
         <div className="flex flex-col gap-[var(--space-6)] px-[var(--space-6)] pt-[var(--space-4)] pb-[var(--space-6)]">
-          {/* Org name + description + tags */}
           <div className="flex flex-col gap-[var(--space-4)]">
-            {/* Name row + description */}
             <div className="flex flex-col gap-[var(--space-1)]">
-              {/* Org name + optional verified RSO badge */}
               <div className="flex flex-wrap items-center gap-[var(--space-2)]">
                 <h1
                   className={
@@ -428,30 +500,22 @@ export function Org({
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
-                  {orgName}
+                  {org.name}
                 </h1>
-
-                {/*
-                 * Verified RSO indicator omitted — the star icon is no longer
-                 * used in the redesign. The `isVerified` prop remains on the
-                 * interface for future re-introduction of a non-star badge.
-                 */}
               </div>
 
-              {/* Description — Figma: Inter Regular 16 px, #909090 ≈ --color-text-secondary */}
-              {orgDescription && (
+              {org.description && (
                 <p
                   className={
                     BODY2_REGULAR + " text-[var(--color-text-secondary)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
-                  {orgDescription}
+                  {org.description}
                 </p>
               )}
             </div>
 
-            {/* Org category / relevance tags */}
             {orgTags.length > 0 && (
               <div className="flex flex-wrap items-center gap-[var(--space-2)]">
                 {orgTags.map((tag, i) => (
@@ -461,13 +525,12 @@ export function Org({
             )}
           </div>
 
-          {/* Loop Summary card — Figma: Primary/600 border, shadow-2, px-24 py-16 */}
-          {loopSummary && (
-            <LoopSummary summary={loopSummary} className="w-full" />
+          {org.loopSummary && (
+            <LoopSummary summary={org.loopSummary} className="w-full" />
           )}
         </div>
 
-        {/* Horizontal divider — Figma node 121:662 */}
+        {/* Horizontal divider */}
         <div
           className="h-px w-full shrink-0 bg-[var(--color-border)]"
           role="separator"
@@ -475,29 +538,23 @@ export function Org({
         />
 
         {/* ── Posts feed section ── */}
-        {/*
-         * Figma: px-24, pt-16, gap-16 between filter bar and post list.
-         */}
         <div className="flex flex-col gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-4)]">
-          {/* Filter bar: search input (flex-1) + tag filter + time filter */}
+          {/* Filter bar: search input (flex-1) + tag filter + time filter.
+              Tag/time chips cycle a label only — real filtering not yet wired. */}
           <div className="flex items-center gap-[var(--space-4)]">
-            {/* Search — fills remaining width */}
             <SearchBar
               value={feedSearchValue}
-              onChange={onFeedSearchChange}
-              onClear={onFeedSearchClear}
+              onChange={setFeedSearchValue}
+              onClear={() => setFeedSearchValue("")}
               placeholder="Search"
               className="min-w-0 flex-1"
             />
 
-            {/*
-             * "All tags" filter button — Figma: bg white, Neutral/300 border,
-             * rounded-[16px], text + chevron-down icon.
-             * Clicking calls onTagFilterChange so the caller can show a picker.
-             */}
             <button
               type="button"
-              onClick={onTagFilterChange}
+              onClick={() =>
+                setTagFilterIndex((i) => (i + 1) % TAG_FILTER_OPTIONS.length)
+              }
               className={[
                 "inline-flex shrink-0 items-center gap-[var(--space-2)]",
                 "px-[var(--space-4)] py-[var(--space-2)]",
@@ -516,10 +573,11 @@ export function Org({
               <ChevronDownIcon className="size-[var(--space-6)] shrink-0" />
             </button>
 
-            {/* "All time" filter button */}
             <button
               type="button"
-              onClick={onTimeFilterChange}
+              onClick={() =>
+                setTimeFilterIndex((i) => (i + 1) % TIME_FILTER_OPTIONS.length)
+              }
               className={[
                 "inline-flex shrink-0 items-center gap-[var(--space-2)]",
                 "px-[var(--space-4)] py-[var(--space-2)]",
@@ -539,28 +597,24 @@ export function Org({
             </button>
           </div>
 
-          {/* Post list — Figma: gap-16 px between posts, pb-24 px */}
+          {/* Post list */}
           <div className="flex flex-col gap-[var(--space-8)] pb-[var(--space-6)]">
             {posts.map((post, i) => (
-              <DashboardPost key={i} {...post} onOrgClick={onOrgClick} />
+              <DashboardPost key={i} {...post} onOrgClick={handleOrgClick} />
             ))}
           </div>
         </div>
       </main>
 
       {/* ── Right panel ── */}
-      {/*
-       * Mirrors the right-panel layout from Home and Subscriptions.
-       * Figma (node 119:413): w-326px, px-24, py-32, gap-24, left border.
-       * Uses --search-panel-width (334px) as the closest layout token.
-       */}
-      {/* ── Right panel — design-system SearchPanel ── */}
       <SearchPanel
         rsvpGroups={rsvpGroups}
         clubs={clubs}
-        onClubClick={onClubClick}
-        className="h-full shrink-0 overflow-visible"
+        onClubClick={handleClubClick}
+        className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>
   );
 }
+
+export default Org;

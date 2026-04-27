@@ -17,13 +17,19 @@
  */
 
 import {
+  Component,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type ErrorInfo,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { SideBar } from "@app/ui";
 import type { SideBarItemId } from "@app/ui";
 import { Tag } from "@app/ui";
@@ -35,6 +41,14 @@ import { Toggle } from "@app/ui";
 import { Button } from "@app/ui";
 import type { RsvpGroup, Club } from "@app/ui";
 import { fallbackColorsForName } from "@app/ui";
+import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import {
+  eventToPost,
+  orgsToClubs,
+  rsvpsToRsvpGroups,
+  type HydratedEvent,
+} from "../lib/eventToPost";
 import { SearchOverlay } from "../components/SearchOverlay";
 import {
   overlayLabelAt,
@@ -147,13 +161,21 @@ const SEARCH_SCOPE_OPTIONS: { value: SearchScope; label: string }[] = [
   { value: "orgs", label: "Orgs" },
 ];
 
-export function Home({
+export function Home(props: HomeProps) {
+  return (
+    <FeedErrorBoundary>
+      <HomeInner {...props} />
+    </FeedErrorBoundary>
+  );
+}
+
+function HomeInner({
   activeNavItem = "home",
   onNavigate,
   feedTags = DEFAULT_FEED_TAGS,
   onTagClick,
   onAddTag,
-  posts = [],
+  posts: postsOverride,
   searchValue,
   onSearchChange,
   onSearchClear,
@@ -163,13 +185,150 @@ export function Home({
   orgResults = SAMPLE_ORG_RESULTS,
   resultPosts = SAMPLE_RESULT_POSTS,
   onSearchSubmit,
-  rsvpGroups,
-  clubs,
+  rsvpGroups: rsvpGroupsOverride,
+  clubs: clubsOverride,
   onClubClick,
   onOrgClick,
   className,
   ...rest
 }: HomeProps) {
+  // ── Convex-backed feed data ────────────────────────────────────────────
+  // Default to "followed" scope; the server transparently falls back to "all"
+  // when the current user follows nothing. Callers can still inject `posts`
+  // (used by /search to replay sample search results until the search route
+  // gets its own backend wiring).
+  const navigate = useNavigate();
+  const feedResult = useQuery(api.events.feed, {
+    paginationOpts: { numItems: 20, cursor: null },
+    scope: "followed",
+  });
+  const followedOrgIds = useQuery(api.follows.myFollows);
+  const myRsvps = useQuery(api.rsvps.myRsvps);
+  const followedOrgs = useQuery(api.orgs.listFollowed);
+
+  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
+  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
+  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
+  const followedOrgIdSet = useMemo<ReadonlySet<Id<"orgs">>>(() => {
+    if (!followedOrgIds) return new Set<Id<"orgs">>();
+    return new Set<Id<"orgs">>(followedOrgIds);
+  }, [followedOrgIds]);
+
+  // Optimistic bookmark state. Each entry overrides the server `isBookmarked`
+  // value for that event id until the mutation resolves. Successful resolves
+  // leave the entry in place — the next feed refresh will reflect the new
+  // truth. Failed resolves remove the entry, restoring the server view.
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
+    ReadonlyMap<Id<"events">, boolean>
+  >(() => new Map());
+  // In-flight RSVP set — event ids whose `setRsvp` mutation is still pending.
+  // Mirrors the bookmark optimistic pattern: flip immediately (here, dedupe
+  // rapid clicks), roll back on `.catch`. A ref is used instead of state
+  // because DashboardPost has no RSVP'd visual to re-render off of yet —
+  // rendering would just churn the post list. When the design system gains
+  // a "going" pill, lift this into useState and thread it through queriedPosts.
+  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
+
+  const handleBookmarkToggle = useCallback(
+    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
+      const next = !currentlyBookmarked;
+      setOptimisticBookmarks((prev) => {
+        const m = new Map(prev);
+        m.set(eventId, next);
+        return m;
+      });
+      const promise = next
+        ? bookmarkMutation({ eventId })
+        : unbookmarkMutation({ eventId });
+      void promise.catch(() => {
+        setOptimisticBookmarks((prev) => {
+          const m = new Map(prev);
+          m.delete(eventId);
+          return m;
+        });
+      });
+    },
+    [bookmarkMutation, unbookmarkMutation],
+  );
+
+  const handleRsvp = useCallback(
+    (eventId: Id<"events">) => {
+      // Dedupe rapid clicks while the mutation is in flight — equivalent to
+      // the bookmark optimistic flip from the user's perspective.
+      if (inFlightRsvps.current.has(eventId)) return;
+      inFlightRsvps.current.add(eventId);
+      void setRsvpMutation({ eventId, status: "going" })
+        .catch(() => {
+          // No visible state to roll back beyond freeing the dedupe slot.
+        })
+        .finally(() => {
+          inFlightRsvps.current.delete(eventId);
+        });
+    },
+    [setRsvpMutation],
+  );
+
+  const queriedPosts = useMemo<DashboardPostProps[] | undefined>(() => {
+    if (!feedResult) return undefined;
+    return feedResult.page.map((row: HydratedEvent) => {
+      const base = eventToPost(row);
+      // Stamp `following` per-org from the user's follow set so the
+      // Following badge renders correctly. Wire bookmark + RSVP click
+      // handlers keyed by the underlying event id.
+      const organizations = base.organizations.map((org, i) => {
+        const matched = row.orgs[i];
+        return {
+          ...org,
+          following:
+            matched !== undefined ? followedOrgIdSet.has(matched._id) : false,
+        };
+      });
+      const optimisticBookmark = optimisticBookmarks.get(row.event._id);
+      const bookmarked =
+        optimisticBookmark !== undefined
+          ? optimisticBookmark
+          : row.isBookmarked;
+      return {
+        ...base,
+        organizations,
+        bookmarked,
+        onBookmark: () => handleBookmarkToggle(row.event._id, bookmarked),
+        onRsvp: () => handleRsvp(row.event._id),
+      };
+    });
+  }, [
+    feedResult,
+    followedOrgIdSet,
+    handleBookmarkToggle,
+    handleRsvp,
+    optimisticBookmarks,
+  ]);
+
+  const queriedRsvpGroups = useMemo(
+    () => rsvpsToRsvpGroups(myRsvps),
+    [myRsvps],
+  );
+  const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
+
+  // Caller overrides take priority (used by /search and any tests).
+  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
+  const clubs = clubsOverride ?? queriedClubs;
+
+  const feedLoading = postsOverride === undefined && feedResult === undefined;
+
+  const handleOrgClickInternal = useCallback(
+    (org: Organization) => {
+      if (onOrgClick) {
+        onOrgClick(org);
+        return;
+      }
+      if (org.id) {
+        navigate(`/orgs/${org.id}`);
+      }
+    },
+    [navigate, onOrgClick],
+  );
   // ── Search-experience state ────────────────────────────────────────────
   // We always own the input value internally so the overlay/results state
   // machine works without callers wiring controlled props. Callers can
@@ -356,8 +515,10 @@ export function Home({
             onFocus={() => setFocused(true)}
             onKeyDown={handleKeyDown}
             placeholder="Search"
-            aria-expanded={focused}
-            aria-controls="search-overlay"
+            // aria-expanded/aria-controls are only valid on combobox/menu
+            // triggers; the searchbox role from SearchBar doesn't accept
+            // them. Drop them — the overlay's open/closed state is fully
+            // visible to AT through focus + DOM presence.
             className="w-full shrink-0"
           />
 
@@ -450,8 +611,13 @@ export function Home({
          */}
         {showPosts && (
           <div className="flex flex-col gap-[var(--space-5)] px-[var(--space-8)] pb-[var(--space-8)]">
+            {!showResults && feedLoading && <FeedLoadingState />}
             {feedPosts.map((post, i) => (
-              <DashboardPost key={i} {...post} onOrgClick={onOrgClick} />
+              <DashboardPost
+                key={i}
+                {...post}
+                onOrgClick={handleOrgClickInternal}
+              />
             ))}
           </div>
         )}
@@ -464,14 +630,181 @@ export function Home({
        * bounds (into the feed column). If we scroll-trap this aside the
        * hover card gets clipped. Content is short (RSVPs + clubs) so no
        * internal scroll is needed in practice.
+       *
+       * Product rule: the sidebar must never be empty. When the user
+       * follows zero clubs (and there are no RSVPs to show), render an
+       * empty-state inviting them to discover clubs instead of letting
+       * SearchPanel render an empty <aside>.
        */}
-      <SearchPanel
-        rsvpGroups={rsvpGroups}
-        clubs={clubs}
-        onClubClick={onClubClick}
-        className="h-full shrink-0 overflow-visible"
-      />
+      {clubs.length === 0 && rsvpGroups.length === 0 ? (
+        <SidebarEmptyState />
+      ) : (
+        <SearchPanel
+          rsvpGroups={rsvpGroups}
+          clubs={clubs}
+          onClubClick={onClubClick}
+          className="h-full shrink-0 overflow-visible"
+        />
+      )}
     </div>
+  );
+}
+
+// ─── FeedErrorBoundary ───────────────────────────────────────────────────────
+//
+// Convex's `useQuery` can throw when a backend function throws. If anything
+// inside HomeInner throws during render (or its child queries fail in a way
+// that bubbles up), surface a user-facing banner with a Retry instead of a
+// blank page. Retry just reloads — backend retries on the next hydration.
+
+interface FeedErrorBoundaryState {
+  hasError: boolean;
+}
+
+class FeedErrorBoundary extends Component<
+  { children: ReactNode },
+  FeedErrorBoundaryState
+> {
+  state: FeedErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): FeedErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    // Surface the error in the console so the dev sees the stack while a
+    // friendly banner renders to the user.
+    console.error("Home feed crashed:", error, info);
+  }
+
+  handleRetry = () => {
+    window.location.reload();
+  };
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+    return (
+      <div
+        className={[
+          "flex h-screen w-full items-center justify-center",
+          "bg-[var(--color-surface)]",
+          "px-[var(--space-8)]",
+        ].join(" ")}
+        role="alert"
+      >
+        <div
+          className={[
+            "flex w-full max-w-[28rem] flex-col items-start gap-[var(--space-3)]",
+            "rounded-[var(--radius-card)]",
+            "bg-[var(--color-surface)]",
+            "border border-[var(--color-border)]",
+            "px-[var(--space-5)] py-[var(--space-4)]",
+          ].join(" ")}
+        >
+          <h2
+            className={[
+              "font-[family-name:var(--font-body)] font-bold",
+              "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+              "tracking-[var(--letter-spacing-body1)]",
+              "text-[color:var(--color-neutral-900)]",
+            ].join(" ")}
+            style={{ fontVariationSettings: "'opsz' 14" }}
+          >
+            Something went wrong loading your feed.
+          </h2>
+          <Button variant="primary" size="sm" onClick={this.handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+}
+
+// ─── FeedLoadingState ────────────────────────────────────────────────────────
+
+function FeedLoadingState() {
+  return (
+    <div
+      className={[
+        "flex w-full items-center justify-center",
+        "rounded-[var(--radius-card)]",
+        "border border-dashed border-[var(--color-border)]",
+        "bg-[var(--color-surface)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
+        "font-[family-name:var(--font-body)] font-normal",
+        "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+        "tracking-[var(--letter-spacing-body2)]",
+        "text-[color:var(--color-text-secondary)]",
+      ].join(" ")}
+      role="status"
+      aria-live="polite"
+      style={{ fontVariationSettings: "'opsz' 14" }}
+    >
+      Loading feed…
+    </div>
+  );
+}
+
+// ─── SidebarEmptyState ───────────────────────────────────────────────────────
+//
+// Rendered in place of <SearchPanel> when the user follows zero clubs (and has
+// no RSVPs to show). Mirrors SearchPanel's outer aside dimensions/border so
+// the layout doesn't jump, and uses the same card styling as FeedLoadingState.
+
+function SidebarEmptyState() {
+  return (
+    <aside
+      aria-label="Search panel"
+      className={[
+        "flex h-full shrink-0 flex-col gap-[var(--space-3)]",
+        "w-[var(--search-panel-width)]",
+        "bg-[var(--color-surface)]",
+        "border-l border-[var(--color-border)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
+        "overflow-visible",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex w-full flex-col items-start gap-[var(--space-2)]",
+          "rounded-[var(--radius-card)]",
+          "bg-[var(--color-surface)]",
+          "border border-[var(--color-border)]",
+          "px-[var(--space-5)] py-[var(--space-4)]",
+        ].join(" ")}
+      >
+        <h2
+          className={[
+            "font-[family-name:var(--font-body)] font-bold",
+            "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+            "tracking-[var(--letter-spacing-body1)]",
+            "text-[color:var(--color-neutral-900)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          No clubs followed yet
+        </h2>
+        <p
+          className={[
+            "font-[family-name:var(--font-body)] font-normal",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+            "tracking-[var(--letter-spacing-body2)]",
+            "text-[color:var(--color-text-secondary)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          Discover clubs to fill your feed.
+        </p>
+        <Link to="/search" className="mt-[var(--space-1)]">
+          <Button variant="primary" size="sm">
+            Discover clubs
+          </Button>
+        </Link>
+      </div>
+    </aside>
   );
 }
 
@@ -485,6 +818,39 @@ export function Home({
 function OrgResultCard({ org }: { org: SearchOrgResult }) {
   const fallback = fallbackColorsForName(org.name);
   const [following, setFollowing] = useState<boolean>(org.following);
+  const [pending, setPending] = useState<boolean>(false);
+  const convex = useConvex();
+  const followMutation = useMutation(api.follows.follow);
+  const unfollowMutation = useMutation(api.follows.unfollow);
+
+  const handleFollowToggle = useCallback(async () => {
+    if (pending) return;
+    const previous = following;
+    const next = !previous;
+    // Optimistic flip first.
+    setFollowing(next);
+    setPending(true);
+    try {
+      // SAMPLE_ORG_RESULTS use a slug-style id, not a real Convex Id<"orgs">.
+      // Resolve the slug to a real org id, then call the mutation.
+      const result = await convex.query(api.orgs.getBySlug, { slug: org.id });
+      const resolved = result.org;
+      if (resolved === null) {
+        throw new Error(`Org not found for slug "${org.id}"`);
+      }
+      const orgId: Id<"orgs"> = resolved._id;
+      if (next) {
+        await followMutation({ orgId });
+      } else {
+        await unfollowMutation({ orgId });
+      }
+    } catch {
+      // Rollback on any failure (network, not-found, mutation error).
+      setFollowing(previous);
+    } finally {
+      setPending(false);
+    }
+  }, [convex, followMutation, following, org.id, pending, unfollowMutation]);
 
   return (
     <article
@@ -538,8 +904,11 @@ function OrgResultCard({ org }: { org: SearchOrgResult }) {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setFollowing((f) => !f)}
+          onClick={() => {
+            void handleFollowToggle();
+          }}
           aria-pressed={following}
+          disabled={pending}
         >
           {following ? "Following" : "Follow"}
         </Button>

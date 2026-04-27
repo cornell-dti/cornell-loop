@@ -12,7 +12,8 @@
     "lint": "bun run --cwd apps/dashboard lint",
     "type-check": "bun run --cwd apps/dashboard type-check",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:e2e": "bun run --cwd apps/dashboard test:e2e"
   },
   "devDependencies": {
     "playwright": "^1.59.1",

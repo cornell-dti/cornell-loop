@@ -20,15 +20,20 @@ import {
 } from "react";
 import { X } from "lucide-react";
 import { ChevronDown } from "lucide-react";
-import { SideBar, Button, SearchBar, SearchPanel, Tag } from "@app/ui";
+import { Link, useNavigate } from "react-router-dom";
+import { useMutation, useQuery } from "convex/react";
+import {
+  SideBar,
+  Button,
+  SearchBar,
+  SearchPanel,
+  Tag,
+  fallbackColorsForName,
+} from "@app/ui";
 import type { SideBarItemId, RsvpGroup, Club } from "@app/ui";
-
-// ─── Shared typography class strings ─────────────────────────────────────────
-
-const BODY2_REGULAR =
-  "font-[family-name:var(--font-body)] font-normal " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-  "tracking-[var(--letter-spacing-body2)]";
+import { api } from "../../convex/_generated/api";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
+import { orgsToClubs, rsvpsToRsvpGroups } from "../lib/eventToPost";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -73,30 +78,50 @@ export interface SubscriptionsProps extends ComponentPropsWithoutRef<"div"> {
 function SubscriptionRow({
   item,
   onUnsubscribeClick,
+  onClick,
 }: {
   item: SubscriptionItem;
   onUnsubscribeClick: () => void;
+  onClick?: () => void;
 }) {
+  const fallback = fallbackColorsForName(item.orgName);
   return (
     <div
       className={[
-        "flex w-full items-center justify-between",
+        "flex w-full items-center gap-[var(--space-3)]",
         "bg-[var(--color-surface)]",
         "border border-[var(--color-border)]",
         "rounded-[var(--radius-card)]",
-        "px-[var(--space-4)] py-[var(--space-3)]",
-      ].join(" ")}
+        "px-[var(--space-3)] py-[var(--space-3)]",
+        "transition-colors duration-150",
+        onClick ? "hover:bg-[var(--color-surface-subtle)]" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      {/* ── Left: avatar + org info ── */}
-      <div className="flex items-center gap-[var(--space-4)]">
-        {/* 60 px avatar with initial-letter fallback */}
-        {/* 40 px avatar — matches design-system row scale (--space-10) */}
+      {/* ── Left: avatar + org info — rendered as a real <button> when clickable
+          so the row stays a single interactive element (avoids axe's
+          nested-interactive rule firing because of the inner Unsubscribe button). */}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={!onClick}
+        className={[
+          "flex min-w-0 flex-1 items-center gap-[var(--space-3)] text-left",
+          onClick ? "cursor-pointer" : "cursor-default",
+          "bg-transparent",
+          "rounded-[var(--radius-input)]",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary-700)]",
+        ].join(" ")}
+        aria-label={onClick ? `Open ${item.orgName}` : undefined}
+      >
+        {/* 40 px avatar — same scale as the SearchPanel club row (size-[var(--space-10)]) */}
         <span
           className={[
             "inline-flex shrink-0 items-center justify-center",
             "overflow-hidden rounded-full",
             "size-[var(--space-10)]",
-            "bg-[var(--color-surface-raised)]",
+            "bg-[var(--color-surface-subtle)]",
           ].join(" ")}
         >
           {item.orgAvatarUrl ? (
@@ -109,47 +134,42 @@ function SubscriptionRow({
             <span
               className={
                 "flex size-full items-center justify-center " +
-                "bg-[var(--color-secondary-400)] " +
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[var(--color-secondary-900)] text-[var(--font-size-body2)]"
+                "text-[length:var(--font-size-body3)]"
               }
+              style={{ backgroundColor: fallback.bg, color: fallback.fg }}
             >
               {item.orgName.charAt(0).toUpperCase()}
             </span>
           )}
         </span>
 
-        {/* Org info stack */}
-        <div className="flex flex-col items-start justify-center gap-[var(--space-0-5)]">
-          {/* Org name row: name + optional verified badge */}
-          <div className="flex items-center gap-[var(--space-2)]">
+        {/* Org info stack — single row for name + Following pill, secondary
+            row for email + count, mirrors DashboardPost / ClubItem density. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-0">
+          <div className="flex min-w-0 items-center gap-[var(--space-2)]">
             <span
               className={
                 "font-[family-name:var(--font-body)] font-semibold " +
-                "leading-[var(--line-height-body2)] text-[var(--font-size-body2)] " +
+                "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
                 "tracking-[var(--letter-spacing-body2)] " +
-                "whitespace-nowrap text-[var(--color-neutral-900)]"
+                "min-w-0 truncate text-[color:var(--color-neutral-900)]"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
               {item.orgName}
             </span>
 
-            {/*
-             * "Following" pill — every subscription row is by definition a
-             * followed mailing list, so we surface the design-system Following
-             * indicator (matches DashboardPost). Replaces the prior star icon
-             * which was visually conflated with "following" elsewhere.
-             */}
+            {/* "Following" pill — matches DashboardPost / SearchResultRow exactly */}
             <span
               className={[
-                "inline-flex items-center",
+                "inline-flex shrink-0 items-center",
                 "rounded-full",
                 "bg-[var(--color-neutral-200)]",
                 "px-[var(--space-1-5)] py-0",
                 "font-[family-name:var(--font-body)] font-medium",
                 "text-[length:10px] leading-[18px]",
-                "text-[var(--color-neutral-600)]",
+                "text-[color:var(--color-neutral-600)]",
                 "whitespace-nowrap",
               ].join(" ")}
             >
@@ -157,37 +177,49 @@ function SubscriptionRow({
             </span>
           </div>
 
-          <p
-            className={
-              BODY2_REGULAR +
-              " whitespace-nowrap text-[var(--color-text-secondary)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            <span className="font-semibold">{item.emailsReceived}</span>
-            {" emails received"}
-          </p>
-
-          <p
-            className={
-              "font-[family-name:var(--font-body)] font-normal italic " +
-              "leading-[var(--line-height-body2)] text-[var(--font-size-body2)] " +
-              "tracking-[var(--letter-spacing-body2)] " +
-              "whitespace-nowrap text-[var(--color-text-muted)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {item.emailAddress}
-          </p>
+          <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+            <span
+              className={
+                "font-[family-name:var(--font-body)] font-normal " +
+                "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] " +
+                "tracking-[var(--letter-spacing-body3)] " +
+                "min-w-0 truncate text-[color:var(--color-text-secondary)]"
+              }
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              {item.emailAddress}
+            </span>
+            <span
+              aria-hidden="true"
+              className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]"
+            >
+              ·
+            </span>
+            <span
+              className={
+                "font-[family-name:var(--font-body)] font-normal " +
+                "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)] " +
+                "tracking-[var(--letter-spacing-body3)] " +
+                "whitespace-nowrap text-[color:var(--color-text-secondary)]"
+              }
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              <span className="font-semibold text-[color:var(--color-neutral-900)]">
+                {item.emailsReceived}
+              </span>
+              {" emails"}
+            </span>
+          </div>
         </div>
-      </div>
+      </button>
 
-      {/* Unsubscribe — design-system secondary Button */}
+      {/* Unsubscribe — design-system secondary Button, sm size to balance row height. */}
       <Button
         variant="secondary"
-        size="md"
+        size="sm"
         onClick={onUnsubscribeClick}
         aria-label={`Unsubscribe from ${item.orgName}`}
+        className="shrink-0"
       >
         Unsubscribe
       </Button>
@@ -196,6 +228,24 @@ function SubscriptionRow({
 }
 
 // ─── Subscriptions ────────────────────────────────────────────────────────────
+
+/**
+ * Convert a followed org Doc to the SubscriptionItem display shape. The dashboard
+ * doesn't yet track per-org email counts; surface tag count as a placeholder
+ * proxy so the row still renders meaningfully. Real email counts land later.
+ */
+function orgToSubscriptionItem(org: Doc<"orgs">): SubscriptionItem {
+  const fallbackEmail = `${org.slug}-l@cornell.edu`;
+  return {
+    orgName: org.name,
+    orgAvatarUrl: org.avatarUrl,
+    isVerified: org.isVerified,
+    emailsReceived: org.tags.length,
+    emailAddress: org.email ?? fallbackEmail,
+  };
+}
+
+type SortMode = "Alphabetical" | "Most emails" | "Recently added";
 
 export function Subscriptions({
   activeNavItem = "subscriptions",
@@ -206,14 +256,89 @@ export function Subscriptions({
   onSearchClear,
   sortLabel = "Alphabetical",
   onSortChange,
-  subscriptions = [],
-  rsvpGroups,
-  clubs,
+  subscriptions: subscriptionsOverride,
+  rsvpGroups: rsvpGroupsOverride,
+  clubs: clubsOverride,
   onClubClick,
   className,
   ...rest
 }: SubscriptionsProps) {
-  const [items, setItems] = useState<SubscriptionItem[]>(subscriptions);
+  const navigate = useNavigate();
+  const followedOrgs = useQuery(api.orgs.listFollowed);
+  const myRsvps = useQuery(api.rsvps.myRsvps);
+  const unfollowMutation = useMutation(api.follows.unfollow);
+  // Map followed orgs to SubscriptionItem shape, preserving the natural order
+  // returned by the server (recency-desc). The sort toggle re-sorts a copy so
+  // we don't mutate the source array. "Most emails" sort uses tag count as a
+  // placeholder proxy until real email counts are tracked.
+  const orgsList = useMemo<readonly Doc<"orgs">[]>(
+    () => followedOrgs ?? [],
+    [followedOrgs],
+  );
+
+  const sortMode: SortMode =
+    sortLabel === "Alphabetical" ||
+    sortLabel === "Most emails" ||
+    sortLabel === "Recently added"
+      ? sortLabel
+      : "Alphabetical";
+
+  const items: SubscriptionItem[] = useMemo(() => {
+    if (subscriptionsOverride !== undefined) {
+      return subscriptionsOverride;
+    }
+    const mapped = orgsList.map(orgToSubscriptionItem);
+    if (sortMode === "Alphabetical") {
+      return [...mapped].sort((a, b) => a.orgName.localeCompare(b.orgName));
+    }
+    if (sortMode === "Most emails") {
+      return [...mapped].sort((a, b) => b.emailsReceived - a.emailsReceived);
+    }
+    // "Recently added" — preserve server order (follows.createdAt desc).
+    return mapped;
+  }, [subscriptionsOverride, orgsList, sortMode]);
+
+  // Map list index → org id for unfollow. Only populated when the data comes
+  // from Convex (override mode keeps the legacy in-memory removal flow).
+  const idsForItems = useMemo<Id<"orgs">[] | null>(() => {
+    if (subscriptionsOverride !== undefined) return null;
+    if (sortMode === "Alphabetical") {
+      return [...orgsList]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((o) => o._id);
+    }
+    if (sortMode === "Most emails") {
+      return [...orgsList]
+        .sort((a, b) => b.tags.length - a.tags.length)
+        .map((o) => o._id);
+    }
+    return orgsList.map((o) => o._id);
+  }, [subscriptionsOverride, orgsList, sortMode]);
+
+  const queriedRsvpGroups = useMemo(
+    () => rsvpsToRsvpGroups(myRsvps),
+    [myRsvps],
+  );
+  const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
+
+  const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
+  const clubs = clubsOverride ?? queriedClubs;
+
+  const loading =
+    subscriptionsOverride === undefined && followedOrgs === undefined;
+  const isEmpty =
+    subscriptionsOverride === undefined &&
+    followedOrgs !== undefined &&
+    followedOrgs.length === 0;
+
+  // Local override state for the deprecated subscriptionsOverride flow so the
+  // unsubscribe modal can still optimistically remove rows.
+  const [overrideItems, setOverrideItems] = useState<SubscriptionItem[]>(
+    subscriptionsOverride ?? [],
+  );
+  const displayedItems =
+    subscriptionsOverride === undefined ? items : overrideItems;
+
   const [pendingUnsubscribeIndex, setPendingUnsubscribeIndex] = useState<
     number | null
   >(null);
@@ -224,9 +349,9 @@ export function Subscriptions({
   const pendingItem = useMemo(
     () =>
       pendingUnsubscribeIndex !== null
-        ? (items[pendingUnsubscribeIndex] ?? null)
+        ? (displayedItems[pendingUnsubscribeIndex] ?? null)
         : null,
-    [pendingUnsubscribeIndex, items],
+    [pendingUnsubscribeIndex, displayedItems],
   );
 
   const handleCloseModal = useCallback(() => {
@@ -235,12 +360,28 @@ export function Subscriptions({
 
   const handleConfirmUnsubscribe = useCallback(() => {
     if (pendingUnsubscribeIndex === null) return;
-    const removed = items[pendingUnsubscribeIndex];
+    const removed = displayedItems[pendingUnsubscribeIndex];
     if (!removed) return;
-    setItems((prev) => prev.filter((_, i) => i !== pendingUnsubscribeIndex));
+
+    if (subscriptionsOverride === undefined && idsForItems !== null) {
+      const orgId = idsForItems[pendingUnsubscribeIndex];
+      if (orgId !== undefined) {
+        void unfollowMutation({ orgId });
+      }
+    } else {
+      setOverrideItems((prev) =>
+        prev.filter((_, i) => i !== pendingUnsubscribeIndex),
+      );
+    }
     setRecentlyUnsubscribed(removed.orgName);
     setPendingUnsubscribeIndex(null);
-  }, [pendingUnsubscribeIndex, items]);
+  }, [
+    pendingUnsubscribeIndex,
+    displayedItems,
+    subscriptionsOverride,
+    idsForItems,
+    unfollowMutation,
+  ]);
 
   useEffect(() => {
     if (recentlyUnsubscribed === null) return;
@@ -260,7 +401,7 @@ export function Subscriptions({
   const dialogTitleId = useId();
   const dialogDescId = useId();
 
-  const displayedCount = subscriptionCount ?? items.length;
+  const displayedCount = subscriptionCount ?? displayedItems.length;
 
   return (
     <div
@@ -281,7 +422,7 @@ export function Subscriptions({
       {/* ── Main feed ── */}
       <main
         className={[
-          "flex min-w-0 flex-1 flex-col gap-[var(--space-6)]",
+          "flex min-w-0 flex-1 flex-col gap-[var(--space-3)]",
           "overflow-y-auto bg-[var(--color-surface-subtle)] py-[var(--space-6)]",
           "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         ].join(" ")}
@@ -325,12 +466,14 @@ export function Subscriptions({
               type="button"
               onClick={onSortChange}
               className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
+                "inline-flex shrink-0 items-center gap-[var(--space-1-5)]",
+                "px-[var(--space-3)] py-[var(--space-1-5)]",
                 "rounded-[var(--radius-card)]",
                 "bg-[var(--color-surface)]",
                 "border border-[var(--color-border)]",
-                BODY2_REGULAR,
+                "font-[family-name:var(--font-body)] font-normal",
+                "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)]",
+                "tracking-[var(--letter-spacing-body3)]",
                 "text-[var(--color-neutral-700)]",
                 "cursor-pointer whitespace-nowrap",
                 "hover:bg-[var(--color-surface-subtle)]",
@@ -355,23 +498,49 @@ export function Subscriptions({
         />
 
         <div className="flex flex-col gap-[var(--space-3)] px-[var(--space-8)] pb-[var(--space-8)]">
-          {items.map((item, i) => (
+          {loading && <SubscriptionsLoadingState />}
+          {!loading && isEmpty && (
+            <SubscriptionsEmptyState onBrowse={() => navigate("/search")} />
+          )}
+          {displayedItems.map((item, i) => (
             <SubscriptionRow
               key={`${item.emailAddress}-${i}`}
               item={item}
               onUnsubscribeClick={() => setPendingUnsubscribeIndex(i)}
+              onClick={() => {
+                // Navigate to the org page when the row is clicked anywhere
+                // outside the Unsubscribe button. We need a slug, which the
+                // override flow doesn't carry — fall back to a no-op there.
+                if (
+                  subscriptionsOverride === undefined &&
+                  idsForItems !== null
+                ) {
+                  const org = orgsList.find((o) => o._id === idsForItems[i]);
+                  if (org) navigate(`/orgs/${org.slug}`);
+                }
+              }}
             />
           ))}
         </div>
       </main>
 
-      {/* ── Right panel — design-system SearchPanel ── */}
-      <SearchPanel
-        rsvpGroups={rsvpGroups}
-        clubs={clubs}
-        onClubClick={onClubClick}
-        className="h-full shrink-0 overflow-visible"
-      />
+      {/*
+       * ── Right panel ──
+       * Product rule: the sidebar must never be empty. When the user follows
+       * zero clubs (and there are no RSVPs to surface), render an empty-state
+       * card inviting discovery instead of letting SearchPanel render an
+       * empty <aside>.
+       */}
+      {clubs.length === 0 && rsvpGroups.length === 0 ? (
+        <SubscriptionsSidebarEmptyState />
+      ) : (
+        <SearchPanel
+          rsvpGroups={rsvpGroups}
+          clubs={clubs}
+          onClubClick={onClubClick}
+          className="hidden h-full shrink-0 overflow-visible lg:flex"
+        />
+      )}
 
       {/* ── Unsubscribe confirmation modal ── */}
       {pendingItem && (
@@ -407,6 +576,125 @@ export function Subscriptions({
           <span>Unsubscribed from {recentlyUnsubscribed}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Loading / empty states ──────────────────────────────────────────────────
+
+function SubscriptionsLoadingState() {
+  return (
+    <div
+      className={[
+        "flex w-full items-center justify-center",
+        "rounded-[var(--radius-card)]",
+        "border border-dashed border-[var(--color-border)]",
+        "bg-[var(--color-surface)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
+        "font-[family-name:var(--font-body)] font-normal",
+        "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+        "tracking-[var(--letter-spacing-body2)]",
+        "text-[color:var(--color-text-secondary)]",
+      ].join(" ")}
+      role="status"
+      aria-live="polite"
+      style={{ fontVariationSettings: "'opsz' 14" }}
+    >
+      Loading subscriptions…
+    </div>
+  );
+}
+
+function SubscriptionsSidebarEmptyState() {
+  return (
+    <aside
+      aria-label="Search panel"
+      className={[
+        "hidden h-full shrink-0 flex-col gap-[var(--space-3)] lg:flex",
+        "w-[var(--search-panel-width)]",
+        "bg-[var(--color-surface)]",
+        "border-l border-[var(--color-border)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
+        "overflow-visible",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex w-full flex-col items-start gap-[var(--space-2)]",
+          "rounded-[var(--radius-card)]",
+          "bg-[var(--color-surface)]",
+          "border border-[var(--color-border)]",
+          "px-[var(--space-5)] py-[var(--space-4)]",
+        ].join(" ")}
+      >
+        <h2
+          className={[
+            "font-[family-name:var(--font-body)] font-bold",
+            "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+            "tracking-[var(--letter-spacing-body1)]",
+            "text-[color:var(--color-neutral-900)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          No clubs followed yet
+        </h2>
+        <p
+          className={[
+            "font-[family-name:var(--font-body)] font-normal",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+            "tracking-[var(--letter-spacing-body2)]",
+            "text-[color:var(--color-text-secondary)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          Discover clubs to fill your feed.
+        </p>
+        <Link to="/search" className="mt-[var(--space-1)]">
+          <Button variant="primary" size="sm">
+            Discover clubs
+          </Button>
+        </Link>
+      </div>
+    </aside>
+  );
+}
+
+function SubscriptionsEmptyState({ onBrowse }: { onBrowse: () => void }) {
+  return (
+    <div
+      className={[
+        "flex w-full flex-col items-start gap-[var(--space-3)]",
+        "rounded-[var(--radius-card)]",
+        "bg-[var(--color-surface)]",
+        "border border-[var(--color-border)]",
+        "px-[var(--space-5)] py-[var(--space-4)]",
+      ].join(" ")}
+    >
+      <h2
+        className={[
+          "font-[family-name:var(--font-body)] font-bold",
+          "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+          "tracking-[var(--letter-spacing-body1)]",
+          "text-[color:var(--color-neutral-900)]",
+        ].join(" ")}
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
+        You aren't following any clubs yet
+      </h2>
+      <p
+        className={[
+          "font-[family-name:var(--font-body)] font-normal",
+          "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+          "tracking-[var(--letter-spacing-body2)]",
+          "text-[color:var(--color-text-secondary)]",
+        ].join(" ")}
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
+        Search and filter for clubs to start curating your feed.
+      </p>
+      <Button variant="primary" size="md" onClick={onBrowse}>
+        Discover clubs
+      </Button>
     </div>
   );
 }

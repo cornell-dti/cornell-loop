@@ -2,3 +2,5 @@ node_modules
 dist
 pnpm-lock.yaml
 convex/_generated
+apps/dashboard/test-results
+apps/dashboard/playwright-report

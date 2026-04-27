@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
+import { ConvexError } from "convex/values";
 import { LoopLogo } from "@app/ui";
 
 // ─── Image assets ────────────────────────────────────────────────────────────
@@ -232,7 +233,7 @@ const DISCOVERY_CLUBS: ClubMark[] = [
     initials: "WI",
     logoSrc: club2,
     size: "md",
-    bg: "#ffffff",
+    bg: "var(--color-white)",
     fg: "var(--color-primary-700)",
     rxPct: 72,
     ryPct: 16,
@@ -244,7 +245,7 @@ const DISCOVERY_CLUBS: ClubMark[] = [
     logoSrc: club3,
     size: "sm",
     bg: "var(--color-primary-600)",
-    fg: "#ffffff",
+    fg: "var(--color-white)",
     rxPct: 18,
     ryPct: 84,
   },
@@ -254,7 +255,7 @@ const DISCOVERY_CLUBS: ClubMark[] = [
     logoSrc: club4,
     size: "md",
     bg: "var(--color-secondary-700)",
-    fg: "#ffffff",
+    fg: "var(--color-white)",
     rxPct: 50,
     ryPct: 87,
   },
@@ -263,7 +264,7 @@ const DISCOVERY_CLUBS: ClubMark[] = [
     initials: "AA",
     logoSrc: club5,
     size: "sm",
-    bg: "#ffffff",
+    bg: "var(--color-white)",
     fg: "var(--color-secondary-700)",
     rxPct: 82,
     ryPct: 84,
@@ -313,6 +314,7 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
         return (
           <div
             key={c.name}
+            role="img"
             aria-label={`${c.name} club`}
             className="absolute z-20 flex items-center justify-center overflow-hidden rounded-full shadow-[0_8px_22px_rgba(20,40,80,0.16)] ring-1 ring-[color:rgba(20,40,80,0.08)]"
             style={{
@@ -323,7 +325,7 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
               // When a real logo is dropped in, force a white background so
               // the surrounding `object-contain` letterbox blends into the
               // chip. Otherwise honour the designed monogram colours.
-              backgroundColor: c.logoSrc ? "#ffffff" : c.bg,
+              backgroundColor: c.logoSrc ? "var(--color-white)" : c.bg,
               color: c.fg,
             }}
           >
@@ -354,20 +356,73 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
 // LANDING PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Type guard for the NON_CORNELL_EMAIL ConvexError surfaced by the auth
+ * callback. Narrows the unknown error without an `as` cast so the calling
+ * site stays strictly typed.
+ */
+function isNonCornellError(
+  err: unknown,
+): err is ConvexError<{ code: "NON_CORNELL_EMAIL" }> {
+  if (!(err instanceof ConvexError)) return false;
+  const data: unknown = err.data;
+  if (typeof data !== "object" || data === null) return false;
+  if (!("code" in data)) return false;
+  return data.code === "NON_CORNELL_EMAIL";
+}
+
 export default function Landing() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAuthenticated } = useConvexAuth();
   const { signIn } = useAuthActions();
 
+  // Capture any ?error param into local state synchronously on mount so a
+  // refresh doesn't re-show the banner. The cleanup-effect below strips the
+  // param from the URL so subsequent reloads don't re-trigger this. The
+  // banner stays visible from local state until the user takes another
+  // action (handleCTA clears it).
+  const [showNonCornellError, setShowNonCornellError] = useState<boolean>(
+    () => searchParams.get("error") === "non-cornell",
+  );
+  useEffect(() => {
+    if (searchParams.get("error") !== "non-cornell") return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("error");
+    setSearchParams(next, { replace: true });
+    // Only run on mount — subsequent ?error toggles are driven by handleCTA.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // CTA click handler: navigate straight to /home when already signed in
   // (or in dev, where ProtectedRoute bypasses auth), otherwise kick off
-  // Google OAuth and then land on /home.
+  // Google OAuth. After the OAuth round-trip resolves we always land on
+  // /home; ProtectedRoute will bounce to /onboarding if the user hasn't
+  // finished setup yet.
+  //
+  // If the auth callback rejects with a Cornell-only error, surface the
+  // toast by routing back to "?error=non-cornell" and stay on the page.
   function handleCTA() {
+    // Clear any pre-existing error toast on a fresh attempt.
+    if (showNonCornellError) {
+      setShowNonCornellError(false);
+    }
+
     if (import.meta.env.DEV || isAuthenticated) {
       navigate("/home");
-    } else {
-      void signIn("google").then(() => navigate("/home"));
+      return;
     }
+
+    void signIn("google").then(
+      () => {
+        navigate("/home");
+      },
+      (err: unknown) => {
+        if (isNonCornellError(err)) {
+          setShowNonCornellError(true);
+        }
+      },
+    );
   }
 
   // Trigger "highlights" word highlight when banner scrolls into view.
@@ -427,7 +482,7 @@ export default function Landing() {
           <button
             type="button"
             onClick={handleCTA}
-            className="inline-flex items-center justify-center rounded-[var(--radius-button)] bg-[var(--color-primary-700)] px-4 py-1.5 text-sm font-normal tracking-[-0.5px] text-white transition-colors hover:bg-[var(--color-primary-hover)]"
+            className="inline-flex items-center justify-center rounded-[var(--radius-button)] bg-[var(--color-primary-800)] px-4 py-1.5 text-sm font-medium tracking-[-0.5px] text-white transition-colors hover:bg-[var(--color-primary-900)]"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Install
@@ -571,6 +626,31 @@ export default function Landing() {
                 events to free food.
               </p>
             </div>
+
+            {/* Inline error banner — shown when sign-in is rejected because
+                the user's email is not @cornell.edu. */}
+            {showNonCornellError && (
+              <div
+                role="alert"
+                aria-live="polite"
+                className={[
+                  "max-w-[420px] rounded-[var(--radius-card)]",
+                  "border border-[var(--color-border)]",
+                  "bg-[var(--color-surface)]",
+                  "px-[var(--space-4)] py-[var(--space-3)]",
+                  "text-center",
+                  "font-[family-name:var(--font-body)] font-medium",
+                  "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+                  "tracking-[var(--letter-spacing-body2)]",
+                  "text-[var(--color-neutral-900)]",
+                  "shadow-[var(--shadow-1)]",
+                ].join(" ")}
+                style={{ fontVariationSettings: "'opsz' 14" }}
+              >
+                Loop is open to Cornell students only. Sign in with your
+                @cornell.edu account.
+              </div>
+            )}
 
             {/* CTA */}
             <CTAButton onClick={handleCTA} />
