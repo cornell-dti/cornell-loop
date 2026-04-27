@@ -130,6 +130,7 @@ export const dashboard = query({
       joinAttempts,
       ingestionRuns,
       recentMessages,
+      clearedConfirmations,
     ] = await Promise.all([
       ctx.db.query("listservCandidates").order("desc").take(150),
       ctx.db.query("listservs").order("desc").take(150),
@@ -137,7 +138,12 @@ export const dashboard = query({
       ctx.db.query("discoveryRuns").withIndex("by_started_at").order("desc").take(12),
       ctx.db.query("joinAttempts").withIndex("by_created_at").order("desc").take(20),
       ctx.db.query("ingestionRuns").withIndex("by_started_at").order("desc").take(20),
-      ctx.db.query("listservMessages").withIndex("by_received_at").order("desc").take(20),
+      ctx.db.query("listservMessages").withIndex("by_received_at").order("desc").take(100),
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_confirmation_cleared_at")
+        .order("desc")
+        .take(50),
     ]);
 
     return {
@@ -148,6 +154,9 @@ export const dashboard = query({
       joinAttempts,
       ingestionRuns,
       recentMessages,
+      clearedConfirmations: clearedConfirmations.filter(
+        (message) => message.confirmationClearedAt !== undefined,
+      ),
     };
   },
 });
@@ -444,9 +453,13 @@ export const updateJoinStatus = mutation({
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
+    const patch =
+      args.joinStatus === "joined"
+        ? { joinStatus: args.joinStatus, status: "active" as const, updatedAt: Date.now() }
+        : { joinStatus: args.joinStatus, updatedAt: Date.now() };
+
     await ctx.db.patch(args.listservId, {
-      joinStatus: args.joinStatus,
-      updatedAt: Date.now(),
+      ...patch,
     });
   },
 });
@@ -463,6 +476,25 @@ export const updateListservNotes = mutation({
       notes: cleanOptional(args.notes),
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const clearConfirmation = mutation({
+  args: { token: v.string(), messageId: v.id("listservMessages") },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const now = Date.now();
+    const message = await ctx.db.get(args.messageId);
+
+    await ctx.db.patch(args.messageId, { confirmationClearedAt: now });
+
+    if (message?.listservId) {
+      await ctx.db.patch(message.listservId, {
+        joinStatus: "joined",
+        status: "active",
+        updatedAt: now,
+      });
+    }
   },
 });
 

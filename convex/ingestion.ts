@@ -388,10 +388,9 @@ export const storeParsedMessages = internalMutation({
       });
 
       if (message.listservId) {
-        await ctx.db.patch(message.listservId, {
-          lastReceivedAt: message.receivedAt,
-          updatedAt: now,
-        });
+        const listserv = await ctx.db.get(message.listservId);
+        const patch = buildListservIngestionPatch(message, now, listserv?.joinStatus);
+        await ctx.db.patch(message.listservId, patch);
       }
 
       stored += 1;
@@ -400,6 +399,34 @@ export const storeParsedMessages = internalMutation({
     return { stored };
   },
 });
+
+function buildListservIngestionPatch(
+  message: { receivedAt: number; senderEmail: string; subject: string; bodyText: string },
+  now: number,
+  currentJoinStatus?: "not_started" | "join_email_sent" | "awaiting_confirmation" | "joined" | "failed" | "manual_required",
+) {
+  if (isJoinConfirmation(message)) {
+    return {
+      lastReceivedAt: message.receivedAt,
+      joinStatus: currentJoinStatus === "joined" ? "joined" as const : "awaiting_confirmation" as const,
+      updatedAt: now,
+    };
+  }
+
+  if (currentJoinStatus !== "joined") {
+    return {
+      lastReceivedAt: message.receivedAt,
+      joinStatus: "joined" as const,
+      status: "active" as const,
+      updatedAt: now,
+    };
+  }
+
+  return {
+    lastReceivedAt: message.receivedAt,
+    updatedAt: now,
+  };
+}
 
 async function refreshAccessToken(ctx: ActionCtx) {
   const connection = (await ctx.runQuery(
@@ -607,7 +634,26 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
     }
   }
 
+  const searchable = `${email.subject}\n${email.bodyText}`.toLowerCase();
+  if (isJoinConfirmation(email)) {
+    for (const listserv of listservs) {
+      const localParts = [listserv.listEmail, ...listserv.senderEmails]
+        .map((value) => value.toLowerCase().split("@")[0])
+        .filter(Boolean);
+      if (localParts.some((local) => searchable.includes(local))) return listserv._id;
+    }
+  }
+
   return undefined;
+}
+
+function isJoinConfirmation(email: Pick<ParsedEmail, "senderEmail" | "subject" | "bodyText">) {
+  const sender = email.senderEmail.toLowerCase();
+  const text = `${email.subject}\n${email.bodyText}`.toLowerCase();
+  return (
+    sender.startsWith("lyris-confirm-") ||
+    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text)
+  );
 }
 
 function headerValue(headers: Array<{ name: string; value: string }>, name: string) {

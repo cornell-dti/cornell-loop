@@ -120,11 +120,13 @@ export default defineSchema({
       v.literal("ignored"),
       v.literal("failed"),
     ),
+    confirmationClearedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_gmail_message_id", ["gmailMessageId"])
     .index("by_listserv", ["listservId"])
     .index("by_received_at", ["receivedAt"])
+    .index("by_confirmation_cleared_at", ["confirmationClearedAt"])
     .index("by_processing_status", ["processingStatus"]),
 
   listservIngestionState: defineTable({

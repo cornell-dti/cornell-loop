@@ -52,6 +52,30 @@ type EffectiveJoin = {
   joinDetectionReasons: string[];
 };
 
+type ConfirmationItem = {
+  id: Id<"listservMessages">;
+  listservName: string;
+  subject: string;
+  sender: string;
+  receivedAt: number;
+  clearedAt?: number;
+  link?: string;
+};
+
+type AdminTab = "setup" | "discover" | "review" | "join" | "ingest";
+
+const ADMIN_TABS: Array<{
+  id: AdminTab;
+  label: string;
+  description: string;
+}> = [
+  { id: "setup", label: "1. Setup", description: "Connect Gmail" },
+  { id: "discover", label: "2. Discover", description: "Find sources" },
+  { id: "review", label: "3. Review", description: "Approve candidates" },
+  { id: "join", label: "4. Join", description: "Send requests" },
+  { id: "ingest", label: "5. Ingest", description: "Poll inbox" },
+];
+
 export default function Admin() {
   const [token, setToken] = useState(() =>
     localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "",
@@ -61,6 +85,7 @@ export default function Admin() {
   const [manualName, setManualName] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [joinDraft, setJoinDraft] = useState<JoinDraft | null>(null);
+  const [activeTab, setActiveTab] = useState<AdminTab>("setup");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,8 +106,8 @@ export default function Admin() {
   const approveCandidate = useMutation(api.listservAdmin.approveCandidate);
   const rejectCandidate = useMutation(api.listservAdmin.rejectCandidate);
   const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
-  const updateJoinStatus = useMutation(api.listservAdmin.updateJoinStatus);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
+  const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
 
   useEffect(() => {
     if (token) localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
@@ -95,6 +120,7 @@ export default function Admin() {
   const joinAttempts: JoinAttempt[] = dashboard?.joinAttempts ?? [];
   const ingestionRuns: IngestionRun[] = dashboard?.ingestionRuns ?? [];
   const recentMessages: ListservMessage[] = dashboard?.recentMessages ?? [];
+  const clearedConfirmations: ListservMessage[] = dashboard?.clearedConfirmations ?? [];
 
   const listservById = new Map(listservs.map((listserv) => [listserv._id, listserv]));
 
@@ -202,91 +228,104 @@ export default function Admin() {
         {message && <Notice tone="success">{message}</Notice>}
         {error && <Notice tone="error">{error}</Notice>}
 
-        <section className="grid gap-[var(--space-4)] md:grid-cols-4">
+        <section className="grid gap-[var(--space-3)] md:grid-cols-4">
           <MetricCard label="Candidates" value={candidates.length} />
           <MetricCard label="Approved" value={listservs.length} />
           <MetricCard label="Raw messages" value={recentMessages.length ? `${recentMessages.length} recent` : "0 recent"} />
           <MetricCard label="Gmail" value={gmailConnection?.status ?? (gmailConnection === undefined ? "Loading" : "Not connected")} />
         </section>
 
-        <GmailConnectionPanel token={token} connection={gmailConnection} />
-
-        <DiscoverPanel
-          discoveryRuns={discoveryRuns}
-          onRunDiscovery={() =>
-            runAdminAction("Discovery complete.", async () => {
-              await runDiscovery({ token });
-            })
-          }
-          onSeedCandidates={() =>
-            runAdminAction("Cached candidates loaded.", async () => {
-              await seedCandidates({ token });
-            })
-          }
-        />
+        <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
-          <SectionHeader
-            title="Add Candidate"
-            description="Use this when you already know a list address or want to track a source by hand."
-          />
-          <form onSubmit={handleAddCandidate} className="mt-[var(--space-4)] grid gap-[var(--space-3)] md:grid-cols-[1.2fr_1fr_1.4fr_auto] md:items-end">
-            <AdminInput label="Email" value={manualEmail} onChange={setManualEmail} required />
-            <AdminInput label="Display name" value={manualName} onChange={setManualName} />
-            <AdminInput label="Notes" value={manualNotes} onChange={setManualNotes} />
-            <PrimaryButton>Add</PrimaryButton>
-          </form>
+          {activeTab === "setup" && (
+            <GmailConnectionPanel token={token} connection={gmailConnection} />
+          )}
+
+          {activeTab === "discover" && (
+            <div className="grid gap-[var(--space-5)]">
+              <DiscoverPanel
+                discoveryRuns={discoveryRuns}
+                onRunDiscovery={() =>
+                  runAdminAction("Discovery complete.", async () => {
+                    await runDiscovery({ token });
+                  })
+                }
+                onSeedCandidates={() =>
+                  runAdminAction("Cached candidates loaded.", async () => {
+                    await seedCandidates({ token });
+                  })
+                }
+              />
+              <AddCandidatePanel
+                manualEmail={manualEmail}
+                manualName={manualName}
+                manualNotes={manualNotes}
+                onEmailChange={setManualEmail}
+                onNameChange={setManualName}
+                onNotesChange={setManualNotes}
+                onSubmit={handleAddCandidate}
+              />
+            </div>
+          )}
+
+          {activeTab === "review" && (
+            <CandidateTable
+              candidates={candidates}
+              onApprove={(candidateId, name) =>
+                runAdminAction("Candidate approved.", async () => {
+                  await approveCandidate({ token, candidateId, name });
+                })
+              }
+              onReject={(candidateId) =>
+                runAdminAction("Candidate rejected.", async () => {
+                  await rejectCandidate({ token, candidateId });
+                })
+              }
+            />
+          )}
+
+          {activeTab === "join" && (
+            <JoinPanel
+              listservs={listservs}
+              joinAttempts={joinAttempts}
+              joinDraft={joinDraft}
+              onPrepareJoin={setJoinDraft}
+              onDraftChange={setJoinDraft}
+              onSendJoin={handleSendJoin}
+              onStatusChange={(listservId, status) =>
+                runAdminAction("Source status updated.", async () => {
+                  await updateListservStatus({ token, listservId, status });
+                })
+              }
+              onJoinStrategyChange={(listservId, joinStrategy) =>
+                runAdminAction("Join method updated.", async () => {
+                  await updateJoinStrategy({ token, listservId, joinStrategy });
+                })
+              }
+            />
+          )}
+
+          {activeTab === "ingest" && (
+            <IngestionPanel
+              states={ingestionState}
+              runs={ingestionRuns}
+              messages={recentMessages}
+              clearedConfirmations={clearedConfirmations}
+              listservById={listservById}
+              onClearConfirmation={(messageId) =>
+                runAdminAction("Confirmation cleared.", async () => {
+                  await clearConfirmation({ token, messageId });
+                })
+              }
+              onRunNow={() =>
+                runAdminAction("Ingestion run complete.", async () => {
+                  await runIngestionNow({ token });
+                })
+              }
+            />
+          )}
         </section>
-
-        <CandidateTable
-          candidates={candidates}
-          onApprove={(candidateId, name) =>
-            runAdminAction("Candidate approved.", async () => {
-              await approveCandidate({ token, candidateId, name });
-            })
-          }
-          onReject={(candidateId) =>
-            runAdminAction("Candidate rejected.", async () => {
-              await rejectCandidate({ token, candidateId });
-            })
-          }
-        />
-
-        <JoinPanel
-          listservs={listservs}
-          joinAttempts={joinAttempts}
-          joinDraft={joinDraft}
-          onPrepareJoin={setJoinDraft}
-          onDraftChange={setJoinDraft}
-          onSendJoin={handleSendJoin}
-          onStatusChange={(listservId, status) =>
-            runAdminAction("Source status updated.", async () => {
-              await updateListservStatus({ token, listservId, status });
-            })
-          }
-          onJoinStatusChange={(listservId, joinStatus) =>
-            runAdminAction("Join status updated.", async () => {
-              await updateJoinStatus({ token, listservId, joinStatus });
-            })
-          }
-          onJoinStrategyChange={(listservId, joinStrategy) =>
-            runAdminAction("Join method updated.", async () => {
-              await updateJoinStrategy({ token, listservId, joinStrategy });
-            })
-          }
-        />
-
-        <IngestionPanel
-          states={ingestionState}
-          runs={ingestionRuns}
-          messages={recentMessages}
-          listservById={listservById}
-          onRunNow={() =>
-            runAdminAction("Ingestion run complete.", async () => {
-              await runIngestionNow({ token });
-            })
-          }
-        />
       </div>
     </main>
   );
@@ -302,7 +341,7 @@ function DiscoverPanel({
   onSeedCandidates: () => void;
 }) {
   return (
-    <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
+    <section>
       <div className="flex flex-col justify-between gap-[var(--space-4)] md:flex-row md:items-start">
         <SectionHeader
           title="Discover"
@@ -314,6 +353,76 @@ function DiscoverPanel({
         </div>
       </div>
       <RunTable runs={discoveryRuns} />
+    </section>
+  );
+}
+
+function TabNav({
+  activeTab,
+  onChange,
+}: {
+  activeTab: AdminTab;
+  onChange: (tab: AdminTab) => void;
+}) {
+  return (
+    <nav className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[var(--space-1-5)] shadow-[var(--shadow-1)]">
+      <div className="grid gap-[var(--space-1)] md:grid-cols-5">
+        {ADMIN_TABS.map((tab) => {
+          const active = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onChange(tab.id)}
+              className={[
+                "rounded-[var(--radius-input)] px-[var(--space-3)] py-[var(--space-2)] text-left transition-colors",
+                active
+                  ? "bg-[var(--color-primary-400)] text-[color:var(--color-primary-900)]"
+                  : "text-[color:var(--color-neutral-700)] hover:bg-[var(--color-surface-subtle)]",
+              ].join(" ")}
+            >
+              <div className="text-[length:var(--font-size-body2)] font-bold">
+                {tab.label}
+              </div>
+              <div className="text-[length:var(--font-size-body3)] opacity-75">
+                {tab.description}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function AddCandidatePanel({
+  manualEmail,
+  manualName,
+  manualNotes,
+  onEmailChange,
+  onNameChange,
+  onNotesChange,
+  onSubmit,
+}: {
+  manualEmail: string;
+  manualName: string;
+  manualNotes: string;
+  onEmailChange: (value: string) => void;
+  onNameChange: (value: string) => void;
+  onNotesChange: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <section className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)]">
+      <SectionHeader
+        title="Add Candidate"
+        description="Use this when you already know a list address or want to track a source by hand."
+      />
+      <form onSubmit={onSubmit} className="mt-[var(--space-4)] grid gap-[var(--space-3)] md:grid-cols-[1.2fr_1fr_1.4fr_auto] md:items-end">
+        <AdminInput label="Email" value={manualEmail} onChange={onEmailChange} required />
+        <AdminInput label="Display name" value={manualName} onChange={onNameChange} />
+        <AdminInput label="Notes" value={manualNotes} onChange={onNotesChange} />
+        <PrimaryButton>Add</PrimaryButton>
+      </form>
     </section>
   );
 }
@@ -331,7 +440,7 @@ function GmailConnectionPanel({
     : "";
 
   return (
-    <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
+    <section>
       <div className="flex flex-col justify-between gap-[var(--space-4)] md:flex-row md:items-start">
         <SectionHeader
           title="Gmail Connection"
@@ -388,7 +497,7 @@ function CandidateTable({
   onReject: (candidateId: Id<"listservCandidates">) => void;
 }) {
   return (
-    <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
+    <section>
       <SectionHeader
         title="Review"
         description="Approve only broad, relevant sources. Mark private or questionable addresses rejected."
@@ -443,7 +552,6 @@ function JoinPanel({
   onDraftChange,
   onSendJoin,
   onStatusChange,
-  onJoinStatusChange,
   onJoinStrategyChange,
 }: {
   listservs: Listserv[];
@@ -453,14 +561,16 @@ function JoinPanel({
   onDraftChange: (draft: JoinDraft | null) => void;
   onSendJoin: (event: FormEvent) => void;
   onStatusChange: (listservId: Id<"listservs">, status: Listserv["status"]) => void;
-  onJoinStatusChange: (listservId: Id<"listservs">, joinStatus: Listserv["joinStatus"]) => void;
   onJoinStrategyChange: (listservId: Id<"listservs">, joinStrategy: JoinStrategy) => void;
 }) {
+  const pendingListservs = listservs.filter((listserv) => listserv.joinStatus !== "joined");
+  const joinedListservs = listservs.filter((listserv) => listserv.joinStatus === "joined");
+
   return (
-    <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
+    <section>
       <SectionHeader
         title="Join"
-        description="Prepare and send join requests from the Gmail account. Edit the message before sending."
+        description="Send join requests, then run ingestion to surface confirmations. Statuses update automatically on send and detected confirmations; use dropdowns only to correct state."
       />
 
       {joinDraft && (
@@ -496,6 +606,11 @@ function JoinPanel({
       )}
 
       <div className="mt-[var(--space-4)] overflow-x-auto">
+        {pendingListservs.length === 0 ? (
+          <div className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+            No sources currently need joining. Joined sources are archived below.
+          </div>
+        ) : (
         <table className="w-full min-w-[1120px] border-collapse text-[length:var(--font-size-body2)]">
           <thead>
             <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
@@ -509,7 +624,7 @@ function JoinPanel({
             </tr>
           </thead>
           <tbody>
-            {listservs.map((listserv) => {
+            {pendingListservs.map((listserv) => {
               const join = getEffectiveJoin(listserv);
               return (
               <tr key={listserv._id} className="border-b border-[var(--color-border)] last:border-0">
@@ -545,17 +660,7 @@ function JoinPanel({
                     ))}
                   </select>
                 </TableCell>
-                <TableCell>
-                  <select
-                    value={listserv.joinStatus ?? "not_started"}
-                    onChange={(event) => onJoinStatusChange(listserv._id, event.target.value as Listserv["joinStatus"])}
-                    className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-2)] py-[var(--space-1)] text-[length:var(--font-size-body2)]"
-                  >
-                    {(["not_started", "join_email_sent", "awaiting_confirmation", "joined", "failed", "manual_required"] as const).map((status) => (
-                      <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
-                    ))}
-                  </select>
-                </TableCell>
+                <TableCell><StatusPill value={listserv.joinStatus ?? "not_started"} /></TableCell>
                 <TableCell>{formatDate(listserv.lastReceivedAt)}</TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-[var(--space-2)]">
@@ -574,7 +679,10 @@ function JoinPanel({
             );})}
           </tbody>
         </table>
+        )}
       </div>
+
+      <JoinedSourcesTable listservs={joinedListservs} />
 
       <HistoryList
         title="Recent join attempts"
@@ -590,21 +698,179 @@ function JoinPanel({
   );
 }
 
+function JoinedSourcesTable({ listservs }: { listservs: Listserv[] }) {
+  return (
+    <details className="mt-[var(--space-4)] rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)]">
+      <summary className="cursor-pointer font-semibold">
+        Joined sources ({listservs.length})
+      </summary>
+      {listservs.length === 0 ? (
+        <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+          No joined sources yet.
+        </p>
+      ) : (
+        <div className="mt-[var(--space-3)] overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-[length:var(--font-size-body2)]">
+            <thead>
+              <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
+                <TableHead>Name</TableHead>
+                <TableHead>List email</TableHead>
+                <TableHead>Source status</TableHead>
+                <TableHead>Last received</TableHead>
+              </tr>
+            </thead>
+            <tbody>
+              {listservs.map((listserv) => (
+                <tr key={listserv._id} className="border-b border-[var(--color-border)] last:border-0">
+                  <TableCell>{listserv.name}</TableCell>
+                  <TableCell>{listserv.listEmail}</TableCell>
+                  <TableCell><StatusPill value={listserv.status} /></TableCell>
+                  <TableCell>{formatDate(listserv.lastReceivedAt)}</TableCell>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </details>
+  );
+}
+
+function ConfirmationQueue({
+  confirmations,
+  clearedConfirmations,
+  onClear,
+}: {
+  confirmations: ConfirmationItem[];
+  clearedConfirmations: ConfirmationItem[];
+  onClear: (messageId: Id<"listservMessages">) => void;
+}) {
+  return (
+    <div className="mt-[var(--space-4)] grid gap-[var(--space-4)] rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)]">
+      <div className="flex flex-col justify-between gap-[var(--space-2)] md:flex-row md:items-center">
+        <div>
+          <h3 className="font-semibold">Confirmation Queue</h3>
+          <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+            Lyris confirmation emails detected from recent ingestion runs.
+          </p>
+        </div>
+        <StatusPill value={`${confirmations.length} pending`} />
+      </div>
+
+      {confirmations.length === 0 ? (
+        <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+          No confirmation emails detected. Run ingestion after sending join requests.
+        </p>
+      ) : (
+        <div className="grid gap-[var(--space-2)]">
+          {confirmations.map((confirmation) => (
+            <ConfirmationRow
+              key={confirmation.id}
+              confirmation={confirmation}
+              onClear={onClear}
+            />
+          ))}
+        </div>
+      )}
+
+      <details className="rounded-[var(--radius-input)] bg-[var(--color-surface)] p-[var(--space-3)]">
+        <summary className="cursor-pointer font-semibold">
+          Cleared confirmations ({clearedConfirmations.length})
+        </summary>
+        {clearedConfirmations.length === 0 ? (
+          <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+            No cleared confirmations yet.
+          </p>
+        ) : (
+          <div className="mt-[var(--space-3)] grid gap-[var(--space-2)]">
+            {clearedConfirmations.map((confirmation) => (
+              <ConfirmationRow
+                key={confirmation.id}
+                confirmation={confirmation}
+                cleared
+              />
+            ))}
+          </div>
+        )}
+      </details>
+    </div>
+  );
+}
+
+function ConfirmationRow({
+  confirmation,
+  cleared,
+  onClear,
+}: {
+  confirmation: ConfirmationItem;
+  cleared?: boolean;
+  onClear?: (messageId: Id<"listservMessages">) => void;
+}) {
+  return (
+    <div className="flex flex-col justify-between gap-[var(--space-2)] rounded-[var(--radius-input)] bg-[var(--color-surface)] p-[var(--space-3)] md:flex-row md:items-center">
+      <div>
+        <div className="font-semibold">{confirmation.listservName}</div>
+        <div className="text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
+          {confirmation.subject || "Subscription confirmation"}
+        </div>
+        <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          {confirmation.sender} · received {formatDate(confirmation.receivedAt)}
+          {confirmation.clearedAt && ` · cleared ${formatDate(confirmation.clearedAt)}`}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-[var(--space-2)]">
+        {confirmation.link ? (
+          <a
+            href={confirmation.link}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex rounded-[var(--radius-input)] bg-[var(--color-primary-700)] px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-white)] hover:bg-[var(--color-primary-hover)]"
+          >
+            Open confirm link
+          </a>
+        ) : (
+          <span className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            No link found; reply in Gmail
+          </span>
+        )}
+        {!cleared && onClear && (
+          <SecondaryButton type="button" onClick={() => onClear(confirmation.id)}>
+            Clear
+          </SecondaryButton>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function IngestionPanel({
   states,
   runs,
   messages,
+  clearedConfirmations,
   listservById,
+  onClearConfirmation,
   onRunNow,
 }: {
   states: IngestionState[];
   runs: IngestionRun[];
   messages: ListservMessage[];
+  clearedConfirmations: ListservMessage[];
   listservById: Map<Id<"listservs">, Listserv>;
+  onClearConfirmation: (messageId: Id<"listservMessages">) => void;
   onRunNow: () => void;
 }) {
+  const pendingConfirmations = messages
+    .filter((mail) => mail.confirmationClearedAt === undefined)
+    .map((mail) => toConfirmationItem(mail, listservById))
+    .filter((item): item is ConfirmationItem => item !== null);
+  const clearedConfirmationItems = clearedConfirmations
+    .map((mail) => toConfirmationItem(mail, listservById))
+    .filter((item): item is ConfirmationItem => item !== null)
+    .sort((a, b) => (b.clearedAt ?? 0) - (a.clearedAt ?? 0));
+
   return (
-    <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
+    <section>
       <div className="flex flex-col justify-between gap-[var(--space-4)] md:flex-row md:items-start">
         <SectionHeader
           title="Ingest"
@@ -655,6 +921,12 @@ function IngestionPanel({
           </div>
         </div>
       </div>
+
+      <ConfirmationQueue
+        confirmations={pendingConfirmations}
+        clearedConfirmations={clearedConfirmationItems}
+        onClear={onClearConfirmation}
+      />
 
       <div className="mt-[var(--space-4)] overflow-x-auto">
         <table className="w-full min-w-[920px] border-collapse text-[length:var(--font-size-body2)]">
@@ -871,6 +1143,43 @@ function defaultJoinDraft(listserv: Listserv): JoinDraft {
 
 function canPrepareJoin(join: EffectiveJoin) {
   return Boolean(join.joinRecipient && join.joinSubject !== undefined);
+}
+
+function toConfirmationItem(
+  mail: ListservMessage,
+  listservById: Map<Id<"listservs">, Listserv>,
+): ConfirmationItem | null {
+  if (!isConfirmationMessage(mail)) return null;
+
+  const link = extractConfirmationLink(mail.bodyText) ?? extractConfirmationLink(mail.bodyHtml);
+  return {
+    id: mail._id,
+    listservName: mail.listservId ? listservById.get(mail.listservId)?.name ?? "Matched list" : inferListNameFromMessage(mail),
+    subject: mail.subject,
+    sender: mail.senderEmail || mail.sender,
+    receivedAt: mail.receivedAt,
+    clearedAt: mail.confirmationClearedAt,
+    link,
+  };
+}
+
+function isConfirmationMessage(mail: ListservMessage) {
+  const sender = mail.senderEmail.toLowerCase();
+  const text = `${mail.subject}\n${mail.bodyText}`.toLowerCase();
+  return (
+    sender.startsWith("lyris-confirm-") ||
+    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text)
+  );
+}
+
+function extractConfirmationLink(value: string) {
+  const match = value.match(/https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i);
+  return match?.[0].replace(/&amp;/g, "&");
+}
+
+function inferListNameFromMessage(mail: ListservMessage) {
+  const match = `${mail.subject}\n${mail.bodyText}`.match(/(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i);
+  return match?.[1] ?? "Possible confirmation";
 }
 
 function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
