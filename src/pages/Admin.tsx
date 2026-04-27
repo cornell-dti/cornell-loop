@@ -285,6 +285,12 @@ export default function Admin() {
             onCreateOrg={(name, type) =>
               act(`${name} created.`, () => createOrg({ token, name, type }))
             }
+            onCreateAndAssignSource={(listservId, name, type) =>
+              act(`${name} created and assigned.`, async () => {
+                const orgId = await createOrg({ token, name, type });
+                await assignSourceOrg({ token, listservId, organizationId: orgId });
+              })
+            }
           />
         )}
 
@@ -479,6 +485,7 @@ function SourcesTab({
   onAssignSuggestion,
   onAssignSource,
   onCreateOrg,
+  onCreateAndAssignSource,
 }: {
   candidates: Candidate[];
   listservs: Listserv[];
@@ -489,6 +496,7 @@ function SourcesTab({
   onAssignSuggestion: (sender: UnassignedSender) => void;
   onAssignSource: (listservId: Id<"listservs">, orgId: Id<"organizations">) => void;
   onCreateOrg: (name: string, type: OrgType) => void;
+  onCreateAndAssignSource: (listservId: Id<"listservs">, name: string, type: OrgType) => void;
 }) {
   const unassignedSources = listservs.filter((s) => !s.organizationId);
   const pendingCandidates = candidates.filter((c) => c.status === "candidate");
@@ -537,9 +545,7 @@ function SourcesTab({
                 source={src}
                 organizations={organizations}
                 onAssign={(orgId) => onAssignSource(src._id, orgId)}
-                onCreateAndAssign={(name, type) => {
-                  onCreateOrg(name, type);
-                }}
+                onCreateAndAssign={(name, type) => onCreateAndAssignSource(src._id, name, type)}
               />
             ))}
           </div>
