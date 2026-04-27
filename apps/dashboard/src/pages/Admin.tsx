@@ -15,11 +15,46 @@ type IngestionRun = Doc<"ingestionRuns">;
 // Full doc type — kept for reference but dashboard/overview queries return projected subsets.
 type _ListservMessageFull = Doc<"listservMessages">;
 // Projected shape returned by the dashboard query for the recent-messages table.
-type RecentMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "receivedAt" | "listservId" | "subject" | "senderEmail" | "processingStatus">;
+type RecentMessage = Pick<
+  _ListservMessageFull,
+  | "_id"
+  | "_creationTime"
+  | "receivedAt"
+  | "listservId"
+  | "subject"
+  | "senderEmail"
+  | "processingStatus"
+>;
 // Projected shape for confirmation messages (includes body fields needed for link extraction).
-type ConfirmationMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "receivedAt" | "listservId" | "subject" | "senderEmail" | "sender" | "to" | "cc" | "processingStatus" | "confirmationClearedAt" | "bodyText" | "bodyHtml">;
+type ConfirmationMessage = Pick<
+  _ListservMessageFull,
+  | "_id"
+  | "_creationTime"
+  | "receivedAt"
+  | "listservId"
+  | "subject"
+  | "senderEmail"
+  | "sender"
+  | "to"
+  | "cc"
+  | "processingStatus"
+  | "confirmationClearedAt"
+  | "bodyText"
+  | "bodyHtml"
+>;
 // Projected shape returned by parser.overview for failed/ready messages.
-type ParseMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "subject" | "senderEmail" | "processingStatus" | "parseError" | "organizationId" | "listservId" | "receivedAt">;
+type ParseMessage = Pick<
+  _ListservMessageFull,
+  | "_id"
+  | "_creationTime"
+  | "subject"
+  | "senderEmail"
+  | "processingStatus"
+  | "parseError"
+  | "organizationId"
+  | "listservId"
+  | "receivedAt"
+>;
 type Organization = Doc<"organizations">;
 type EventDoc = Doc<"events">;
 type ParseRun = Doc<"parseRuns">;
@@ -87,21 +122,37 @@ const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "publish", label: "Publish", hint: "Review + publish drafts" },
 ];
 
-const ORG_TYPES: OrgType[] = ["club", "department", "official", "publication", "company", "other"];
+const ORG_TYPES: OrgType[] = [
+  "club",
+  "department",
+  "official",
+  "publication",
+  "company",
+  "other",
+];
 const JOIN_STRATEGIES: JoinStrategy[] = [
-  "cornell_lyris", "cornell_lyris_owner_contact", "campus_groups",
-  "newsletter", "direct_org_email", "manual", "unknown",
+  "cornell_lyris",
+  "cornell_lyris_owner_contact",
+  "campus_groups",
+  "newsletter",
+  "direct_org_email",
+  "manual",
+  "unknown",
 ];
 
 // ─── Root ────────────────────────────────────────────────────────────────────
 
 export default function Admin() {
-  const [token, setToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "");
+  const [token, setToken] = useState(
+    () => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "",
+  );
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
     const p = new URLSearchParams(window.location.search).get("tab");
     return TABS.some((t) => t.id === p) ? (p as AdminTab) : "setup";
   });
-  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
+  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(
+    null,
+  );
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function showToast(text: string, ok = true) {
@@ -122,9 +173,18 @@ export default function Admin() {
   }
 
   // ── queries ──
-  const dashboard = useQuery(api.listservAdmin.dashboard, token ? { token } : "skip");
-  const gmailStatus = useQuery(api.gmailOAuth.connectionStatus, token ? { token } : "skip") as GmailStatus | undefined;
-  const sourceData = useQuery(api.sourceAdmin.overview, token ? { token } : "skip");
+  const dashboard = useQuery(
+    api.listservAdmin.dashboard,
+    token ? { token } : "skip",
+  );
+  const gmailStatus = useQuery(
+    api.gmailOAuth.connectionStatus,
+    token ? { token } : "skip",
+  ) as GmailStatus | undefined;
+  const sourceData = useQuery(
+    api.sourceAdmin.overview,
+    token ? { token } : "skip",
+  );
   const parseData = useQuery(api.parser.overview, token ? { token } : "skip");
 
   // ── mutations / actions ──
@@ -143,7 +203,9 @@ export default function Admin() {
   const updateOrg = useMutation(api.sourceAdmin.updateOrganization);
   const ignoreSender = useMutation(api.sourceAdmin.ignoreSender);
   const unignoreSource = useMutation(api.sourceAdmin.unignoreSource);
-  const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
+  const updateListservStatus = useMutation(
+    api.listservAdmin.updateListservStatus,
+  );
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
@@ -163,9 +225,12 @@ export default function Admin() {
   const listservs: Listserv[] = dashboard?.listservs ?? [];
   const ingestionStates: IngestionState[] = dashboard?.ingestionState ?? [];
   const ingestionRuns: IngestionRun[] = dashboard?.ingestionRuns ?? [];
-  const recentMessages: RecentMessage[] = (dashboard?.recentMessages ?? []) as RecentMessage[];
-  const pendingConfirmations: ConfirmationMessage[] = (dashboard?.pendingConfirmations ?? []) as ConfirmationMessage[];
-  const clearedConfirmations: ConfirmationMessage[] = (dashboard?.clearedConfirmations ?? []) as ConfirmationMessage[];
+  const recentMessages: RecentMessage[] = (dashboard?.recentMessages ??
+    []) as RecentMessage[];
+  const pendingConfirmations: ConfirmationMessage[] =
+    (dashboard?.pendingConfirmations ?? []) as ConfirmationMessage[];
+  const clearedConfirmations: ConfirmationMessage[] =
+    (dashboard?.clearedConfirmations ?? []) as ConfirmationMessage[];
   const joinAttempts: JoinAttempt[] = dashboard?.joinAttempts ?? [];
 
   const organizations: Organization[] = sourceData?.organizations ?? [];
@@ -174,8 +239,10 @@ export default function Admin() {
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
   const drafts: EventDoc[] = parseData?.drafts ?? [];
-  const failedMessages: ParseMessage[] = (parseData?.failedMessages ?? []) as ParseMessage[];
-  const readyMessages: ParseMessage[] = (parseData?.readyMessages ?? []) as ParseMessage[];
+  const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
+    []) as ParseMessage[];
+  const readyMessages: ParseMessage[] = (parseData?.readyMessages ??
+    []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
@@ -191,13 +258,20 @@ export default function Admin() {
       <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-3">
           <div className="flex items-center gap-3">
-            <span className="font-[family-name:var(--font-brand)] text-[length:var(--font-size-sub2)] font-bold">Loop</span>
-            <span className="text-[color:var(--color-text-muted)] text-[length:var(--font-size-body2)]">Admin</span>
+            <span className="font-[family-name:var(--font-brand)] text-[length:var(--font-size-sub2)] font-bold">
+              Loop
+            </span>
+            <span className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+              Admin
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <GmailDot status={gmailStatus} />
             <button
-              onClick={() => { sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY); setToken(""); }}
+              onClick={() => {
+                sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+                setToken("");
+              }}
               className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-neutral-700)]"
             >
               Sign out
@@ -224,10 +298,14 @@ export default function Admin() {
 
       {/* Toast */}
       {toast && (
-        <div className={[
-          "fixed right-5 bottom-5 z-50 max-w-sm rounded-xl px-4 py-3 text-[length:var(--font-size-body2)] font-semibold shadow-[var(--shadow-2)] transition-all",
-          toast.ok ? "bg-[var(--color-neutral-900)] text-white" : "bg-red-600 text-white",
-        ].join(" ")}>
+        <div
+          className={[
+            "fixed right-5 bottom-5 z-50 max-w-sm rounded-xl px-4 py-3 text-[length:var(--font-size-body2)] font-semibold shadow-[var(--shadow-2)] transition-all",
+            toast.ok
+              ? "bg-[var(--color-neutral-900)] text-white"
+              : "bg-red-600 text-white",
+          ].join(" ")}
+        >
           {toast.text}
         </div>
       )}
@@ -243,15 +321,33 @@ export default function Admin() {
               try {
                 const nonce = await createOAuthNonce({ token });
                 const siteUrl = getConvexSiteUrl();
-                if (!siteUrl) { showToast("Convex site URL not configured.", false); return; }
-                window.open(`${siteUrl}/gmail/oauth/start?nonce=${encodeURIComponent(nonce)}`, "_blank");
+                if (!siteUrl) {
+                  showToast("Convex site URL not configured.", false);
+                  return;
+                }
+                window.open(
+                  `${siteUrl}/gmail/oauth/start?nonce=${encodeURIComponent(nonce)}`,
+                  "_blank",
+                );
               } catch (e) {
-                showToast(e instanceof Error ? e.message : "Failed to start OAuth.", false);
+                showToast(
+                  e instanceof Error ? e.message : "Failed to start OAuth.",
+                  false,
+                );
               }
             }}
-            onRunDiscovery={() => act("Discovery complete.", () => runDiscovery({ token }))}
+            onRunDiscovery={() =>
+              act("Discovery complete.", () => runDiscovery({ token }))
+            }
             onAddCandidate={(email, name, notes) =>
-              act("Candidate added.", () => addCandidate({ token, email, displayName: name || undefined, notes: notes || undefined }))
+              act("Candidate added.", () =>
+                addCandidate({
+                  token,
+                  email,
+                  displayName: name || undefined,
+                  notes: notes || undefined,
+                }),
+              )
             }
           />
         )}
@@ -263,40 +359,75 @@ export default function Admin() {
             organizations={organizations}
             unassigned={unassigned}
             onApproveCandidate={(id, name) =>
-              act("Candidate approved.", () => approveCandidate({ token, candidateId: id, name }))
+              act("Candidate approved.", () =>
+                approveCandidate({ token, candidateId: id, name }),
+              )
             }
             onRejectCandidate={(id) =>
-              act("Candidate rejected.", () => rejectCandidate({ token, candidateId: id }))
+              act("Candidate rejected.", () =>
+                rejectCandidate({ token, candidateId: id }),
+              )
             }
             onAssignSource={(listservId, orgId) =>
-              act("Source assigned.", () => assignSourceOrg({ token, listservId, organizationId: orgId }))
+              act("Source assigned.", () =>
+                assignSourceOrg({ token, listservId, organizationId: orgId }),
+              )
             }
             onCreateAndAssignSource={(listservId, name, type) =>
               act(`${name} created and assigned.`, async () => {
                 const orgId = await createOrg({ token, name, type });
-                await assignSourceOrg({ token, listservId, organizationId: orgId });
+                await assignSourceOrg({
+                  token,
+                  listservId,
+                  organizationId: orgId,
+                });
               })
             }
             onAssignInboxSenderToOrg={(senderEmail, orgId) =>
-              act("Source assigned.", () => assignSender({ token, senderEmail, organizationId: orgId }))
+              act("Source assigned.", () =>
+                assignSender({ token, senderEmail, organizationId: orgId }),
+              )
             }
-            onCreateAndAssignInboxSender={(senderEmail, name, type, sourceName, sourceType) =>
+            onCreateAndAssignInboxSender={(
+              senderEmail,
+              name,
+              type,
+              sourceName,
+              sourceType,
+            ) =>
               act(`${name} created and assigned.`, async () => {
                 const orgId = await createOrg({ token, name, type });
-                await assignSender({ token, senderEmail, organizationId: orgId, sourceName, sourceType });
+                await assignSender({
+                  token,
+                  senderEmail,
+                  organizationId: orgId,
+                  sourceName,
+                  sourceType,
+                });
               })
             }
             onIgnoreSender={(senderEmail) =>
               act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
             }
             onUnignoreSource={(listservId) =>
-              act("Source reactivated.", () => unignoreSource({ token, listservId }))
+              act("Source reactivated.", () =>
+                unignoreSource({ token, listservId }),
+              )
             }
             onCreateOrg={(name, type) =>
               act(`${name} created.`, () => createOrg({ token, name, type }))
             }
             onUpdateOrg={(orgId, name, type) =>
-              act("Organization updated.", () => updateOrg({ token, organizationId: orgId, name, type, status: "active", tags: [] }))
+              act("Organization updated.", () =>
+                updateOrg({
+                  token,
+                  organizationId: orgId,
+                  name,
+                  type,
+                  status: "active",
+                  tags: [],
+                }),
+              )
             }
           />
         )}
@@ -312,14 +443,20 @@ export default function Admin() {
             onSendJoin={async (e) => {
               e.preventDefault();
               if (!joinDraft) return;
-              await act("Join email sent.", () => sendJoinEmail({ token, ...joinDraft }));
+              await act("Join email sent.", () =>
+                sendJoinEmail({ token, ...joinDraft }),
+              );
               setJoinDraft(null);
             }}
             onStatusChange={(id, status) =>
-              act("Status updated.", () => updateListservStatus({ token, listservId: id, status }))
+              act("Status updated.", () =>
+                updateListservStatus({ token, listservId: id, status }),
+              )
             }
             onStrategyChange={(id, s) =>
-              act("Method updated.", () => updateJoinStrategy({ token, listservId: id, joinStrategy: s }))
+              act("Method updated.", () =>
+                updateJoinStrategy({ token, listservId: id, joinStrategy: s }),
+              )
             }
           />
         )}
@@ -332,8 +469,14 @@ export default function Admin() {
             pendingConfirmations={pendingConfirmations}
             clearedConfirmations={clearedConfirmations}
             listservById={listservById}
-            onRunNow={() => act("Ingestion complete.", () => runIngestionNow({ token }))}
-            onClearConfirmation={(id) => act("Confirmation cleared.", () => clearConfirmation({ token, messageId: id }))}
+            onRunNow={() =>
+              act("Ingestion complete.", () => runIngestionNow({ token }))
+            }
+            onClearConfirmation={(id) =>
+              act("Confirmation cleared.", () =>
+                clearConfirmation({ token, messageId: id }),
+              )
+            }
           />
         )}
 
@@ -344,10 +487,18 @@ export default function Admin() {
             failedMessages={failedMessages}
             readyCount={readyMessages.length}
             needsAssignment={needsAssignment}
-            onRunParse={() => act("Parse complete.", () => runParseNow({ token }))}
-            onPublish={(id) => act("Published.", () => publishEvent({ token, eventId: id }))}
-            onHide={(id) => act("Hidden.", () => hideEvent({ token, eventId: id }))}
-            onReparse={(id) => act("Reparsed.", () => runParseNow({ token, messageId: id }))}
+            onRunParse={() =>
+              act("Parse complete.", () => runParseNow({ token }))
+            }
+            onPublish={(id) =>
+              act("Published.", () => publishEvent({ token, eventId: id }))
+            }
+            onHide={(id) =>
+              act("Hidden.", () => hideEvent({ token, eventId: id }))
+            }
+            onReparse={(id) =>
+              act("Reparsed.", () => runParseNow({ token, messageId: id }))
+            }
             onGoToSources={() => switchTab("sources")}
           />
         )}
@@ -363,10 +514,15 @@ function LoginScreen({ onToken }: { onToken: (t: string) => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-neutral-100)] p-6">
       <form
-        onSubmit={(e) => { e.preventDefault(); onToken(draft.trim()); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          onToken(draft.trim());
+        }}
         className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] p-8 shadow-[var(--shadow-2)]"
       >
-        <h1 className="font-[family-name:var(--font-brand)] text-[length:var(--font-size-sub1)] font-bold">Loop Admin</h1>
+        <h1 className="font-[family-name:var(--font-brand)] text-[length:var(--font-size-sub1)] font-bold">
+          Loop Admin
+        </h1>
         <label className="mt-6 flex flex-col gap-2 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)]">
           Admin token
           <input
@@ -377,7 +533,9 @@ function LoginScreen({ onToken }: { onToken: (t: string) => void }) {
             className={input()}
           />
         </label>
-        <Btn primary className="mt-4 w-full">Enter</Btn>
+        <Btn primary className="mt-4 w-full">
+          Enter
+        </Btn>
       </form>
     </div>
   );
@@ -408,40 +566,77 @@ function SetupTab({
     <div className="grid gap-6 lg:grid-cols-2">
       {/* Gmail */}
       <Card>
-        <CardHeader title="Gmail" subtitle="Connect dtiincubator@gmail.com — used for ingestion and join emails." />
+        <CardHeader
+          title="Gmail"
+          subtitle="Connect dtiincubator@gmail.com — used for ingestion and join emails."
+        />
         <div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3">
           {gmailStatus === undefined ? (
-            <span className="text-[color:var(--color-text-muted)] text-[length:var(--font-size-body2)]">Loading…</span>
+            <span className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+              Loading…
+            </span>
           ) : gmailStatus === null ? (
-            <span className="text-[length:var(--font-size-body2)]">Not connected</span>
+            <span className="text-[length:var(--font-size-body2)]">
+              Not connected
+            </span>
           ) : (
             <div>
               <div className="flex items-center gap-2">
-                <StatusDot status={gmailStatus.status === "connected" ? "green" : "red"} />
-                <span className="font-semibold text-[length:var(--font-size-body2)]">{gmailStatus.email}</span>
+                <StatusDot
+                  status={gmailStatus.status === "connected" ? "green" : "red"}
+                />
+                <span className="text-[length:var(--font-size-body2)] font-semibold">
+                  {gmailStatus.email}
+                </span>
               </div>
-              {gmailStatus.lastError && <p className="mt-1 text-[length:var(--font-size-body3)] text-red-600">{gmailStatus.lastError}</p>}
+              {gmailStatus.lastError && (
+                <p className="mt-1 text-[length:var(--font-size-body3)] text-red-600">
+                  {gmailStatus.lastError}
+                </p>
+              )}
             </div>
           )}
           <Btn primary onClick={onConnectGmail}>
-            {gmailStatus?.status === "connected" ? "Reconnect" : "Connect Gmail"}
+            {gmailStatus?.status === "connected"
+              ? "Reconnect"
+              : "Connect Gmail"}
           </Btn>
         </div>
       </Card>
 
       {/* Discover */}
       <Card>
-        <CardHeader title="Discover" subtitle="Find probable Cornell list addresses from the sender dataset." />
+        <CardHeader
+          title="Discover"
+          subtitle="Find probable Cornell list addresses from the sender dataset."
+        />
         <div className="mt-4 flex flex-wrap gap-2">
-          <Btn primary onClick={onRunDiscovery}>Run discovery</Btn>
+          <Btn primary onClick={onRunDiscovery}>
+            Run discovery
+          </Btn>
         </div>
         {discoveryRuns.length > 0 && (
           <div className="mt-4 grid gap-1">
             {discoveryRuns.slice(0, 5).map((run) => (
-              <div key={run._id} className="flex items-center gap-3 text-[length:var(--font-size-body3)]">
-                <StatusDot status={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "yellow"} />
-                <span className="text-[color:var(--color-text-muted)]">{fmtDate(run.startedAt)}</span>
-                <span>found {run.candidatesFound}, inserted {run.candidatesInserted}</span>
+              <div
+                key={run._id}
+                className="flex items-center gap-3 text-[length:var(--font-size-body3)]"
+              >
+                <StatusDot
+                  status={
+                    run.status === "completed"
+                      ? "green"
+                      : run.status === "failed"
+                        ? "red"
+                        : "yellow"
+                  }
+                />
+                <span className="text-[color:var(--color-text-muted)]">
+                  {fmtDate(run.startedAt)}
+                </span>
+                <span>
+                  found {run.candidatesFound}, inserted {run.candidatesInserted}
+                </span>
                 {run.error && <span className="text-red-600">{run.error}</span>}
               </div>
             ))}
@@ -451,12 +646,17 @@ function SetupTab({
 
       {/* Add candidate */}
       <Card className="lg:col-span-2">
-        <CardHeader title="Add candidate manually" subtitle="Use when you know a specific list address you want to track." />
+        <CardHeader
+          title="Add candidate manually"
+          subtitle="Use when you know a specific list address you want to track."
+        />
         <form
           onSubmit={(e) => {
             e.preventDefault();
             onAddCandidate(email, name, notes);
-            setEmail(""); setName(""); setNotes("");
+            setEmail("");
+            setName("");
+            setNotes("");
           }}
           className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end"
         >
@@ -467,8 +667,9 @@ function SetupTab({
         </form>
         {candidates.length > 0 && (
           <div className="mt-6">
-            <p className="mb-2 text-[length:var(--font-size-body3)] font-semibold uppercase tracking-widest text-[color:var(--color-text-muted)]">
-              {candidates.length} candidate{candidates.length !== 1 ? "s" : ""} — go to <strong>Sources</strong> to review
+            <p className="mb-2 text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}{" "}
+              — go to <strong>Sources</strong> to review
             </p>
           </div>
         )}
@@ -501,24 +702,50 @@ function SourcesTab({
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSource: (listservId: Id<"listservs">, orgId: Id<"organizations">) => void;
-  onCreateAndAssignSource: (listservId: Id<"listservs">, name: string, type: OrgType) => void;
-  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"organizations">) => void;
-  onCreateAndAssignInboxSender: (senderEmail: string, name: string, type: OrgType, sourceName: string, sourceType: NonNullable<Listserv["sourceType"]>) => void;
+  onAssignSource: (
+    listservId: Id<"listservs">,
+    orgId: Id<"organizations">,
+  ) => void;
+  onCreateAndAssignSource: (
+    listservId: Id<"listservs">,
+    name: string,
+    type: OrgType,
+  ) => void;
+  onAssignInboxSenderToOrg: (
+    senderEmail: string,
+    orgId: Id<"organizations">,
+  ) => void;
+  onCreateAndAssignInboxSender: (
+    senderEmail: string,
+    name: string,
+    type: OrgType,
+    sourceName: string,
+    sourceType: NonNullable<Listserv["sourceType"]>,
+  ) => void;
   onIgnoreSender: (senderEmail: string) => void;
   onUnignoreSource: (listservId: Id<"listservs">) => void;
   onCreateOrg: (name: string, type: OrgType) => void;
-  onUpdateOrg: (orgId: Id<"organizations">, name: string, type: OrgType) => void;
+  onUpdateOrg: (
+    orgId: Id<"organizations">,
+    name: string,
+    type: OrgType,
+  ) => void;
 }) {
   // Partition listservs into three buckets
-  const unassignedSources = listservs.filter((s) => !s.organizationId && s.status !== "paused");
-  const assignedSources   = listservs.filter((s) => !!s.organizationId);
-  const ignoredSources    = listservs.filter((s) => s.status === "paused");
+  const unassignedSources = listservs.filter(
+    (s) => !s.organizationId && s.status !== "paused",
+  );
+  const assignedSources = listservs.filter((s) => !!s.organizationId);
+  const ignoredSources = listservs.filter((s) => s.status === "paused");
   const pendingCandidates = candidates.filter((c) => c.status === "candidate");
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
-    | { kind: "known"; source: Listserv; suggestion: ReturnType<typeof suggestFromEmail> }
+    | {
+        kind: "known";
+        source: Listserv;
+        suggestion: ReturnType<typeof suggestFromEmail>;
+      }
     | { kind: "inbox"; sender: UnassignedSender };
 
   const unifiedItems: UnifiedItem[] = [
@@ -532,8 +759,14 @@ function SourcesTab({
   unifiedItems.sort((a, b) => {
     const countA = a.kind === "inbox" ? a.sender.count : 0;
     const countB = b.kind === "inbox" ? b.sender.count : 0;
-    const timeA = a.kind === "inbox" ? a.sender.latestReceivedAt : (a.source.lastReceivedAt ?? a.source.createdAt);
-    const timeB = b.kind === "inbox" ? b.sender.latestReceivedAt : (b.source.lastReceivedAt ?? b.source.createdAt);
+    const timeA =
+      a.kind === "inbox"
+        ? a.sender.latestReceivedAt
+        : (a.source.lastReceivedAt ?? a.source.createdAt);
+    const timeB =
+      b.kind === "inbox"
+        ? b.sender.latestReceivedAt
+        : (b.source.lastReceivedAt ?? b.source.createdAt);
     return countB - countA || timeB - timeA;
   });
 
@@ -543,7 +776,8 @@ function SourcesTab({
     <div className="grid gap-6">
       {totalAction === 0 && unifiedItems.length === 0 && (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[length:var(--font-size-body2)] text-green-800">
-          All sources are assigned and ready. Messages will be parsed when you run the parser.
+          All sources are assigned and ready. Messages will be parsed when you
+          run the parser.
         </div>
       )}
 
@@ -587,8 +821,12 @@ function SourcesTab({
                   messageCount={undefined}
                   sampleSubjects={[]}
                   organizations={organizations}
-                  onAssignToOrg={(orgId) => onAssignSource(item.source._id, orgId)}
-                  onCreateAndAssign={(name, type) => onCreateAndAssignSource(item.source._id, name, type)}
+                  onAssignToOrg={(orgId) =>
+                    onAssignSource(item.source._id, orgId)
+                  }
+                  onCreateAndAssign={(name, type) =>
+                    onCreateAndAssignSource(item.source._id, name, type)
+                  }
                   onIgnore={() => onIgnoreSender(item.source.listEmail)}
                 />
               ) : (
@@ -602,17 +840,21 @@ function SourcesTab({
                   messageCount={item.sender.count}
                   sampleSubjects={item.sender.sampleSubjects}
                   organizations={organizations}
-                  onAssignToOrg={(orgId) => onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)}
+                  onAssignToOrg={(orgId) =>
+                    onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)
+                  }
                   onCreateAndAssign={(name, type) =>
                     onCreateAndAssignInboxSender(
-                      item.sender.senderEmail, name, type,
+                      item.sender.senderEmail,
+                      name,
+                      type,
                       item.sender.suggestion.sourceName,
                       item.sender.suggestion.sourceType,
                     )
                   }
                   onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
                 />
-              )
+              ),
             )}
           </div>
         </Card>
@@ -620,13 +862,19 @@ function SourcesTab({
 
       {/* Assigned sources — always visible so assignments can be changed */}
       {assignedSources.length > 0 && (
-        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4" open={unifiedItems.length === 0}>
-          <summary className="cursor-pointer select-none font-semibold text-[length:var(--font-size-body2)]">
-            {assignedSources.length} assigned source{assignedSources.length !== 1 ? "s" : ""}
+        <details
+          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
+          open={unifiedItems.length === 0}
+        >
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold select-none">
+            {assignedSources.length} assigned source
+            {assignedSources.length !== 1 ? "s" : ""}
           </summary>
           <div className="mt-3 grid gap-2">
             {assignedSources.map((src) => {
-              const org = organizations.find((o) => o._id === src.organizationId);
+              const org = organizations.find(
+                (o) => o._id === src.organizationId,
+              );
               return (
                 <AssignedSourceRow
                   key={src._id}
@@ -645,8 +893,9 @@ function SourcesTab({
       {/* Ignored / paused sources */}
       {ignoredSources.length > 0 && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
-          <summary className="cursor-pointer select-none font-semibold text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
-            {ignoredSources.length} ignored source{ignoredSources.length !== 1 ? "s" : ""}
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
+            {ignoredSources.length} ignored source
+            {ignoredSources.length !== 1 ? "s" : ""}
           </summary>
           <div className="mt-3 grid gap-2">
             {ignoredSources.map((src) => (
@@ -655,7 +904,10 @@ function SourcesTab({
                 source={src}
                 organizations={organizations}
                 onReactivate={() => onUnignoreSource(src._id)}
-                onAssign={(orgId) => { onUnignoreSource(src._id); onAssignSource(src._id, orgId); }}
+                onAssign={(orgId) => {
+                  onUnignoreSource(src._id);
+                  onAssignSource(src._id, orgId);
+                }}
               />
             ))}
           </div>
@@ -674,7 +926,9 @@ function SourcesTab({
               <OrgRow
                 key={org._id}
                 org={org}
-                sourceCount={listservs.filter((s) => s.organizationId === org._id).length}
+                sourceCount={
+                  listservs.filter((s) => s.organizationId === org._id).length
+                }
                 onUpdate={(name, type) => onUpdateOrg(org._id, name, type)}
               />
             ))}
@@ -701,33 +955,45 @@ function AssignedSourceRow({
 }) {
   const [reassigning, setReassigning] = useState(false);
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold truncate">{source.name}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold">{source.name}</div>
           <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            {source.listEmail} · <span className="text-[color:var(--color-neutral-700)]">{orgName}</span>
+            {source.listEmail} ·{" "}
+            <span className="text-[color:var(--color-neutral-700)]">
+              {orgName}
+            </span>
           </div>
         </div>
         {!reassigning && (
-          <div className="flex gap-2 shrink-0">
+          <div className="flex shrink-0 gap-2">
             <Btn onClick={() => setReassigning(true)}>Reassign</Btn>
-            <Btn danger onClick={onIgnore}>Ignore</Btn>
+            <Btn danger onClick={onIgnore}>
+              Ignore
+            </Btn>
           </div>
         )}
       </div>
       {reassigning && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+        <div className="flex flex-wrap items-end gap-3 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3">
+          <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
             Reassign to
             <select
               defaultValue={source.organizationId ?? ""}
-              onChange={(e) => { if (e.target.value) { onReassign(e.target.value as Id<"organizations">); setReassigning(false); } }}
+              onChange={(e) => {
+                if (e.target.value) {
+                  onReassign(e.target.value as Id<"organizations">);
+                  setReassigning(false);
+                }
+              }}
               className={input()}
             >
               <option value="">Choose…</option>
               {organizations.map((org) => (
-                <option key={org._id} value={org._id}>{org.name}</option>
+                <option key={org._id} value={org._id}>
+                  {org.name}
+                </option>
               ))}
             </select>
           </label>
@@ -751,31 +1017,44 @@ function IgnoredSourceRow({
 }) {
   const [assigning, setAssigning] = useState(false);
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)]">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold truncate text-[color:var(--color-text-muted)]">{source.name}</div>
-          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">{source.listEmail}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-[color:var(--color-text-muted)]">
+            {source.name}
+          </div>
+          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {source.listEmail}
+          </div>
         </div>
         {!assigning && (
-          <div className="flex gap-2 shrink-0">
-            <Btn primary onClick={onReactivate}>Reactivate</Btn>
+          <div className="flex shrink-0 gap-2">
+            <Btn primary onClick={onReactivate}>
+              Reactivate
+            </Btn>
             <Btn onClick={() => setAssigning(true)}>Assign org</Btn>
           </div>
         )}
       </div>
       {assigning && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+        <div className="flex flex-wrap items-end gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
             Assign to org
             <select
               defaultValue=""
-              onChange={(e) => { if (e.target.value) { onAssign(e.target.value as Id<"organizations">); setAssigning(false); } }}
+              onChange={(e) => {
+                if (e.target.value) {
+                  onAssign(e.target.value as Id<"organizations">);
+                  setAssigning(false);
+                }
+              }}
               className={input()}
             >
               <option value="">Choose…</option>
               {organizations.map((org) => (
-                <option key={org._id} value={org._id}>{org.name}</option>
+                <option key={org._id} value={org._id}>
+                  {org.name}
+                </option>
               ))}
             </select>
           </label>
@@ -804,7 +1083,7 @@ function OrgRow({
   const savedType = org.type;
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center gap-3 px-4 py-3">
         {editing ? (
           <>
@@ -814,17 +1093,41 @@ function OrgRow({
               className={`${input()} flex-1`}
               autoFocus
             />
-            <select value={type} onChange={(e) => setType(e.target.value as OrgType)} className={`${input()} w-36`}>
-              {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as OrgType)}
+              className={`${input()} w-36`}
+            >
+              {ORG_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
-            <Btn primary onClick={() => { onUpdate(name.trim() || savedName, type); setEditing(false); }}>Save</Btn>
-            <Btn onClick={() => { setName(savedName); setType(savedType); setEditing(false); }}>Cancel</Btn>
+            <Btn
+              primary
+              onClick={() => {
+                onUpdate(name.trim() || savedName, type);
+                setEditing(false);
+              }}
+            >
+              Save
+            </Btn>
+            <Btn
+              onClick={() => {
+                setName(savedName);
+                setType(savedType);
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </Btn>
           </>
         ) : (
           <>
             <span className="flex-1 font-semibold">{org.name}</span>
             <Tag>{org.type}</Tag>
-            <span className="text-[color:var(--color-text-muted)] text-[length:var(--font-size-body3)]">
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               {sourceCount} source{sourceCount !== 1 ? "s" : ""}
             </span>
             <Btn onClick={() => setEditing(true)}>Edit</Btn>
@@ -867,16 +1170,17 @@ function UnassignedRow({
   const [orgType, setOrgType] = useState<OrgType>(suggestedOrgType);
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold truncate">{name}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-semibold">{name}</span>
             {isNewSource && <Tag variant="amber">new source</Tag>}
           </div>
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {email}
-            {messageCount !== undefined && ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
+            {messageCount !== undefined &&
+              ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
             {sampleSubjects[0] && ` · "${sampleSubjects[0]}"`}
           </div>
           {mode === "idle" && (
@@ -886,27 +1190,38 @@ function UnassignedRow({
           )}
         </div>
         {mode === "idle" && (
-          <div className="flex gap-2 flex-wrap shrink-0">
-            <Btn primary onClick={() => setMode("create")}>Create org</Btn>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Btn primary onClick={() => setMode("create")}>
+              Create org
+            </Btn>
             <Btn onClick={() => setMode("assign")}>Assign existing</Btn>
-            <Btn danger onClick={onIgnore}>Ignore</Btn>
+            <Btn danger onClick={onIgnore}>
+              Ignore
+            </Btn>
           </div>
         )}
       </div>
 
       {mode === "assign" && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+        <div className="flex flex-wrap items-end gap-3 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3">
+          <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
             Organization
             <select
               defaultValue=""
               onChange={(e) => {
-                if (e.target.value) { onAssignToOrg(e.target.value as Id<"organizations">); setMode("idle"); }
+                if (e.target.value) {
+                  onAssignToOrg(e.target.value as Id<"organizations">);
+                  setMode("idle");
+                }
               }}
               className={input()}
             >
               <option value="">Choose…</option>
-              {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
+              {organizations.map((org) => (
+                <option key={org._id} value={org._id}>
+                  {org.name}
+                </option>
+              ))}
             </select>
           </label>
           <Btn onClick={() => setMode("idle")}>Cancel</Btn>
@@ -920,18 +1235,33 @@ function UnassignedRow({
             onCreateAndAssign(orgName, orgType);
             setMode("idle");
           }}
-          className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 grid gap-3 sm:grid-cols-[1fr_180px_auto] sm:items-end"
+          className="grid gap-3 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 sm:grid-cols-[1fr_180px_auto] sm:items-end"
         >
-          <Field label="New org name" value={orgName} onChange={setOrgName} required />
+          <Field
+            label="New org name"
+            value={orgName}
+            onChange={setOrgName}
+            required
+          />
           <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
             Type
-            <select value={orgType} onChange={(e) => setOrgType(e.target.value as OrgType)} className={input()}>
-              {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            <select
+              value={orgType}
+              onChange={(e) => setOrgType(e.target.value as OrgType)}
+              className={input()}
+            >
+              {ORG_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           </label>
           <div className="flex gap-2">
             <Btn primary>Create &amp; assign</Btn>
-            <Btn type="button" onClick={() => setMode("idle")}>Cancel</Btn>
+            <Btn type="button" onClick={() => setMode("idle")}>
+              Cancel
+            </Btn>
           </div>
         </form>
       )}
@@ -953,23 +1283,32 @@ function CandidateRow({
   if (candidate.status !== "candidate") return null;
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold truncate">{candidate.displayName ?? candidate.email}</span>
-            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">{candidate.email}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-semibold">
+              {candidate.displayName ?? candidate.email}
+            </span>
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              {candidate.email}
+            </span>
             <ConfidenceBadge value={candidate.confidence} />
           </div>
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {candidate.matchedReasons.join(" · ")}
-            {candidate.popularity !== undefined && ` · ${candidate.popularity} overlap`}
+            {candidate.popularity !== undefined &&
+              ` · ${candidate.popularity} overlap`}
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Btn primary onClick={() => onApprove(name || undefined)}>Approve</Btn>
+          <Btn primary onClick={() => onApprove(name || undefined)}>
+            Approve
+          </Btn>
           <Btn onClick={() => setExpanded(!expanded)}>Rename</Btn>
-          <Btn danger onClick={onReject}>Reject</Btn>
+          <Btn danger onClick={onReject}>
+            Reject
+          </Btn>
         </div>
       </div>
       {expanded && (
@@ -988,19 +1327,44 @@ function CandidateRow({
   );
 }
 
-function CreateOrgForm({ className, onCreate }: { className?: string; onCreate: (name: string, type: OrgType) => void }) {
+function CreateOrgForm({
+  className,
+  onCreate,
+}: {
+  className?: string;
+  onCreate: (name: string, type: OrgType) => void;
+}) {
   const [name, setName] = useState("");
   const [type, setType] = useState<OrgType>("club");
   return (
     <form
-      onSubmit={(e) => { e.preventDefault(); if (name.trim()) { onCreate(name.trim(), type); setName(""); } }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim()) {
+          onCreate(name.trim(), type);
+          setName("");
+        }
+      }}
       className={`grid gap-3 sm:grid-cols-[1fr_180px_auto] sm:items-end ${className ?? ""}`}
     >
-      <Field label="New organization name" value={name} onChange={setName} required />
+      <Field
+        label="New organization name"
+        value={name}
+        onChange={setName}
+        required
+      />
       <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
         Type
-        <select value={type} onChange={(e) => setType(e.target.value as OrgType)} className={input()}>
-          {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value as OrgType)}
+          className={input()}
+        >
+          {ORG_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
         </select>
       </label>
       <Btn primary>Create org</Btn>
@@ -1043,24 +1407,41 @@ function JoinTab({
       {/* Compose email */}
       {joinDraft && (
         <Card>
-          <CardHeader title="Compose join email" subtitle="Review and edit before sending. Sent from dtiincubator@gmail.com." />
+          <CardHeader
+            title="Compose join email"
+            subtitle="Review and edit before sending. Sent from dtiincubator@gmail.com."
+          />
           <form onSubmit={onSendJoin} className="mt-4 grid gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="To" value={joinDraft.recipient} onChange={(v) => onDraftChange({ ...joinDraft, recipient: v })} required />
-              <Field label="Subject" value={joinDraft.subject} onChange={(v) => onDraftChange({ ...joinDraft, subject: v })} required />
+              <Field
+                label="To"
+                value={joinDraft.recipient}
+                onChange={(v) => onDraftChange({ ...joinDraft, recipient: v })}
+                required
+              />
+              <Field
+                label="Subject"
+                value={joinDraft.subject}
+                onChange={(v) => onDraftChange({ ...joinDraft, subject: v })}
+                required
+              />
             </div>
             <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)]">
               Body
               <textarea
                 value={joinDraft.body}
-                onChange={(e) => onDraftChange({ ...joinDraft, body: e.target.value })}
+                onChange={(e) =>
+                  onDraftChange({ ...joinDraft, body: e.target.value })
+                }
                 rows={5}
                 className={input()}
               />
             </label>
             <div className="flex gap-2">
               <Btn primary>Send</Btn>
-              <Btn type="button" onClick={() => onDraftChange(null)}>Cancel</Btn>
+              <Btn type="button" onClick={() => onDraftChange(null)}>
+                Cancel
+              </Btn>
             </div>
           </form>
         </Card>
@@ -1069,11 +1450,15 @@ function JoinTab({
       {/* Pending */}
       {pending.length === 0 ? (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[length:var(--font-size-body2)] text-green-800">
-          All sources are joined. Check <strong>Ingest</strong> for confirmations.
+          All sources are joined. Check <strong>Ingest</strong> for
+          confirmations.
         </div>
       ) : (
         <Card>
-          <CardHeader title={`${pending.length} source${pending.length !== 1 ? "s" : ""} to join`} subtitle="Prepare a join email, review it, then send." />
+          <CardHeader
+            title={`${pending.length} source${pending.length !== 1 ? "s" : ""} to join`}
+            subtitle="Prepare a join email, review it, then send."
+          />
           <div className="mt-4 grid gap-3">
             {pending.map((l) => (
               <JoinRow
@@ -1094,11 +1479,18 @@ function JoinTab({
           <CardHeader title="Recent join emails sent" />
           <div className="mt-3 grid gap-2">
             {joinAttempts.map((a) => (
-              <div key={a._id} className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]">
+              <div
+                key={a._id}
+                className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
                 <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <span className="font-semibold truncate">{a.recipient}</span>
-                <span className="text-[color:var(--color-text-muted)] truncate">{a.subject}</span>
-                <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">{fmtDate(a.createdAt)}</span>
+                <span className="truncate font-semibold">{a.recipient}</span>
+                <span className="truncate text-[color:var(--color-text-muted)]">
+                  {a.subject}
+                </span>
+                <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
+                  {fmtDate(a.createdAt)}
+                </span>
               </div>
             ))}
           </div>
@@ -1108,16 +1500,25 @@ function JoinTab({
       {/* Joined archive */}
       {joined.length > 0 && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
-          <summary className="cursor-pointer font-semibold text-[length:var(--font-size-body2)]">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
             Joined sources ({joined.length})
           </summary>
           <div className="mt-3 grid gap-2">
             {joined.map((l) => (
-              <div key={l._id} className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]">
+              <div
+                key={l._id}
+                className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
                 <StatusDot status="green" />
                 <span className="font-semibold">{l.name}</span>
-                <span className="text-[color:var(--color-text-muted)]">{l.listEmail}</span>
-                {l.lastReceivedAt && <span className="ml-auto text-[color:var(--color-text-muted)]">last: {fmtDate(l.lastReceivedAt)}</span>}
+                <span className="text-[color:var(--color-text-muted)]">
+                  {l.listEmail}
+                </span>
+                {l.lastReceivedAt && (
+                  <span className="ml-auto text-[color:var(--color-text-muted)]">
+                    last: {fmtDate(l.lastReceivedAt)}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -1142,26 +1543,31 @@ function JoinRow({
   const join = getEffectiveJoin(listserv);
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">{listserv.name}</span>
-            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">{listserv.listEmail}</span>
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              {listserv.listEmail}
+            </span>
             <Tag>{listserv.joinStatus ?? "not started"}</Tag>
           </div>
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            {join.joinStrategy.replace(/_/g, " ")} · {join.joinConfidence}% confident
+            {join.joinStrategy.replace(/_/g, " ")} · {join.joinConfidence}%
+            confident
             {join.joinRecipient && ` · sends to ${join.joinRecipient}`}
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <Btn primary onClick={onPrepare}>Prepare email</Btn>
+        <div className="flex flex-wrap gap-2">
+          <Btn primary onClick={onPrepare}>
+            Prepare email
+          </Btn>
           <Btn onClick={() => setOpen(!open)}>Settings</Btn>
         </div>
       </div>
       {open && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
             Join method
             <select
@@ -1170,7 +1576,9 @@ function JoinRow({
               className={input()}
             >
               {JOIN_STRATEGIES.map((s) => (
-                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                <option key={s} value={s}>
+                  {s.replace(/_/g, " ")}
+                </option>
               ))}
             </select>
           </label>
@@ -1178,16 +1586,22 @@ function JoinRow({
             Source status
             <select
               value={listserv.status}
-              onChange={(e) => onStatusChange(e.target.value as Listserv["status"])}
+              onChange={(e) =>
+                onStatusChange(e.target.value as Listserv["status"])
+              }
               className={input()}
             >
               {(["joining", "active", "paused", "failed"] as const).map((s) => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>
+                  {s}
+                </option>
               ))}
             </select>
           </label>
           {join.joinInstructions && (
-            <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">{join.joinInstructions}</p>
+            <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              {join.joinInstructions}
+            </p>
           )}
         </div>
       )}
@@ -1233,31 +1647,69 @@ function IngestTab({
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-[length:var(--font-size-sub2)]">Gmail Ingestion</h2>
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              Gmail Ingestion
+            </h2>
             <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
-              Polls dtiincubator@gmail.com every 10 minutes. Stores raw messages and matches them to sources.
+              Polls dtiincubator@gmail.com every 10 minutes. Stores raw messages
+              and matches them to sources.
             </p>
           </div>
           <div className="flex items-center gap-4">
             {state && (
               <div className="flex items-center gap-2 text-[length:var(--font-size-body2)]">
-                <StatusDot status={state.status === "idle" ? "green" : state.status === "running" ? "yellow" : "red"} />
+                <StatusDot
+                  status={
+                    state.status === "idle"
+                      ? "green"
+                      : state.status === "running"
+                        ? "yellow"
+                        : "red"
+                  }
+                />
                 <span>{state.status}</span>
-                {state.lastSucceededAt && <span className="text-[color:var(--color-text-muted)]">· {fmtDate(state.lastSucceededAt)}</span>}
+                {state.lastSucceededAt && (
+                  <span className="text-[color:var(--color-text-muted)]">
+                    · {fmtDate(state.lastSucceededAt)}
+                  </span>
+                )}
               </div>
             )}
-            <Btn primary onClick={onRunNow}>Run now</Btn>
+            <Btn primary onClick={onRunNow}>
+              Run now
+            </Btn>
           </div>
         </div>
-        {state?.lastError && <p className="mt-3 text-[length:var(--font-size-body2)] text-red-600">{state.lastError}</p>}
+        {state?.lastError && (
+          <p className="mt-3 text-[length:var(--font-size-body2)] text-red-600">
+            {state.lastError}
+          </p>
+        )}
         {runs.length > 0 && (
           <div className="mt-4 grid gap-1">
             {runs.slice(0, 6).map((run) => (
-              <div key={run._id} className="flex items-center gap-3 text-[length:var(--font-size-body3)]">
-                <StatusDot status={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "yellow"} />
-                <span className="text-[color:var(--color-text-muted)]">{fmtDate(run.startedAt)}</span>
-                <span>{run.trigger} · stored {run.stored}</span>
-                {run.error && <span className="text-red-600 truncate">{run.error}</span>}
+              <div
+                key={run._id}
+                className="flex items-center gap-3 text-[length:var(--font-size-body3)]"
+              >
+                <StatusDot
+                  status={
+                    run.status === "completed"
+                      ? "green"
+                      : run.status === "failed"
+                        ? "red"
+                        : "yellow"
+                  }
+                />
+                <span className="text-[color:var(--color-text-muted)]">
+                  {fmtDate(run.startedAt)}
+                </span>
+                <span>
+                  {run.trigger} · stored {run.stored}
+                </span>
+                {run.error && (
+                  <span className="truncate text-red-600">{run.error}</span>
+                )}
               </div>
             ))}
           </div>
@@ -1268,25 +1720,38 @@ function IngestTab({
       {(pending.length > 0 || cleared.length > 0) && (
         <Card>
           <div className="flex items-center justify-between">
-            <CardHeader title="Confirmation queue" subtitle="Lyris emails asking you to confirm a subscription." />
-            {pending.length > 0 && <Tag variant="amber">{pending.length} pending</Tag>}
+            <CardHeader
+              title="Confirmation queue"
+              subtitle="Lyris emails asking you to confirm a subscription."
+            />
+            {pending.length > 0 && (
+              <Tag variant="amber">{pending.length} pending</Tag>
+            )}
           </div>
           {pending.length === 0 ? (
-            <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">No pending confirmations.</p>
+            <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+              No pending confirmations.
+            </p>
           ) : (
             <div className="mt-4 grid gap-2">
               {pending.map((c) => (
-                <ConfirmationCard key={c.id} confirmation={c} onClear={onClearConfirmation} />
+                <ConfirmationCard
+                  key={c.id}
+                  confirmation={c}
+                  onClear={onClearConfirmation}
+                />
               ))}
             </div>
           )}
           {cleared.length > 0 && (
             <details className="mt-4">
-              <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] font-semibold">
+              <summary className="cursor-pointer text-[length:var(--font-size-body3)] font-semibold text-[color:var(--color-text-muted)]">
                 {cleared.length} cleared
               </summary>
               <div className="mt-2 grid gap-2">
-                {cleared.map((c) => <ConfirmationCard key={c.id} confirmation={c} cleared />)}
+                {cleared.map((c) => (
+                  <ConfirmationCard key={c.id} confirmation={c} cleared />
+                ))}
               </div>
             </details>
           )}
@@ -1300,17 +1765,31 @@ function IngestTab({
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse text-[length:var(--font-size-body2)]">
               <thead>
-                <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)] text-[length:var(--font-size-body3)]">
-                  <Th>Received</Th><Th>Source</Th><Th>Subject</Th><Th>Status</Th>
+                <tr className="border-b border-[var(--color-border)] text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                  <Th>Received</Th>
+                  <Th>Source</Th>
+                  <Th>Subject</Th>
+                  <Th>Status</Th>
                 </tr>
               </thead>
               <tbody>
                 {messages.map((m) => (
-                  <tr key={m._id} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-neutral-100)]">
+                  <tr
+                    key={m._id}
+                    className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-neutral-100)]"
+                  >
                     <Td>{fmtDate(m.receivedAt)}</Td>
-                    <Td>{m.listservId ? listservById.get(m.listservId)?.name ?? "Matched" : <span className="text-amber-700">Unmatched</span>}</Td>
+                    <Td>
+                      {m.listservId ? (
+                        (listservById.get(m.listservId)?.name ?? "Matched")
+                      ) : (
+                        <span className="text-amber-700">Unmatched</span>
+                      )}
+                    </Td>
                     <Td>{m.subject || "(no subject)"}</Td>
-                    <Td><Tag>{m.processingStatus}</Tag></Td>
+                    <Td>
+                      <Tag>{m.processingStatus}</Tag>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -1332,15 +1811,18 @@ function ConfirmationCard({
   onClear?: (id: Id<"listservMessages">) => void;
 }) {
   return (
-    <div className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${cleared ? "border-[var(--color-border)] bg-[var(--color-neutral-100)]" : "border-amber-200 bg-amber-50"}`}>
-      <div className="flex-1 min-w-0">
+    <div
+      className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${cleared ? "border-[var(--color-border)] bg-[var(--color-neutral-100)]" : "border-amber-200 bg-amber-50"}`}
+    >
+      <div className="min-w-0 flex-1">
         <div className="font-semibold">{confirmation.listservName}</div>
         <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
           {confirmation.sender} · {fmtDate(confirmation.receivedAt)}
-          {confirmation.clearedAt && ` · cleared ${fmtDate(confirmation.clearedAt)}`}
+          {confirmation.clearedAt &&
+            ` · cleared ${fmtDate(confirmation.clearedAt)}`}
         </div>
       </div>
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex flex-wrap gap-2">
         {confirmation.link && (
           <a
             href={confirmation.link}
@@ -1392,33 +1874,56 @@ function PublishTab({
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-[length:var(--font-size-sub2)]">AI Parser</h2>
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              AI Parser
+            </h2>
             <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
-              Extracts draft feed items from assigned messages using AI. All items default to draft — you publish them.
+              Extracts draft feed items from assigned messages using AI. All
+              items default to draft — you publish them.
             </p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex gap-4 text-center">
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold">{readyCount}</div>
-                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">ready</div>
+                <div className="text-[length:var(--font-size-sub2)] font-bold">
+                  {readyCount}
+                </div>
+                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                  ready
+                </div>
               </div>
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold text-amber-700">{needsAssignment}</div>
-                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">needs assignment</div>
+                <div className="text-[length:var(--font-size-sub2)] font-bold text-amber-700">
+                  {needsAssignment}
+                </div>
+                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                  needs assignment
+                </div>
               </div>
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold">{drafts.length}</div>
-                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">drafts</div>
+                <div className="text-[length:var(--font-size-sub2)] font-bold">
+                  {drafts.length}
+                </div>
+                <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                  drafts
+                </div>
               </div>
             </div>
-            <Btn primary disabled={readyCount === 0} onClick={onRunParse}>Run parser</Btn>
+            <Btn primary disabled={readyCount === 0} onClick={onRunParse}>
+              Run parser
+            </Btn>
           </div>
         </div>
         {blocked && (
           <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[length:var(--font-size-body2)] text-amber-800">
-            <span>{needsAssignment} message{needsAssignment !== 1 ? "s" : ""} can't be parsed — assign their senders to organizations first.</span>
-            <button onClick={onGoToSources} className="ml-auto shrink-0 font-semibold underline">
+            <span>
+              {needsAssignment} message{needsAssignment !== 1 ? "s" : ""} can't
+              be parsed — assign their senders to organizations first.
+            </span>
+            <button
+              onClick={onGoToSources}
+              className="ml-auto shrink-0 font-semibold underline"
+            >
               Go to Sources →
             </button>
           </div>
@@ -1426,11 +1931,31 @@ function PublishTab({
         {runs.length > 0 && (
           <div className="mt-4 grid gap-1">
             {runs.slice(0, 5).map((run) => (
-              <div key={run._id} className="flex items-center gap-3 text-[length:var(--font-size-body3)]">
-                <StatusDot status={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "yellow"} />
-                <span className="text-[color:var(--color-text-muted)]">{fmtDate(run.startedAt)}</span>
-                <span>{run.trigger}{run.model ? ` · ${run.model}` : ""} · scanned {run.messagesScanned}, created {run.eventsCreated}, ignored {run.messagesIgnored}</span>
-                {run.error && <span className="text-red-600 truncate">{run.error}</span>}
+              <div
+                key={run._id}
+                className="flex items-center gap-3 text-[length:var(--font-size-body3)]"
+              >
+                <StatusDot
+                  status={
+                    run.status === "completed"
+                      ? "green"
+                      : run.status === "failed"
+                        ? "red"
+                        : "yellow"
+                  }
+                />
+                <span className="text-[color:var(--color-text-muted)]">
+                  {fmtDate(run.startedAt)}
+                </span>
+                <span>
+                  {run.trigger}
+                  {run.model ? ` · ${run.model}` : ""} · scanned{" "}
+                  {run.messagesScanned}, created {run.eventsCreated}, ignored{" "}
+                  {run.messagesIgnored}
+                </span>
+                {run.error && (
+                  <span className="truncate text-red-600">{run.error}</span>
+                )}
               </div>
             ))}
           </div>
@@ -1455,7 +1980,11 @@ function PublishTab({
                 event={event}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
-                onReparse={event.sourceMessageId ? () => onReparse(event.sourceMessageId!) : undefined}
+                onReparse={
+                  event.sourceMessageId
+                    ? () => onReparse(event.sourceMessageId!)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -1465,13 +1994,23 @@ function PublishTab({
       {/* Failed */}
       {failedMessages.length > 0 && (
         <Card>
-          <CardHeader title={`${failedMessages.length} failed message${failedMessages.length !== 1 ? "s" : ""}`} subtitle="Parser errors." />
+          <CardHeader
+            title={`${failedMessages.length} failed message${failedMessages.length !== 1 ? "s" : ""}`}
+            subtitle="Parser errors."
+          />
           <div className="mt-3 grid gap-2">
             {failedMessages.map((m) => (
-              <div key={m._id} className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[length:var(--font-size-body2)]">
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold truncate">{m.subject || "(no subject)"}</div>
-                  <div className="text-[length:var(--font-size-body3)] text-red-700">{m.parseError ?? m.senderEmail}</div>
+              <div
+                key={m._id}
+                className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">
+                    {m.subject || "(no subject)"}
+                  </div>
+                  <div className="text-[length:var(--font-size-body3)] text-red-700">
+                    {m.parseError ?? m.senderEmail}
+                  </div>
                 </div>
                 <Btn onClick={() => onReparse(m._id)}>Retry</Btn>
               </div>
@@ -1498,37 +2037,55 @@ function DraftCard({
   const hasWarnings = (event.parseWarnings ?? []).length > 0;
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">{event.title}</span>
             <Tag>{event.eventType}</Tag>
             <ConfidenceBadge value={event.parseConfidence ?? 0} />
           </div>
-          <p className="mt-1 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)] line-clamp-2">
+          <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
             {event.aiDescription || event.description}
           </p>
           <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {event.listserv}
-            {event.dates && event.dates.length > 0 && ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
-            {hasWarnings && <span className="ml-2 text-amber-700">⚠ {(event.parseWarnings ?? []).join("; ")}</span>}
+            {event.dates &&
+              event.dates.length > 0 &&
+              ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
+            {hasWarnings && (
+              <span className="ml-2 text-amber-700">
+                ⚠ {(event.parseWarnings ?? []).join("; ")}
+              </span>
+            )}
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap shrink-0">
-          <Btn primary onClick={onPublish}>Publish</Btn>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Btn primary onClick={onPublish}>
+            Publish
+          </Btn>
           <Btn onClick={onHide}>Hide</Btn>
           {onReparse && <Btn onClick={onReparse}>Reparse</Btn>}
-          <Btn onClick={() => setExpanded(!expanded)}>{expanded ? "Less" : "More"}</Btn>
+          <Btn onClick={() => setExpanded(!expanded)}>
+            {expanded ? "Less" : "More"}
+          </Btn>
         </div>
       </div>
       {expanded && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 text-[length:var(--font-size-body2)]">
-          <p className="text-[color:var(--color-neutral-700)]">{event.description}</p>
+          <p className="text-[color:var(--color-neutral-700)]">
+            {event.description}
+          </p>
           {event.links && event.links.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {event.links.map((link, i) => (
-                <a key={i} href={link.url} target="_blank" rel="noreferrer" className="text-[color:var(--color-link)] underline text-[length:var(--font-size-body3)]">
+                <a
+                  key={i}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[length:var(--font-size-body3)] text-[color:var(--color-link)] underline"
+                >
                   {link.label ?? link.type}
                 </a>
               ))}
@@ -1547,9 +2104,17 @@ function DraftCard({
 
 // ─── Primitive components ─────────────────────────────────────────────────────
 
-function Card({ children, className }: { children: ReactNode; className?: string }) {
+function Card({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 ${className ?? ""}`}>
+    <div
+      className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 ${className ?? ""}`}
+    >
       {children}
     </div>
   );
@@ -1558,8 +2123,14 @@ function Card({ children, className }: { children: ReactNode; className?: string
 function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div>
-      <h2 className="font-semibold text-[length:var(--font-size-sub2)]">{title}</h2>
-      {subtitle && <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">{subtitle}</p>}
+      <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+        {title}
+      </h2>
+      {subtitle && (
+        <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 }
@@ -1570,13 +2141,17 @@ function Btn({
   danger,
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { primary?: boolean; danger?: boolean }) {
-  const base = "inline-flex items-center rounded-lg px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40";
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  primary?: boolean;
+  danger?: boolean;
+}) {
+  const base =
+    "inline-flex items-center rounded-lg px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40";
   const variant = primary
     ? "bg-[var(--color-primary-700)] text-white hover:bg-[var(--color-primary-hover)]"
     : danger
-    ? "border border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
-    : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]";
+      ? "border border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+      : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]";
   return (
     <button {...props} className={`${base} ${variant} ${className ?? ""}`}>
       {children}
@@ -1618,39 +2193,64 @@ function Tag({
   children: ReactNode;
   variant?: "default" | "amber";
 }) {
-  const cls = variant === "amber"
-    ? "bg-amber-100 text-amber-800"
-    : "bg-[var(--color-surface-raised)] text-[color:var(--color-neutral-700)]";
+  const cls =
+    variant === "amber"
+      ? "bg-amber-100 text-amber-800"
+      : "bg-[var(--color-surface-raised)] text-[color:var(--color-neutral-700)]";
   return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${cls}`}>
+    <span
+      className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${cls}`}
+    >
       {typeof children === "string" ? children.replace(/_/g, " ") : children}
     </span>
   );
 }
 
-function StatusDot({ status }: { status: "green" | "yellow" | "red" | "grey" }) {
+function StatusDot({
+  status,
+}: {
+  status: "green" | "yellow" | "red" | "grey";
+}) {
   const color =
-    status === "green" ? "bg-green-500"
-    : status === "yellow" ? "bg-amber-400"
-    : status === "red" ? "bg-red-500"
-    : "bg-[var(--color-neutral-400)]";
-  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
+    status === "green"
+      ? "bg-green-500"
+      : status === "yellow"
+        ? "bg-amber-400"
+        : status === "red"
+          ? "bg-red-500"
+          : "bg-[var(--color-neutral-400)]";
+  return (
+    <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />
+  );
 }
 
 function GmailDot({ status }: { status: GmailStatus | undefined }) {
   if (status === undefined) return null;
-  const s = status === null ? "grey" : status.status === "connected" ? "green" : "red";
+  const s =
+    status === null ? "grey" : status.status === "connected" ? "green" : "red";
   const label = status === null ? "Not connected" : status.email;
   return (
     <span className="flex items-center gap-1.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-      <StatusDot status={s} />{label}
+      <StatusDot status={s} />
+      {label}
     </span>
   );
 }
 
 function ConfidenceBadge({ value }: { value: number }) {
-  const color = value >= 80 ? "bg-green-100 text-green-800" : value >= 50 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700";
-  return <span className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${color}`}>{value}%</span>;
+  const color =
+    value >= 80
+      ? "bg-green-100 text-green-800"
+      : value >= 50
+        ? "bg-amber-100 text-amber-800"
+        : "bg-red-100 text-red-700";
+  return (
+    <span
+      className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${color}`}
+    >
+      {value}%
+    </span>
+  );
 }
 
 function Th({ children }: { children: ReactNode }) {
@@ -1669,7 +2269,12 @@ function input() {
 
 function fmtDate(timestamp: number | undefined) {
   if (!timestamp) return "—";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 function getConvexSiteUrl() {
@@ -1682,12 +2287,22 @@ function getConvexSiteUrl() {
 
 function suggestFromEmail(email: string) {
   const [local = "", domain = ""] = email.toLowerCase().split("@");
-  const cleaned = local.replace(/^owner-/, "").replace(/-request$/, "").replace(/-l$/, "");
-  const name = cleaned
-    .split(/[-_.]+/)
-    .filter(Boolean)
-    .map((p) => (p.length <= 4 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
-    .join(" ") || domain.split(".")[0] || "Unknown";
+  const cleaned = local
+    .replace(/^owner-/, "")
+    .replace(/-request$/, "")
+    .replace(/-l$/, "");
+  const name =
+    cleaned
+      .split(/[-_.]+/)
+      .filter(Boolean)
+      .map((p) =>
+        p.length <= 4
+          ? p.toUpperCase()
+          : p.charAt(0).toUpperCase() + p.slice(1),
+      )
+      .join(" ") ||
+    domain.split(".")[0] ||
+    "Unknown";
   return { organizationName: name };
 }
 
@@ -1703,7 +2318,10 @@ function defaultJoinDraft(listserv: Listserv): JoinDraft {
 
 function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
   const auto = detectJoinDefaults(listserv);
-  if (auto.joinStrategy === "cornell_lyris" && (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")) {
+  if (
+    auto.joinStrategy === "cornell_lyris" &&
+    (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")
+  ) {
     return auto;
   }
   return {
@@ -1714,14 +2332,19 @@ function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
     joinBody: listserv.joinBody ?? auto.joinBody,
     joinInstructions: listserv.joinInstructions ?? auto.joinInstructions,
     joinConfidence: listserv.joinConfidence ?? auto.joinConfidence,
-    joinDetectionReasons: listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
+    joinDetectionReasons:
+      listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
   };
 }
 
 function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
   const email = listserv.listEmail.toLowerCase();
   const [local = "", domain = ""] = email.split("@");
-  if (["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(domain)) {
+  if (
+    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
+      domain,
+    )
+  ) {
     const listName = local.replace(/^owner-/, "");
     return {
       joinStrategy: "cornell_lyris",
@@ -1729,9 +2352,14 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
       ownerRecipient: `owner-${listName}@cornell.edu`,
       joinSubject: "join",
       joinBody: "",
-      joinInstructions: "Cornell list: send subject 'join' to listname-request@cornell.edu with blank body.",
+      joinInstructions:
+        "Cornell list: send subject 'join' to listname-request@cornell.edu with blank body.",
       joinConfidence: listName.endsWith("-l") ? 95 : 75,
-      joinDetectionReasons: [listName.endsWith("-l") ? "Cornell Lyris list address" : "Cornell list domain"],
+      joinDetectionReasons: [
+        listName.endsWith("-l")
+          ? "Cornell Lyris list address"
+          : "Cornell list domain",
+      ],
     };
   }
   return {
@@ -1740,7 +2368,9 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
     ownerRecipient: listserv.ownerRecipient,
     joinSubject: listserv.joinSubject,
     joinBody: listserv.joinBody,
-    joinInstructions: listserv.joinInstructions ?? "No reliable join flow detected. Review manually.",
+    joinInstructions:
+      listserv.joinInstructions ??
+      "No reliable join flow detected. Review manually.",
     joinConfidence: listserv.joinConfidence ?? 20,
     joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };
@@ -1750,10 +2380,14 @@ function toConfirmationItem(
   mail: ConfirmationMessage,
   listservById: Map<Id<"listservs">, Listserv>,
 ): ConfirmationItem | null {
-  const link = extractConfirmationLink(mail.bodyText) ?? extractConfirmationLink(mail.bodyHtml);
+  const link =
+    extractConfirmationLink(mail.bodyText) ??
+    extractConfirmationLink(mail.bodyHtml);
   return {
     id: mail._id,
-    listservName: mail.listservId ? listservById.get(mail.listservId)?.name ?? "Matched list" : inferListNameFromMessage(mail),
+    listservName: mail.listservId
+      ? (listservById.get(mail.listservId)?.name ?? "Matched list")
+      : inferListNameFromMessage(mail),
     subject: mail.subject,
     sender: mail.senderEmail || mail.sender,
     receivedAt: mail.receivedAt,
@@ -1762,20 +2396,33 @@ function toConfirmationItem(
   };
 }
 
-function confirmationMatchesListserv(mail: ConfirmationMessage, listserv: Listserv) {
+function confirmationMatchesListserv(
+  mail: ConfirmationMessage,
+  listserv: Listserv,
+) {
   if (mail.listservId === listserv._id) return true;
-  const searchable = `${mail.subject}\n${mail.bodyText}\n${mail.senderEmail}\n${mail.to.join(" ")}\n${mail.cc.join(" ")}`.toLowerCase();
-  const addresses = [listserv.listEmail, ...listserv.senderEmails].map((v) => v.toLowerCase());
+  const searchable =
+    `${mail.subject}\n${mail.bodyText}\n${mail.senderEmail}\n${mail.to.join(" ")}\n${mail.cc.join(" ")}`.toLowerCase();
+  const addresses = [listserv.listEmail, ...listserv.senderEmails].map((v) =>
+    v.toLowerCase(),
+  );
   const localParts = addresses.map((v) => v.split("@")[0]).filter(Boolean);
-  return addresses.some((a) => searchable.includes(a)) || localParts.some((lp) => searchable.includes(lp));
+  return (
+    addresses.some((a) => searchable.includes(a)) ||
+    localParts.some((lp) => searchable.includes(lp))
+  );
 }
 
 function extractConfirmationLink(value: string) {
-  const match = value.match(/https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i);
+  const match = value.match(
+    /https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i,
+  );
   return match?.[0].replace(/&amp;/g, "&");
 }
 
 function inferListNameFromMessage(mail: ConfirmationMessage) {
-  const match = `${mail.subject}\n${mail.bodyText}`.match(/(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i);
+  const match = `${mail.subject}\n${mail.bodyText}`.match(
+    /(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i,
+  );
   return match?.[1] ?? "Possible confirmation";
 }

@@ -1,6 +1,12 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { httpAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  httpAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -12,7 +18,8 @@ const GMAIL_SCOPES = [
 ];
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+const GMAIL_PROFILE_URL =
+  "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 
 type GoogleTokenResponse = {
   access_token?: string;
@@ -75,7 +82,8 @@ export const consumeAdminNonce = internalMutation({
       .query("gmailOAuthStates")
       .withIndex("by_state", (q) => q.eq("state", args.nonce))
       .unique();
-    if (!row || !row.adminNonce || row.usedAt || row.expiresAt < Date.now()) return false;
+    if (!row || !row.adminNonce || row.usedAt || row.expiresAt < Date.now())
+      return false;
     await ctx.db.patch(row._id, { usedAt: Date.now() });
     return true;
   },
@@ -89,8 +97,12 @@ export const start = httpAction(async (ctx, request) => {
     // compatibility, but the frontend should always use the nonce path.
     const nonce = url.searchParams.get("nonce");
     if (nonce) {
-      const valid = await ctx.runMutation(internal.gmailOAuth.consumeAdminNonce, { nonce });
-      if (!valid) return textResponse("Nonce is invalid, already used, or expired.", 403);
+      const valid = await ctx.runMutation(
+        internal.gmailOAuth.consumeAdminNonce,
+        { nonce },
+      );
+      if (!valid)
+        return textResponse("Nonce is invalid, already used, or expired.", 403);
     } else {
       const token = url.searchParams.get("token") ?? "";
       requireAdminToken(token);
@@ -122,19 +134,36 @@ export const callback = httpAction(async (ctx, request) => {
   const code = url.searchParams.get("code") ?? "";
   const oauthError = url.searchParams.get("error");
 
-  if (oauthError) return htmlResponse(renderResultPage("Gmail connection failed", oauthError), 400);
-  if (!state || !code) return htmlResponse(renderResultPage("Gmail connection failed", "Missing OAuth state or code."), 400);
+  if (oauthError)
+    return htmlResponse(
+      renderResultPage("Gmail connection failed", oauthError),
+      400,
+    );
+  if (!state || !code)
+    return htmlResponse(
+      renderResultPage(
+        "Gmail connection failed",
+        "Missing OAuth state or code.",
+      ),
+      400,
+    );
 
   try {
-    const stateRow = await ctx.runQuery(internal.gmailOAuth.getValidOAuthState, { state });
+    const stateRow = await ctx.runQuery(
+      internal.gmailOAuth.getValidOAuthState,
+      { state },
+    );
     if (!stateRow) throw new Error("OAuth state is invalid or expired.");
 
     const redirectUri = getRedirectUri(request);
     const tokenResponse = await exchangeCodeForTokens(code, redirectUri);
     if (!tokenResponse.refresh_token) {
-      throw new Error("Google did not return a refresh token. Try reconnecting and approving consent again.");
+      throw new Error(
+        "Google did not return a refresh token. Try reconnecting and approving consent again.",
+      );
     }
-    if (!tokenResponse.access_token) throw new Error("Google did not return an access token.");
+    if (!tokenResponse.access_token)
+      throw new Error("Google did not return an access token.");
 
     const profile = await getGmailProfile(tokenResponse.access_token);
     const email = profile.emailAddress?.toLowerCase();
@@ -147,9 +176,17 @@ export const callback = httpAction(async (ctx, request) => {
       scopes: tokenResponse.scope?.split(" ") ?? GMAIL_SCOPES,
     });
 
-    return htmlResponse(renderResultPage("Gmail connected", `Connected ${email}. You can close this tab.`));
+    return htmlResponse(
+      renderResultPage(
+        "Gmail connected",
+        `Connected ${email}. You can close this tab.`,
+      ),
+    );
   } catch (error) {
-    return htmlResponse(renderResultPage("Gmail connection failed", formatError(error)), 400);
+    return htmlResponse(
+      renderResultPage("Gmail connection failed", formatError(error)),
+      400,
+    );
   }
 });
 
@@ -247,7 +284,9 @@ async function exchangeCodeForTokens(code: string, redirectUri: string) {
   const body = (await response.json()) as GoogleTokenResponse;
 
   if (!response.ok) {
-    throw new Error(body.error_description ?? body.error ?? "Google token exchange failed.");
+    throw new Error(
+      body.error_description ?? body.error ?? "Google token exchange failed.",
+    );
   }
 
   return body;
@@ -257,7 +296,8 @@ async function getGmailProfile(accessToken: string) {
   const response = await fetch(GMAIL_PROFILE_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) throw new Error(`Gmail profile request failed: ${await response.text()}`);
+  if (!response.ok)
+    throw new Error(`Gmail profile request failed: ${await response.text()}`);
   return (await response.json()) as GmailProfileResponse;
 }
 
@@ -268,11 +308,17 @@ function getRequiredEnv(name: string) {
 }
 
 function textResponse(text: string, status = 200) {
-  return new Response(text, { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(text, {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
 
 function htmlResponse(html: string, status = 200) {
-  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(html, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
 }
 
 function renderResultPage(title: string, message: string) {

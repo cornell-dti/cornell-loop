@@ -21,15 +21,26 @@ export const overview = query({
     const [organizations, listservs, messages] = await Promise.all([
       ctx.db.query("organizations").order("asc").collect(),
       ctx.db.query("listservs").order("asc").collect(),
-      ctx.db.query("listservMessages").withIndex("by_received_at").order("desc").take(500),
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_received_at")
+        .order("desc")
+        .take(500),
     ]);
 
     const sourceEmails = new Set(
-      listservs.flatMap((source) => [source.listEmail, ...source.senderEmails]).map((email) => email.toLowerCase()),
+      listservs
+        .flatMap((source) => [source.listEmail, ...source.senderEmails])
+        .map((email) => email.toLowerCase()),
     );
     const unassignedBySender = new Map<
       string,
-      { senderEmail: string; count: number; latestReceivedAt: number; sampleSubjects: string[] }
+      {
+        senderEmail: string;
+        count: number;
+        latestReceivedAt: number;
+        sampleSubjects: string[];
+      }
     >();
 
     for (const message of messages) {
@@ -39,7 +50,10 @@ export const overview = query({
       const existing = unassignedBySender.get(senderEmail);
       if (existing) {
         existing.count += 1;
-        existing.latestReceivedAt = Math.max(existing.latestReceivedAt, message.receivedAt);
+        existing.latestReceivedAt = Math.max(
+          existing.latestReceivedAt,
+          message.receivedAt,
+        );
         if (message.subject && existing.sampleSubjects.length < 3) {
           existing.sampleSubjects.push(message.subject);
         }
@@ -54,8 +68,13 @@ export const overview = query({
     }
 
     const unassignedSenders = [...unassignedBySender.values()]
-      .map((sender) => ({ ...sender, suggestion: suggestSource(sender.senderEmail) }))
-      .sort((a, b) => b.count - a.count || b.latestReceivedAt - a.latestReceivedAt);
+      .map((sender) => ({
+        ...sender,
+        suggestion: suggestSource(sender.senderEmail),
+      }))
+      .sort(
+        (a, b) => b.count - a.count || b.latestReceivedAt - a.latestReceivedAt,
+      );
 
     return { organizations, listservs, unassignedSenders };
   },
@@ -131,11 +150,14 @@ export const assignSender = mutation({
 
     const senderEmail = normalizeEmail(args.senderEmail);
     const suggestion = suggestSource(senderEmail);
-    const organizationId = args.organizationId ?? await getOrCreateOrganization(ctx, {
-      name: cleanOptional(args.organizationName) ?? suggestion.organizationName,
-      type: args.organizationType ?? suggestion.organizationType,
-      tags: [],
-    });
+    const organizationId =
+      args.organizationId ??
+      (await getOrCreateOrganization(ctx, {
+        name:
+          cleanOptional(args.organizationName) ?? suggestion.organizationName,
+        type: args.organizationType ?? suggestion.organizationType,
+        tags: [],
+      }));
 
     const existing = await ctx.db
       .query("listservs")
@@ -189,7 +211,10 @@ export const ignoreSender = mutation({
       .unique();
 
     if (existing) {
-      await ctx.db.patch(existing._id, { status: "paused", updatedAt: Date.now() });
+      await ctx.db.patch(existing._id, {
+        status: "paused",
+        updatedAt: Date.now(),
+      });
       return;
     }
 
@@ -220,7 +245,10 @@ export const unignoreSource = mutation({
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    await ctx.db.patch(args.listservId, { status: "joining", updatedAt: Date.now() });
+    await ctx.db.patch(args.listservId, {
+      status: "joining",
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -251,7 +279,13 @@ async function getOrCreateOrganization(
   ctx: MutationCtx,
   params: {
     name: string;
-    type: "club" | "department" | "official" | "publication" | "company" | "other";
+    type:
+      | "club"
+      | "department"
+      | "official"
+      | "publication"
+      | "company"
+      | "other";
     description?: string;
     website?: string;
     tags: string[];
@@ -283,10 +317,17 @@ async function getOrCreateOrganization(
 
 function suggestSource(senderEmail: string) {
   const [local = "", domain = ""] = senderEmail.toLowerCase().split("@");
-  const cleanedLocal = local.replace(/^owner-/, "").replace(/-request$/, "").replace(/-l$/, "");
+  const cleanedLocal = local
+    .replace(/^owner-/, "")
+    .replace(/-request$/, "")
+    .replace(/-l$/, "");
   const organizationName = inferName(cleanedLocal || domain);
 
-  if (["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(domain)) {
+  if (
+    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
+      domain,
+    )
+  ) {
     return {
       organizationName,
       organizationType: "club" as const,
@@ -304,7 +345,11 @@ function suggestSource(senderEmail: string) {
     };
   }
 
-  if (/substack|beehiiv|mailchimp|mailerlite|ccsend|newsletter/.test(domain + local)) {
+  if (
+    /substack|beehiiv|mailchimp|mailerlite|ccsend|newsletter/.test(
+      domain + local,
+    )
+  ) {
     return {
       organizationName,
       organizationType: "publication" as const,
@@ -315,22 +360,34 @@ function suggestSource(senderEmail: string) {
 
   return {
     organizationName,
-    organizationType: domain.endsWith("cornell.edu") ? "official" as const : "other" as const,
+    organizationType: domain.endsWith("cornell.edu")
+      ? ("official" as const)
+      : ("other" as const),
     sourceName: `${organizationName} Email`,
     sourceType: "direct_email" as const,
   };
 }
 
 function inferName(value: string) {
-  return value
-    .split(/[-_.]+/)
-    .filter(Boolean)
-    .map((part) => (part.length <= 4 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1)))
-    .join(" ") || "Unknown Source";
+  return (
+    value
+      .split(/[-_.]+/)
+      .filter(Boolean)
+      .map((part) =>
+        part.length <= 4
+          ? part.toUpperCase()
+          : part.charAt(0).toUpperCase() + part.slice(1),
+      )
+      .join(" ") || "Unknown Source"
+  );
 }
 
 function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function normalizeEmail(value: string) {

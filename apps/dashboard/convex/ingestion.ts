@@ -1,15 +1,22 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
 
 const GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
-const GMAIL_HISTORY_URL = "https://gmail.googleapis.com/gmail/v1/users/me/history";
-const GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+const GMAIL_MESSAGES_URL =
+  "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+const GMAIL_HISTORY_URL =
+  "https://gmail.googleapis.com/gmail/v1/users/me/history";
+const GMAIL_PROFILE_URL =
+  "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const GMAIL_BATCH_ENDPOINT = "https://www.googleapis.com/batch/gmail/v1";
 const HISTORY_STATE_KEY = "gmail_history_id";
 const MESSAGES_PER_PAGE = 100;
@@ -96,7 +103,9 @@ type GmailConnectionSnapshot = {
 };
 
 export const pollListservInbox = internalAction({
-  args: { trigger: v.optional(v.union(v.literal("cron"), v.literal("manual"))) },
+  args: {
+    trigger: v.optional(v.union(v.literal("cron"), v.literal("manual"))),
+  },
   handler: async (ctx, args): Promise<IngestionRunResult> => {
     const runId: Id<"ingestionRuns"> = await ctx.runMutation(
       internal.ingestion.startIngestionRun,
@@ -117,9 +126,12 @@ export const pollListservInbox = internalAction({
         ? await fetchMessagesSinceHistory(accessToken, state.value)
         : await fetchRecentMessages(accessToken);
 
-      const unseenIds = (await ctx.runQuery(internal.ingestion.filterUnseenMessages, {
-        gmailMessageIds: fetched.messageIds,
-      })) as string[];
+      const unseenIds = (await ctx.runQuery(
+        internal.ingestion.filterUnseenMessages,
+        {
+          gmailMessageIds: fetched.messageIds,
+        },
+      )) as string[];
 
       let stored = 0;
       if (unseenIds.length > 0) {
@@ -128,18 +140,23 @@ export const pollListservInbox = internalAction({
           ctx.runQuery(internal.ingestion.getMatchableListservs),
         ])) as [GmailFullMessage[], MatchableListserv[]];
 
-        const parsed: StoredParsedEmail[] = messages.flatMap((message: GmailFullMessage) => {
-          const email = parseGmailMessage(message);
-          if (!email) return [];
+        const parsed: StoredParsedEmail[] = messages.flatMap(
+          (message: GmailFullMessage) => {
+            const email = parseGmailMessage(message);
+            if (!email) return [];
 
-          const sourceMatch = matchListserv(email, listservs);
-          return [{ ...email, ...sourceMatch }];
-        });
+            const sourceMatch = matchListserv(email, listservs);
+            return [{ ...email, ...sourceMatch }];
+          },
+        );
 
         if (parsed.length > 0) {
-          const result = await ctx.runMutation(internal.ingestion.storeParsedMessages, {
-            messages: parsed,
-          });
+          const result = await ctx.runMutation(
+            internal.ingestion.storeParsedMessages,
+            {
+              messages: parsed,
+            },
+          );
           stored = result.stored;
         }
       }
@@ -201,7 +218,10 @@ export const getMatchableListservs = internalQuery({
   handler: async (ctx) => {
     const listservs = await ctx.db.query("listservs").collect();
     return listservs
-      .filter((listserv) => listserv.status === "active" || listserv.status === "joining")
+      .filter(
+        (listserv) =>
+          listserv.status === "active" || listserv.status === "joining",
+      )
       .map((listserv) => ({
         _id: listserv._id,
         organizationId: listserv.organizationId,
@@ -389,7 +409,11 @@ export const storeParsedMessages = internalMutation({
 
       if (message.listservId) {
         const listserv = await ctx.db.get(message.listservId);
-        const patch = buildListservIngestionPatch(message, now, listserv?.joinStatus);
+        const patch = buildListservIngestionPatch(
+          message,
+          now,
+          listserv?.joinStatus,
+        );
         await ctx.db.patch(message.listservId, patch);
       }
 
@@ -401,14 +425,28 @@ export const storeParsedMessages = internalMutation({
 });
 
 function buildListservIngestionPatch(
-  message: { receivedAt: number; senderEmail: string; subject: string; bodyText: string },
+  message: {
+    receivedAt: number;
+    senderEmail: string;
+    subject: string;
+    bodyText: string;
+  },
   now: number,
-  currentJoinStatus?: "not_started" | "join_email_sent" | "awaiting_confirmation" | "joined" | "failed" | "manual_required",
+  currentJoinStatus?:
+    | "not_started"
+    | "join_email_sent"
+    | "awaiting_confirmation"
+    | "joined"
+    | "failed"
+    | "manual_required",
 ) {
   if (isJoinConfirmation(message)) {
     return {
       lastReceivedAt: message.receivedAt,
-      joinStatus: currentJoinStatus === "joined" ? "joined" as const : "awaiting_confirmation" as const,
+      joinStatus:
+        currentJoinStatus === "joined"
+          ? ("joined" as const)
+          : ("awaiting_confirmation" as const),
       updatedAt: now,
     };
   }
@@ -435,7 +473,9 @@ async function refreshAccessToken(ctx: ActionCtx) {
   )) as GmailConnectionSnapshot | null;
 
   if (!connection) {
-    throw new Error("Gmail is not connected. Use the admin page to connect Gmail first.");
+    throw new Error(
+      "Gmail is not connected. Use the admin page to connect Gmail first.",
+    );
   }
 
   const refreshToken = connection.refreshToken;
@@ -466,12 +506,16 @@ async function refreshAccessToken(ctx: ActionCtx) {
   }
 
   const data = (await response.json()) as { access_token?: string };
-  if (!data.access_token) throw new Error("Token refresh returned no access_token.");
+  if (!data.access_token)
+    throw new Error("Token refresh returned no access_token.");
 
   return data.access_token;
 }
 
-async function fetchMessagesSinceHistory(accessToken: string, historyId: string) {
+async function fetchMessagesSinceHistory(
+  accessToken: string,
+  historyId: string,
+) {
   const ids: string[] = [];
   let pageToken: string | undefined;
   let latestHistoryId: string | undefined;
@@ -483,7 +527,10 @@ async function fetchMessagesSinceHistory(accessToken: string, historyId: string)
     url.searchParams.set("maxResults", String(MESSAGES_PER_PAGE));
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const response = await gmailFetch<GmailHistoryResponse>(url.toString(), accessToken);
+    const response = await gmailFetch<GmailHistoryResponse>(
+      url.toString(),
+      accessToken,
+    );
     if (response.historyId) latestHistoryId = response.historyId;
 
     for (const historyItem of response.history ?? []) {
@@ -507,12 +554,19 @@ async function fetchRecentMessages(accessToken: string) {
     url.searchParams.set("maxResults", String(MESSAGES_PER_PAGE));
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const response = await gmailFetch<GmailListResponse>(url.toString(), accessToken);
+    const response = await gmailFetch<GmailListResponse>(
+      url.toString(),
+      accessToken,
+    );
     ids.push(...(response.messages?.map((message) => message.id) ?? []));
-    pageToken = ids.length < MAX_BOOTSTRAP_MESSAGES ? response.nextPageToken : undefined;
+    pageToken =
+      ids.length < MAX_BOOTSTRAP_MESSAGES ? response.nextPageToken : undefined;
   } while (pageToken);
 
-  const profile = await gmailFetch<GmailProfileResponse>(GMAIL_PROFILE_URL, accessToken);
+  const profile = await gmailFetch<GmailProfileResponse>(
+    GMAIL_PROFILE_URL,
+    accessToken,
+  );
   return { messageIds: [...new Set(ids)], historyId: profile.historyId };
 }
 
@@ -540,7 +594,9 @@ async function batchFetchMessages(ids: string[], accessToken: string) {
     });
 
     if (!response.ok) {
-      throw new Error(`Gmail batch fetch failed (${response.status}): ${await response.text()}`);
+      throw new Error(
+        `Gmail batch fetch failed (${response.status}): ${await response.text()}`,
+      );
     }
 
     messages.push(...parseBatchResponse(await response.text()));
@@ -555,7 +611,9 @@ async function gmailFetch<T>(url: string, accessToken: string) {
   });
 
   if (!response.ok) {
-    throw new Error(`Gmail API error ${response.status}: ${await response.text()}`);
+    throw new Error(
+      `Gmail API error ${response.status}: ${await response.text()}`,
+    );
   }
 
   return (await response.json()) as T;
@@ -571,7 +629,9 @@ function parseBatchResponse(responseText: string) {
     if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) continue;
 
     try {
-      const message = JSON.parse(part.slice(jsonStart, jsonEnd + 1)) as GmailFullMessage;
+      const message = JSON.parse(
+        part.slice(jsonStart, jsonEnd + 1),
+      ) as GmailFullMessage;
       if (message.id) results.push(message);
     } catch {
       continue;
@@ -585,11 +645,14 @@ function parseGmailMessage(message: GmailFullMessage): ParsedEmail | null {
   if (!message.id) return null;
 
   const headers = collectHeaders(message.payload);
-  const headerMap = new Map(headers.map((header) => [header.name.toLowerCase(), header.value]));
+  const headerMap = new Map(
+    headers.map((header) => [header.name.toLowerCase(), header.value]),
+  );
   const sender = headerMap.get("from") ?? "";
   const senderEmail = extractEmailAddress(sender);
   const subject = headerMap.get("subject") ?? "";
-  const receivedAt = parseDate(headerMap.get("date")) ?? parseInternalDate(message.internalDate);
+  const receivedAt =
+    parseDate(headerMap.get("date")) ?? parseInternalDate(message.internalDate);
   if (!receivedAt) return null;
 
   const { text, html } = extractBodies(message.payload);
@@ -626,11 +689,14 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
   ]);
 
   for (const listserv of listservs) {
-    const candidates = [listserv.listEmail, ...listserv.senderEmails].map((value) =>
-      value.toLowerCase(),
+    const candidates = [listserv.listEmail, ...listserv.senderEmails].map(
+      (value) => value.toLowerCase(),
     );
     if (candidates.some((candidate) => emailSignals.has(candidate))) {
-      return { listservId: listserv._id, organizationId: listserv.organizationId };
+      return {
+        listservId: listserv._id,
+        organizationId: listserv.organizationId,
+      };
     }
   }
 
@@ -641,7 +707,10 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
         .map((value) => value.toLowerCase().split("@")[0])
         .filter(Boolean);
       if (localParts.some((local) => searchable.includes(local))) {
-        return { listservId: listserv._id, organizationId: listserv.organizationId };
+        return {
+          listservId: listserv._id,
+          organizationId: listserv.organizationId,
+        };
       }
     }
   }
@@ -649,17 +718,26 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
   return {};
 }
 
-function isJoinConfirmation(email: Pick<ParsedEmail, "senderEmail" | "subject" | "bodyText">) {
+function isJoinConfirmation(
+  email: Pick<ParsedEmail, "senderEmail" | "subject" | "bodyText">,
+) {
   const sender = email.senderEmail.toLowerCase();
   const text = `${email.subject}\n${email.bodyText}`.toLowerCase();
   return (
     sender.startsWith("lyris-confirm-") ||
-    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text)
+    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(
+      text,
+    )
   );
 }
 
-function headerValue(headers: Array<{ name: string; value: string }>, name: string) {
-  return headers.find((header) => header.name.toLowerCase() === name)?.value ?? "";
+function headerValue(
+  headers: Array<{ name: string; value: string }>,
+  name: string,
+) {
+  return (
+    headers.find((header) => header.name.toLowerCase() === name)?.value ?? ""
+  );
 }
 
 function extractEmailAddress(value: string) {
@@ -700,7 +778,10 @@ function extractBodies(part: GmailMessagePart | undefined) {
   return out;
 }
 
-function walkPart(part: GmailMessagePart | undefined, out: { text: string; html: string }) {
+function walkPart(
+  part: GmailMessagePart | undefined,
+  out: { text: string; html: string },
+) {
   if (!part) return;
 
   const mime = (part.mimeType ?? "").toLowerCase();
@@ -721,7 +802,10 @@ function htmlToText(html: string) {
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/?(p|div|section|article|header|footer|main|li|h[1-6]|blockquote|pre|table|tr|td|th)[^>]*>/gi, "\n")
+    .replace(
+      /<\/?(p|div|section|article|header|footer|main|li|h[1-6]|blockquote|pre|table|tr|td|th)[^>]*>/gi,
+      "\n",
+    )
     .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1")
     .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&")
@@ -740,7 +824,10 @@ function htmlToText(html: string) {
 
 function decodeBase64Url(encoded: string) {
   const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  const padded = base64.padEnd(
+    base64.length + ((4 - (base64.length % 4)) % 4),
+    "=",
+  );
 
   try {
     return new TextDecoder("utf-8").decode(

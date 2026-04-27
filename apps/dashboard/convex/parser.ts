@@ -1,6 +1,12 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -11,10 +17,19 @@ const DEFAULT_GEMINI_PARSE_MODEL = "gemini-2.5-flash";
 const MAX_MESSAGES_PER_RUN = 10;
 
 type AIProvider = "openai" | "gemini";
-type AIConfig = { provider: AIProvider; model: string; fallback?: { provider: AIProvider; model: string } };
+type AIConfig = {
+  provider: AIProvider;
+  model: string;
+  fallback?: { provider: AIProvider; model: string };
+};
 
 type ParseResult = {
-  messageType: "events" | "opportunities" | "newsletter" | "admin" | "irrelevant";
+  messageType:
+    | "events"
+    | "opportunities"
+    | "newsletter"
+    | "admin"
+    | "irrelevant";
   shouldPublish: boolean;
   summary: string;
   confidence: number;
@@ -26,7 +41,13 @@ type ParsedItem = {
   title: string;
   description: string;
   aiDescription: string;
-  eventType: "event" | "opportunity" | "hackathon" | "courses" | "fundraiser" | "info";
+  eventType:
+    | "event"
+    | "opportunity"
+    | "hackathon"
+    | "courses"
+    | "fundraiser"
+    | "info";
   hosts: Array<{
     name: string;
     kind: "club" | "company" | "external_org";
@@ -51,7 +72,12 @@ type ParsedItem = {
   }>;
   contacts: Array<{ type: "email" | "instagram" | "website"; value: string }>;
   tags: string[];
-  targetAudience?: "all" | "first_year" | "women_nonbinary" | "international" | "graduate";
+  targetAudience?:
+    | "all"
+    | "first_year"
+    | "women_nonbinary"
+    | "international"
+    | "graduate";
   perks: Array<"food" | "swag" | "prizes" | "travel_covered" | "paid">;
 };
 
@@ -65,11 +91,14 @@ export const runParseNow = action({
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const aiConfig = getAIConfig();
-    const runId: Id<"parseRuns"> = await ctx.runMutation(internal.parser.startParseRun, {
-      trigger: args.messageId ? "single_message" : "manual",
-      provider: aiConfig.provider,
-      model: aiConfig.model,
-    });
+    const runId: Id<"parseRuns"> = await ctx.runMutation(
+      internal.parser.startParseRun,
+      {
+        trigger: args.messageId ? "single_message" : "manual",
+        provider: aiConfig.provider,
+        model: aiConfig.model,
+      },
+    );
 
     let messagesScanned = 0;
     let messagesParsed = 0;
@@ -78,10 +107,13 @@ export const runParseNow = action({
     let messagesIgnored = 0;
 
     try {
-      const messages = (await ctx.runQuery(internal.parser.getMessagesForParsing, {
-        messageId: args.messageId,
-        limit: MAX_MESSAGES_PER_RUN,
-      })) as SourceMessage[];
+      const messages = (await ctx.runQuery(
+        internal.parser.getMessagesForParsing,
+        {
+          messageId: args.messageId,
+          limit: MAX_MESSAGES_PER_RUN,
+        },
+      )) as SourceMessage[];
       messagesScanned = messages.length;
 
       for (const message of messages) {
@@ -97,21 +129,30 @@ export const runParseNow = action({
         try {
           const result = await parseMessageWithAI(message, aiConfig);
           const normalized = normalizeParseResult(result);
-          if (normalized.items.length === 0 || normalized.messageType === "irrelevant" || normalized.messageType === "admin") {
+          if (
+            normalized.items.length === 0 ||
+            normalized.messageType === "irrelevant" ||
+            normalized.messageType === "admin"
+          ) {
             await ctx.runMutation(internal.parser.markMessageIgnored, {
               messageId: message._id,
-              reason: normalized.warnings.join("; ") || "No useful feed items extracted.",
+              reason:
+                normalized.warnings.join("; ") ||
+                "No useful feed items extracted.",
             });
             messagesIgnored += 1;
             continue;
           }
 
-          const stored = (await ctx.runMutation(internal.parser.storeParsedEvents, {
-            messageId: message._id,
-            items: normalized.items,
-            confidence: normalized.confidence,
-            warnings: normalized.warnings,
-          })) as { created: number; updated: number };
+          const stored = (await ctx.runMutation(
+            internal.parser.storeParsedEvents,
+            {
+              messageId: message._id,
+              items: normalized.items,
+              confidence: normalized.confidence,
+              warnings: normalized.warnings,
+            },
+          )) as { created: number; updated: number };
           messagesParsed += 1;
           eventsCreated += stored.created;
           eventsUpdated += stored.updated;
@@ -132,7 +173,13 @@ export const runParseNow = action({
         eventsUpdated,
         messagesIgnored,
       });
-      return { messagesScanned, messagesParsed, eventsCreated, eventsUpdated, messagesIgnored };
+      return {
+        messagesScanned,
+        messagesParsed,
+        eventsCreated,
+        eventsUpdated,
+        messagesIgnored,
+      };
     } catch (error) {
       await ctx.runMutation(internal.parser.finishParseRun, {
         runId,
@@ -153,7 +200,10 @@ export const publishEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    await ctx.db.patch(args.eventId, { visibility: "published", updatedAt: Date.now() });
+    await ctx.db.patch(args.eventId, {
+      visibility: "published",
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -161,7 +211,10 @@ export const hideEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    await ctx.db.patch(args.eventId, { visibility: "hidden", updatedAt: Date.now() });
+    await ctx.db.patch(args.eventId, {
+      visibility: "hidden",
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -170,14 +223,38 @@ export const overview = query({
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const [runs, drafts, failedMessages, newMessages] = await Promise.all([
-      ctx.db.query("parseRuns").withIndex("by_started_at").order("desc").take(20),
-      ctx.db.query("events").withIndex("by_visibility", (q) => q.eq("visibility", "draft")).order("desc").take(50),
-      ctx.db.query("listservMessages").withIndex("by_processing_status", (q) => q.eq("processingStatus", "failed")).order("desc").take(25),
-      ctx.db.query("listservMessages").withIndex("by_processing_status", (q) => q.eq("processingStatus", "new")).order("desc").take(200),
+      ctx.db
+        .query("parseRuns")
+        .withIndex("by_started_at")
+        .order("desc")
+        .take(20),
+      ctx.db
+        .query("events")
+        .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+        .order("desc")
+        .take(50),
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "failed"),
+        )
+        .order("desc")
+        .take(25),
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "new"),
+        )
+        .order("desc")
+        .take(200),
     ]);
 
-    const readyMessages = newMessages.filter((m) => m.organizationId !== undefined);
-    const needsAssignment = newMessages.filter((m) => m.organizationId === undefined);
+    const readyMessages = newMessages.filter(
+      (m) => m.organizationId !== undefined,
+    );
+    const needsAssignment = newMessages.filter(
+      (m) => m.organizationId === undefined,
+    );
 
     // Project only what the admin UI needs — no email body content sent to client.
     const projectMessage = (m: (typeof failedMessages)[number]) => ({
@@ -205,7 +282,9 @@ export const overview = query({
 export const getMessagesForParsing = internalQuery({
   args: { messageId: v.optional(v.id("listservMessages")), limit: v.number() },
   handler: async (ctx, args) => {
-    const singleMessage = args.messageId ? await ctx.db.get(args.messageId) : null;
+    const singleMessage = args.messageId
+      ? await ctx.db.get(args.messageId)
+      : null;
 
     // For a single-message parse, try even without organizationId
     if (args.messageId) {
@@ -240,7 +319,11 @@ export const getMessagesForParsing = internalQuery({
 
 export const startParseRun = internalMutation({
   args: {
-    trigger: v.union(v.literal("manual"), v.literal("cron"), v.literal("single_message")),
+    trigger: v.union(
+      v.literal("manual"),
+      v.literal("cron"),
+      v.literal("single_message"),
+    ),
     provider: v.optional(v.union(v.literal("openai"), v.literal("gemini"))),
     model: v.optional(v.string()),
   },
@@ -288,14 +371,20 @@ export const finishParseRun = internalMutation({
 export const markMessageIgnored = internalMutation({
   args: { messageId: v.id("listservMessages"), reason: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.messageId, { processingStatus: "ignored", parseError: args.reason });
+    await ctx.db.patch(args.messageId, {
+      processingStatus: "ignored",
+      parseError: args.reason,
+    });
   },
 });
 
 export const markMessageFailed = internalMutation({
   args: { messageId: v.id("listservMessages"), error: v.string() },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.messageId, { processingStatus: "failed", parseError: args.error });
+    await ctx.db.patch(args.messageId, {
+      processingStatus: "failed",
+      parseError: args.error,
+    });
   },
 });
 
@@ -309,8 +398,12 @@ export const storeParsedEvents = internalMutation({
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) throw new Error("Message not found.");
-    const listserv = message.listservId ? await ctx.db.get(message.listservId) : null;
-    const organization = message.organizationId ? await ctx.db.get(message.organizationId) : null;
+    const listserv = message.listservId
+      ? await ctx.db.get(message.listservId)
+      : null;
+    const organization = message.organizationId
+      ? await ctx.db.get(message.organizationId)
+      : null;
     if (!organization) throw new Error("Message has no organization.");
 
     const now = Date.now();
@@ -321,7 +414,10 @@ export const storeParsedEvents = internalMutation({
       const item = rawItem as ParsedItem;
       const dedupeKey = buildDedupeKey(item);
       const existing = dedupeKey
-        ? await ctx.db.query("events").withIndex("by_dedupe_key", (q) => q.eq("dedupeKey", dedupeKey)).first()
+        ? await ctx.db
+            .query("events")
+            .withIndex("by_dedupe_key", (q) => q.eq("dedupeKey", dedupeKey))
+            .first()
         : null;
       if (existing) {
         updated += 1;
@@ -358,19 +454,29 @@ export const storeParsedEvents = internalMutation({
       created += 1;
     }
 
-    await ctx.db.patch(args.messageId, { processingStatus: "parsed", parseError: undefined });
+    await ctx.db.patch(args.messageId, {
+      processingStatus: "parsed",
+      parseError: undefined,
+    });
     return { created, updated };
   },
 });
 
-async function parseMessageWithAI(message: SourceMessage, config: AIConfig): Promise<ParseResult> {
+async function parseMessageWithAI(
+  message: SourceMessage,
+  config: AIConfig,
+): Promise<ParseResult> {
   const prompt = buildParsePrompt(message);
   try {
     return await callAIProvider(prompt, config.provider, config.model);
   } catch (error) {
     if (!config.fallback) throw error;
     try {
-      return await callAIProvider(prompt, config.fallback.provider, config.fallback.model);
+      return await callAIProvider(
+        prompt,
+        config.fallback.provider,
+        config.fallback.model,
+      );
     } catch (fallbackError) {
       throw new Error(
         `Primary ${config.provider}/${config.model} failed: ${formatError(error)}. Fallback ${config.fallback.provider}/${config.fallback.model} failed: ${formatError(fallbackError)}`,
@@ -379,12 +485,19 @@ async function parseMessageWithAI(message: SourceMessage, config: AIConfig): Pro
   }
 }
 
-async function callAIProvider(prompt: string, provider: AIProvider, model: string): Promise<ParseResult> {
+async function callAIProvider(
+  prompt: string,
+  provider: AIProvider,
+  model: string,
+): Promise<ParseResult> {
   if (provider === "openai") return parseWithOpenAI(prompt, model);
   return parseWithGemini(prompt, model);
 }
 
-async function parseWithOpenAI(prompt: string, model: string): Promise<ParseResult> {
+async function parseWithOpenAI(
+  prompt: string,
+  model: string,
+): Promise<ParseResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
 
@@ -397,7 +510,11 @@ async function parseWithOpenAI(prompt: string, model: string): Promise<ParseResu
     body: JSON.stringify({
       model,
       messages: [
-        { role: "system", content: "You extract structured JSON from Cornell listserv emails. Return JSON only." },
+        {
+          role: "system",
+          content:
+            "You extract structured JSON from Cornell listserv emails. Return JSON only.",
+        },
         { role: "user", content: prompt },
       ],
       response_format: { type: "json_object" },
@@ -405,18 +522,22 @@ async function parseWithOpenAI(prompt: string, model: string): Promise<ParseResu
     }),
   });
 
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
     error?: { message?: string };
   };
-  if (!response.ok) throw new Error(payload.error?.message ?? "OpenAI parse request failed.");
+  if (!response.ok)
+    throw new Error(payload.error?.message ?? "OpenAI parse request failed.");
 
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new Error("OpenAI returned no content.");
   return JSON.parse(text) as ParseResult;
 }
 
-async function parseWithGemini(prompt: string, model: string): Promise<ParseResult> {
+async function parseWithGemini(
+  prompt: string,
+  model: string,
+): Promise<ParseResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
 
@@ -431,8 +552,12 @@ async function parseWithGemini(prompt: string, model: string): Promise<ParseResu
       }),
     },
   );
-  const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message ?? "Gemini parse request failed.");
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    error?: { message?: string };
+  };
+  if (!response.ok)
+    throw new Error(payload.error?.message ?? "Gemini parse request failed.");
 
   const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned no text.");
@@ -477,7 +602,10 @@ function buildParsePrompt(message: SourceMessage) {
     subject: message.subject,
     receivedAt: new Date(message.receivedAt).toISOString(),
     bodyText: message.bodyText.slice(0, 12000),
-    links: extractLinks(`${message.bodyText}\n${message.bodyHtml}`).slice(0, 40),
+    links: extractLinks(`${message.bodyText}\n${message.bodyHtml}`).slice(
+      0,
+      40,
+    ),
   };
 
   return `Extract Cornell student-relevant feed items from this listserv email. Return strict JSON only. Do not invent details. The source organization advertised the item but may not be the host.
@@ -514,7 +642,9 @@ ${JSON.stringify(input, null, 2)}`;
 }
 
 function normalizeParseResult(result: ParseResult): ParseResult {
-  const warnings = Array.isArray(result.warnings) ? result.warnings.map(String).slice(0, 20) : [];
+  const warnings = Array.isArray(result.warnings)
+    ? result.warnings.map(String).slice(0, 20)
+    : [];
   const items = Array.isArray(result.items)
     ? result.items.flatMap((item) => normalizeItem(item, warnings))
     : [];
@@ -533,39 +663,60 @@ function normalizeItem(item: ParsedItem, warnings: string[]): ParsedItem[] {
   const description = String(item.description ?? "").trim();
   if (!title || !description) return [];
   const dates = Array.isArray(item.dates)
-    ? item.dates.filter((date) => Number.isFinite(date.timestamp) && date.timestamp > 0).slice(0, 8)
+    ? item.dates
+        .filter((date) => Number.isFinite(date.timestamp) && date.timestamp > 0)
+        .slice(0, 8)
     : [];
-  if (dates.length === 0 && (!Array.isArray(item.links) || item.links.length === 0)) {
+  if (
+    dates.length === 0 &&
+    (!Array.isArray(item.links) || item.links.length === 0)
+  ) {
     warnings.push(`Low detail item: ${title}`);
   }
 
-  return [{
-    title,
-    description,
-    aiDescription: String(item.aiDescription ?? description).slice(0, 220),
-    eventType: normalizeEventType(item.eventType),
-    hosts: normalizeHosts(item.hosts),
-    dates,
-    isRecurring: Boolean(item.isRecurring),
-    recurrenceNote: optionalString(item.recurrenceNote),
-    location: normalizeLocation(item.location),
-    links: normalizeLinks(item.links),
-    contacts: normalizeContacts(item.contacts),
-    tags: Array.isArray(item.tags) ? item.tags.map(String).map((tag) => tag.trim()).filter(Boolean).slice(0, 12) : [],
-    targetAudience: normalizeAudience(item.targetAudience),
-    perks: normalizePerks(item.perks),
-  }];
+  return [
+    {
+      title,
+      description,
+      aiDescription: String(item.aiDescription ?? description).slice(0, 220),
+      eventType: normalizeEventType(item.eventType),
+      hosts: normalizeHosts(item.hosts),
+      dates,
+      isRecurring: Boolean(item.isRecurring),
+      recurrenceNote: optionalString(item.recurrenceNote),
+      location: normalizeLocation(item.location),
+      links: normalizeLinks(item.links),
+      contacts: normalizeContacts(item.contacts),
+      tags: Array.isArray(item.tags)
+        ? item.tags
+            .map(String)
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+            .slice(0, 12)
+        : [],
+      targetAudience: normalizeAudience(item.targetAudience),
+      perks: normalizePerks(item.perks),
+    },
+  ];
 }
 
 function shouldIgnoreMessage(message: SourceMessage) {
-  const text = `${message.senderEmail}\n${message.subject}\n${message.bodyText}`.toLowerCase();
-  return /lyris-confirm-|confirm your subscription|unsubscribe request|delivery status notification/.test(text);
+  const text =
+    `${message.senderEmail}\n${message.subject}\n${message.bodyText}`.toLowerCase();
+  return /lyris-confirm-|confirm your subscription|unsubscribe request|delivery status notification/.test(
+    text,
+  );
 }
 
 function buildDedupeKey(item: ParsedItem) {
-  const firstDate = item.dates[0]?.timestamp ? new Date(item.dates[0].timestamp).toISOString().slice(0, 10) : "no-date";
+  const firstDate = item.dates[0]?.timestamp
+    ? new Date(item.dates[0].timestamp).toISOString().slice(0, 10)
+    : "no-date";
   const firstLink = item.links[0]?.url ?? "no-link";
-  return `${normalizeKey(item.title)}:${firstDate}:${normalizeKey(firstLink)}`.slice(0, 240);
+  return `${normalizeKey(item.title)}:${firstDate}:${normalizeKey(firstLink)}`.slice(
+    0,
+    240,
+  );
 }
 
 function extractLinks(value: string) {
@@ -573,19 +724,45 @@ function extractLinks(value: string) {
 }
 
 function normalizeMessageType(value: string): ParseResult["messageType"] {
-  return ["events", "opportunities", "newsletter", "admin", "irrelevant"].includes(value) ? value as ParseResult["messageType"] : "irrelevant";
+  return [
+    "events",
+    "opportunities",
+    "newsletter",
+    "admin",
+    "irrelevant",
+  ].includes(value)
+    ? (value as ParseResult["messageType"])
+    : "irrelevant";
 }
 
 function normalizeEventType(value: string): ParsedItem["eventType"] {
-  return ["event", "opportunity", "hackathon", "courses", "fundraiser", "info"].includes(value) ? value as ParsedItem["eventType"] : "info";
+  return [
+    "event",
+    "opportunity",
+    "hackathon",
+    "courses",
+    "fundraiser",
+    "info",
+  ].includes(value)
+    ? (value as ParsedItem["eventType"])
+    : "info";
 }
 
 function normalizeHosts(hosts: ParsedItem["hosts"]) {
-  return Array.isArray(hosts) ? hosts.filter((host) => host?.name).slice(0, 6).map((host) => ({
-    name: String(host.name),
-    kind: ["club", "company", "external_org"].includes(host.kind) ? host.kind : "external_org",
-    role: ["primary", "cohost", "sponsor"].includes(host.role) ? host.role : "primary",
-  })) : [];
+  return Array.isArray(hosts)
+    ? hosts
+        .filter((host) => host?.name)
+        .slice(0, 6)
+        .map((host) => ({
+          name: String(host.name),
+          kind: ["club", "company", "external_org"].includes(host.kind)
+            ? host.kind
+            : "external_org",
+          role: ["primary", "cohost", "sponsor"].includes(host.role)
+            ? host.role
+            : "primary",
+        }))
+    : [];
 }
 
 function normalizeLocation(location: ParsedItem["location"]) {
@@ -599,27 +776,60 @@ function normalizeLocation(location: ParsedItem["location"]) {
 }
 
 function normalizeLinks(links: ParsedItem["links"]) {
-  return Array.isArray(links) ? links.filter((link) => link?.url).slice(0, 12).map((link) => ({
-    url: String(link.url),
-    type: ["registration", "application", "rsvp", "info", "social"].includes(link.type) ? link.type : "info",
-    label: optionalString(link.label),
-  })) : [];
+  return Array.isArray(links)
+    ? links
+        .filter((link) => link?.url)
+        .slice(0, 12)
+        .map((link) => ({
+          url: String(link.url),
+          type: [
+            "registration",
+            "application",
+            "rsvp",
+            "info",
+            "social",
+          ].includes(link.type)
+            ? link.type
+            : "info",
+          label: optionalString(link.label),
+        }))
+    : [];
 }
 
 function normalizeContacts(contacts: ParsedItem["contacts"]) {
-  return Array.isArray(contacts) ? contacts.filter((contact) => contact?.value).slice(0, 8).map((contact) => ({
-    type: ["email", "instagram", "website"].includes(contact.type) ? contact.type : "website",
-    value: String(contact.value),
-  })) : [];
+  return Array.isArray(contacts)
+    ? contacts
+        .filter((contact) => contact?.value)
+        .slice(0, 8)
+        .map((contact) => ({
+          type: ["email", "instagram", "website"].includes(contact.type)
+            ? contact.type
+            : "website",
+          value: String(contact.value),
+        }))
+    : [];
 }
 
-function normalizeAudience(value: unknown): ParsedItem["targetAudience"] | undefined {
-  return typeof value === "string" && ["all", "first_year", "women_nonbinary", "international", "graduate"].includes(value) ? value as ParsedItem["targetAudience"] : undefined;
+function normalizeAudience(
+  value: unknown,
+): ParsedItem["targetAudience"] | undefined {
+  return typeof value === "string" &&
+    [
+      "all",
+      "first_year",
+      "women_nonbinary",
+      "international",
+      "graduate",
+    ].includes(value)
+    ? (value as ParsedItem["targetAudience"])
+    : undefined;
 }
 
 function normalizePerks(perks: ParsedItem["perks"]) {
   const allowed = new Set(["food", "swag", "prizes", "travel_covered", "paid"]);
-  return Array.isArray(perks) ? perks.filter((perk) => allowed.has(perk)).slice(0, 6) : [];
+  return Array.isArray(perks)
+    ? perks.filter((perk) => allowed.has(perk)).slice(0, 6)
+    : [];
 }
 
 function optionalString(value: unknown) {
@@ -633,7 +843,10 @@ function clampNumber(value: unknown, min: number, max: number) {
 }
 
 function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function formatError(error: unknown) {
