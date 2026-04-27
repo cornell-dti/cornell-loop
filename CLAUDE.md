@@ -15,7 +15,7 @@ No other apps today; workspace is set up to grow (e.g. extension).
 ## Tech stack
 
 - **React 19** + **React Router v7** (see `apps/dashboard/src/App.tsx` for routes).
-- **Convex** (`@convex-dev/auth`) for auth. `ProtectedRoute` has a **dev bypass** — protected routes render without login when `import.meta.env.DEV`. Great for iteration.
+- **Convex** (`@convex-dev/auth`) for auth. `ProtectedRoute` has a **dev bypass** — protected routes render without login when `import.meta.env.DEV`. Great for iteration. **Always read `apps/dashboard/convex/_generated/ai/guidelines.md` first** before touching Convex code — its rules override training data.
 - **Tailwind CSS v4** via `@tailwindcss/vite`. No config file; content scanning is via `@source` directives inside `apps/dashboard/src/index.css`. **Important:** `shared/ui/src` is explicitly `@source`'d so design-system classes land in the generated CSS. If a design-system class silently stops working, check that this `@source` is still present.
 - **Design tokens** are plain CSS custom properties in `shared/ui/src/styles/tokens.css` (`--color-*`, `--space-*`, `--font-*`, `--radius-*`, `--shadow-*`, etc.). **Never hardcode colors/spacing/fonts.** Reference tokens with Tailwind arbitrary-value syntax, e.g. `bg-[var(--color-surface)]`, `gap-[var(--space-4)]`.
 - **Fonts**: DM Sans (body), Inter (UI), Manrope (brand wordmark). Loaded in `apps/dashboard/index.html`.
