@@ -23,7 +23,11 @@ const DASHBOARD_URL =
   (import.meta.env.VITE_DASHBOARD_URL as string | undefined) ??
   "https://cornellloop.com";
 
-export default function App({ onClose, pageContext = "gmail", onPreviewSlot }: AppProps) {
+export default function App({
+  onClose,
+  pageContext = "gmail",
+  onPreviewSlot,
+}: AppProps) {
   const [view, setView] = useState<View>("feed");
   const [activeTab, setActiveTab] = useState<"feed" | "bookmarks">("feed");
   const [searchQuery, setSearchQuery] = useState("");

@@ -179,8 +179,7 @@ export function BookmarkCard({
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
             <p
               className={
-                BODY2_SEMIBOLD +
-                " w-full text-[var(--color-neutral-900)]"
+                BODY2_SEMIBOLD + " w-full text-[var(--color-neutral-900)]"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
@@ -191,9 +190,7 @@ export function BookmarkCard({
               <div
                 className={[
                   "flex flex-col gap-[1px]",
-                  subtitleClickable
-                    ? "cursor-pointer hover:underline"
-                    : "",
+                  subtitleClickable ? "cursor-pointer hover:underline" : "",
                 ].join(" ")}
                 onClick={subtitleClickable ? onSubtitleClick : undefined}
                 role={subtitleClickable ? "button" : undefined}

@@ -15,7 +15,11 @@
 import { useState } from "react";
 import type { EventItem } from "../data/types";
 import { useSearchResults } from "../data/useEvents";
-import { getPrimaryLink, getLinkLabel, openExternalUrl } from "../utils/linkUtils";
+import {
+  getPrimaryLink,
+  getLinkLabel,
+  openExternalUrl,
+} from "../utils/linkUtils";
 import { buildGCalUrl } from "../utils/calendarUtils";
 import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";

@@ -9,7 +9,10 @@ import type { CalendarEvent } from "../data/types";
 export function buildGCalUrl(event: CalendarEvent): string {
   const fmt = (iso: string) =>
     // Strip dashes, colons, milliseconds, and trailing Z for local time
-    iso.replace(/[-:]/g, "").replace(/\.\d{3}/, "").replace("Z", "");
+    iso
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}/, "")
+      .replace("Z", "");
 
   const start = fmt(event.startISO);
   const end = event.endISO ? fmt(event.endISO) : start;

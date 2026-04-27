@@ -266,7 +266,7 @@ export function ExtensionEventCard({
             "cursor-pointer",
             BODY3,
             "text-[color:var(--color-neutral-700)]",
-            "hover:text-[color:var(--color-neutral-900)] transition-colors duration-150",
+            "transition-colors duration-150 hover:text-[color:var(--color-neutral-900)]",
           ].join(" ")}
         >
           {onViewLess ? (

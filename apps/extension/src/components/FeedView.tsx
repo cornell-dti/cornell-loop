@@ -106,9 +106,7 @@ export default function FeedView({
                   ? () => toggleExpand(orgName)
                   : undefined
               }
-              onViewLess={
-                isExpanded ? () => toggleExpand(orgName) : undefined
-              }
+              onViewLess={isExpanded ? () => toggleExpand(orgName) : undefined}
             />
           );
         })}

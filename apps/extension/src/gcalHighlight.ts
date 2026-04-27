@@ -147,7 +147,11 @@ function findGridInfo(): GridInfo | null {
   let scrollEl: HTMLElement | null = null;
   for (const sel of knownSelectors) {
     const el = document.querySelector(sel) as HTMLElement | null;
-    if (el && el.scrollHeight > el.clientHeight * 1.3 && el.clientHeight > 200) {
+    if (
+      el &&
+      el.scrollHeight > el.clientHeight * 1.3 &&
+      el.clientHeight > 200
+    ) {
       scrollEl = el;
       break;
     }
@@ -157,7 +161,10 @@ function findGridInfo(): GridInfo | null {
   if (!scrollEl) {
     for (const el of main.querySelectorAll("*")) {
       const htmlEl = el as HTMLElement;
-      if (htmlEl.scrollHeight > htmlEl.clientHeight * 1.5 && htmlEl.clientHeight > 200) {
+      if (
+        htmlEl.scrollHeight > htmlEl.clientHeight * 1.5 &&
+        htmlEl.clientHeight > 200
+      ) {
         const style = window.getComputedStyle(htmlEl);
         if (style.overflowY === "auto" || style.overflowY === "scroll") {
           scrollEl = htmlEl;

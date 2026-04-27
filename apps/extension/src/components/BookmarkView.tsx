@@ -16,7 +16,11 @@ import { useState } from "react";
 import type { EventItem } from "../data/types";
 import type { PageContext } from "../App";
 import { useAllEvents } from "../data/useEvents";
-import { getPrimaryLink, getLinkLabel, openExternalUrl } from "../utils/linkUtils";
+import {
+  getPrimaryLink,
+  getLinkLabel,
+  openExternalUrl,
+} from "../utils/linkUtils";
 import { buildGCalUrl } from "../utils/calendarUtils";
 import { removeSlotPreview } from "../gcalHighlight";
 import { BookmarkCard } from "./BookmarkCard";

@@ -3,8 +3,10 @@ import App from "../App";
 import type { AppProps } from "../App";
 import FloatingIcon from "../../public/floating_icon.svg?react";
 
-export interface FloatingPanelProps
-  extends Pick<AppProps, "pageContext" | "onPreviewSlot"> {}
+export interface FloatingPanelProps extends Pick<
+  AppProps,
+  "pageContext" | "onPreviewSlot"
+> {}
 
 export default function FloatingPanel({
   pageContext,

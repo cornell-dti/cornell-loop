@@ -48,10 +48,10 @@ function monthStr(d: Date): string {
 }
 
 // Upcoming dates (so they appear in current/next GCal week view)
-const d2 = addDays(2);  // 2 days from now
-const d4 = addDays(4);  // 4 days from now
-const d6 = addDays(6);  // 6 days from now
-const d9 = addDays(9);  // 9 days from now
+const d2 = addDays(2); // 2 days from now
+const d4 = addDays(4); // 4 days from now
+const d6 = addDays(6); // 6 days from now
+const d9 = addDays(9); // 9 days from now
 
 export const MOCK_EVENTS: EventItem[] = [
   // ── Cornell DTI (4 events → tests 3/org collapse) ────────────────────────
@@ -65,7 +65,9 @@ export const MOCK_EVENTS: EventItem[] = [
     title: "Datadog x DTI Recruitment Info Session",
     subtitle: ["4:00 pm – 5:30 pm", "Hollister Hall 312"],
     tags: ["Tech", "Internships", "Early career"],
-    links: [{ url: "https://forms.gle/datadog-rsvp", type: "rsvp", label: "RSVP" }],
+    links: [
+      { url: "https://forms.gle/datadog-rsvp", type: "rsvp", label: "RSVP" },
+    ],
     calendarEvent: {
       title: "Datadog x DTI Recruitment Info Session",
       startISO: toISO(d2, 16),
@@ -84,7 +86,13 @@ export const MOCK_EVENTS: EventItem[] = [
     title: "DTI Spring Charity Auction",
     subtitle: ["6:00 pm – 8:00 pm", "Statler Hotel, Carrion Ballroom"],
     tags: ["Just for fun", "Early career"],
-    links: [{ url: "https://cornellloop.com/dti-auction", type: "info", label: "Learn More" }],
+    links: [
+      {
+        url: "https://cornellloop.com/dti-auction",
+        type: "info",
+        label: "Learn More",
+      },
+    ],
     calendarEvent: {
       title: "DTI Spring Charity Auction",
       startISO: toISO(d4, 18),
@@ -101,7 +109,9 @@ export const MOCK_EVENTS: EventItem[] = [
     title: "DTI Product Sprint Demo Night",
     subtitle: "See what our teams shipped this semester — all are welcome",
     tags: ["Tech", "Just for fun"],
-    links: [{ url: "https://cornelldti.org/demo", type: "info", label: "Learn More" }],
+    links: [
+      { url: "https://cornelldti.org/demo", type: "info", label: "Learn More" },
+    ],
     sentAt: daysAgo(9),
   },
 
@@ -137,7 +147,11 @@ export const MOCK_EVENTS: EventItem[] = [
       "For women and non-binary engineers interested in trading and technology",
     tags: ["Internships"],
     links: [
-      { url: "https://www.janestreet.com/internships", type: "application", label: "Apply" },
+      {
+        url: "https://www.janestreet.com/internships",
+        type: "application",
+        label: "Apply",
+      },
       { url: "https://instagram.com/cornellwicc", type: "social" },
     ],
     sentAt: daysAgo(3),
@@ -153,7 +167,9 @@ export const MOCK_EVENTS: EventItem[] = [
     title: "WICC x Meta Fireside Chat",
     subtitle: ["5:00 pm – 6:30 pm", "Bloomberg Center 161"],
     tags: ["Tech", "Early career", "Mentorship"],
-    links: [{ url: "https://forms.gle/wicc-meta", type: "rsvp", label: "RSVP" }],
+    links: [
+      { url: "https://forms.gle/wicc-meta", type: "rsvp", label: "RSVP" },
+    ],
     calendarEvent: {
       title: "WICC x Meta Fireside Chat",
       startISO: toISO(d6, 17),
@@ -178,7 +194,11 @@ export const MOCK_EVENTS: EventItem[] = [
     ],
     tags: ["Tech", "Just for fun"],
     links: [
-      { url: "https://bigredhacks.com/register", type: "registration", label: "Register" },
+      {
+        url: "https://bigredhacks.com/register",
+        type: "registration",
+        label: "Register",
+      },
       { url: "https://bigredhacks.com", type: "info" },
     ],
     calendarEvent: {
