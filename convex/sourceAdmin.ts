@@ -172,6 +172,47 @@ export const assignSender = mutation({
   },
 });
 
+export const ignoreSender = mutation({
+  args: {
+    token: v.string(),
+    senderEmail: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const senderEmail = normalizeEmail(args.senderEmail);
+
+    // If a listservs row already exists, just mark it paused so it stops
+    // surfacing in the unassigned list without losing history.
+    const existing = await ctx.db
+      .query("listservs")
+      .withIndex("by_list_email", (q) => q.eq("listEmail", senderEmail))
+      .unique();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { status: "paused", updatedAt: Date.now() });
+      return;
+    }
+
+    // For inbox-only senders, create a minimal tombstone row so the sender
+    // email is now "known" and won't appear as unrecognized again.
+    const suggestion = suggestSource(senderEmail);
+    const now = Date.now();
+    await ctx.db.insert("listservs", {
+      name: suggestion.sourceName,
+      displayName: suggestion.sourceName,
+      listEmail: senderEmail,
+      senderEmails: [senderEmail],
+      sourceType: suggestion.sourceType,
+      status: "paused",
+      joinMethod: "unknown",
+      joinStatus: "not_started",
+      source: "manual",
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 export const assignSourceOrganization = mutation({
   args: {
     token: v.string(),

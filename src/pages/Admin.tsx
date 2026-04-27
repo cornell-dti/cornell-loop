@@ -141,6 +141,7 @@ export default function Admin() {
   const assignSender = useMutation(api.sourceAdmin.assignSender);
   const assignSourceOrg = useMutation(api.sourceAdmin.assignSourceOrganization);
   const createOrg = useMutation(api.sourceAdmin.createOrganization);
+  const ignoreSender = useMutation(api.sourceAdmin.ignoreSender);
   const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
@@ -267,29 +268,33 @@ export default function Admin() {
             onRejectCandidate={(id) =>
               act("Candidate rejected.", () => rejectCandidate({ token, candidateId: id }))
             }
-            onAssignSuggestion={(sender) =>
-              act(`${sender.suggestion.organizationName} assigned.`, () =>
-                assignSender({
-                  token,
-                  senderEmail: sender.senderEmail,
-                  organizationName: sender.suggestion.organizationName,
-                  organizationType: sender.suggestion.organizationType,
-                  sourceName: sender.suggestion.sourceName,
-                  sourceType: sender.suggestion.sourceType,
-                }),
-              )
-            }
+            // Known source (listservs row exists) — assign to existing org
             onAssignSource={(listservId, orgId) =>
               act("Source assigned.", () => assignSourceOrg({ token, listservId, organizationId: orgId }))
             }
-            onCreateOrg={(name, type) =>
-              act(`${name} created.`, () => createOrg({ token, name, type }))
-            }
+            // Known source — create new org and assign
             onCreateAndAssignSource={(listservId, name, type) =>
               act(`${name} created and assigned.`, async () => {
                 const orgId = await createOrg({ token, name, type });
                 await assignSourceOrg({ token, listservId, organizationId: orgId });
               })
+            }
+            // Inbox-only sender — assign to existing org (creates source row)
+            onAssignInboxSenderToOrg={(senderEmail, orgId) =>
+              act("Source assigned.", () => assignSender({ token, senderEmail, organizationId: orgId }))
+            }
+            // Inbox-only sender — create new org and assign
+            onCreateAndAssignInboxSender={(senderEmail, name, type, sourceName, sourceType) =>
+              act(`${name} created and assigned.`, async () => {
+                const orgId = await createOrg({ token, name, type });
+                await assignSender({ token, senderEmail, organizationId: orgId, sourceName, sourceType });
+              })
+            }
+            onIgnoreSender={(senderEmail) =>
+              act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
+            }
+            onCreateOrg={(name, type) =>
+              act(`${name} created.`, () => createOrg({ token, name, type }))
             }
           />
         )}
@@ -482,10 +487,12 @@ function SourcesTab({
   unassigned,
   onApproveCandidate,
   onRejectCandidate,
-  onAssignSuggestion,
   onAssignSource,
-  onCreateOrg,
   onCreateAndAssignSource,
+  onAssignInboxSenderToOrg,
+  onCreateAndAssignInboxSender,
+  onIgnoreSender,
+  onCreateOrg,
 }: {
   candidates: Candidate[];
   listservs: Listserv[];
@@ -493,15 +500,41 @@ function SourcesTab({
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSuggestion: (sender: UnassignedSender) => void;
   onAssignSource: (listservId: Id<"listservs">, orgId: Id<"organizations">) => void;
-  onCreateOrg: (name: string, type: OrgType) => void;
   onCreateAndAssignSource: (listservId: Id<"listservs">, name: string, type: OrgType) => void;
+  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"organizations">) => void;
+  onCreateAndAssignInboxSender: (senderEmail: string, name: string, type: OrgType, sourceName: string, sourceType: NonNullable<Listserv["sourceType"]>) => void;
+  onIgnoreSender: (senderEmail: string) => void;
+  onCreateOrg: (name: string, type: OrgType) => void;
 }) {
-  const unassignedSources = listservs.filter((s) => !s.organizationId);
+  // Known listservs rows that have no org yet and aren't paused/ignored
+  const unassignedSources = listservs.filter((s) => !s.organizationId && s.status !== "paused");
   const pendingCandidates = candidates.filter((c) => c.status === "candidate");
 
-  const totalAction = pendingCandidates.length + unassignedSources.length + unassigned.length;
+  // Build a unified list: known sources + inbox-only senders, sorted by
+  // message recency / count so the most active surface first.
+  type UnifiedItem =
+    | { kind: "known"; source: Listserv; suggestion: ReturnType<typeof suggestFromEmail> }
+    | { kind: "inbox"; sender: UnassignedSender };
+
+  const unifiedItems: UnifiedItem[] = [
+    ...unassignedSources.map((source) => ({
+      kind: "known" as const,
+      source,
+      suggestion: suggestFromEmail(source.listEmail),
+    })),
+    ...unassigned.map((sender) => ({ kind: "inbox" as const, sender })),
+  ];
+  // Stable sort: inbox senders with more messages first, then by recency
+  unifiedItems.sort((a, b) => {
+    const countA = a.kind === "inbox" ? a.sender.count : 0;
+    const countB = b.kind === "inbox" ? b.sender.count : 0;
+    const timeA = a.kind === "inbox" ? a.sender.latestReceivedAt : (a.source.lastReceivedAt ?? a.source.createdAt);
+    const timeB = b.kind === "inbox" ? b.sender.latestReceivedAt : (b.source.lastReceivedAt ?? b.source.createdAt);
+    return countB - countA || timeB - timeA;
+  });
+
+  const totalAction = pendingCandidates.length + unifiedItems.length;
 
   return (
     <div className="grid gap-6">
@@ -516,7 +549,7 @@ function SourcesTab({
         <Card>
           <CardHeader
             title={`${pendingCandidates.length} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
-            subtitle="Addresses found by discovery. Approve to create a source and organization, or reject to dismiss."
+            subtitle="Addresses found by discovery. Approve to create a source, or reject to dismiss."
           />
           <div className="mt-4 grid gap-2">
             {pendingCandidates.map((c) => (
@@ -531,42 +564,53 @@ function SourcesTab({
         </Card>
       )}
 
-      {/* Known sources without org */}
-      {unassignedSources.length > 0 && (
+      {/* Unified unassigned list */}
+      {unifiedItems.length > 0 && (
         <Card>
           <CardHeader
-            title={`${unassignedSources.length} joined source${unassignedSources.length !== 1 ? "s" : ""} need an organization`}
-            subtitle="These sources are joined and receiving mail, but haven't been assigned to an organization yet. Assign one to enable parsing."
+            title={`${unifiedItems.length} source${unifiedItems.length !== 1 ? "s" : ""} need an organization`}
+            subtitle="Assign each source to an organization to enable parsing. Ignore sources you don't want to track."
           />
           <div className="mt-4 grid gap-2">
-            {unassignedSources.map((src) => (
-              <UnassignedSourceRow
-                key={src._id}
-                source={src}
-                organizations={organizations}
-                onAssign={(orgId) => onAssignSource(src._id, orgId)}
-                onCreateAndAssign={(name, type) => onCreateAndAssignSource(src._id, name, type)}
-              />
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Unrecognized senders */}
-      {unassigned.length > 0 && (
-        <Card>
-          <CardHeader
-            title={`${unassigned.length} unrecognized sender${unassigned.length !== 1 ? "s" : ""} in inbox`}
-            subtitle="These senders don't match any known source. Approve to create a new source and organization automatically."
-          />
-          <div className="mt-4 grid gap-2">
-            {unassigned.map((sender) => (
-              <UnrecognizedSenderRow
-                key={sender.senderEmail}
-                sender={sender}
-                onApprove={() => onAssignSuggestion(sender)}
-              />
-            ))}
+            {unifiedItems.map((item) =>
+              item.kind === "known" ? (
+                <UnassignedRow
+                  key={item.source._id}
+                  email={item.source.listEmail}
+                  name={item.source.name}
+                  isNewSource={false}
+                  suggestedOrgName={item.suggestion.organizationName}
+                  suggestedOrgType={"club"}
+                  messageCount={undefined}
+                  sampleSubjects={[]}
+                  organizations={organizations}
+                  onAssignToOrg={(orgId) => onAssignSource(item.source._id, orgId)}
+                  onCreateAndAssign={(name, type) => onCreateAndAssignSource(item.source._id, name, type)}
+                  onIgnore={() => onIgnoreSender(item.source.listEmail)}
+                />
+              ) : (
+                <UnassignedRow
+                  key={item.sender.senderEmail}
+                  email={item.sender.senderEmail}
+                  name={item.sender.suggestion.organizationName}
+                  isNewSource={true}
+                  suggestedOrgName={item.sender.suggestion.organizationName}
+                  suggestedOrgType={item.sender.suggestion.organizationType}
+                  messageCount={item.sender.count}
+                  sampleSubjects={item.sender.sampleSubjects}
+                  organizations={organizations}
+                  onAssignToOrg={(orgId) => onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)}
+                  onCreateAndAssign={(name, type) =>
+                    onCreateAndAssignInboxSender(
+                      item.sender.senderEmail, name, type,
+                      item.sender.suggestion.sourceName,
+                      item.sender.suggestion.sourceType,
+                    )
+                  }
+                  onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
+                />
+              )
+            )}
           </div>
         </Card>
       )}
@@ -596,6 +640,109 @@ function SourcesTab({
   );
 }
 
+// Unified row for both known sources (listservs row exists, no org) and
+// inbox-only senders (no listservs row yet). isNewSource distinguishes them visually.
+function UnassignedRow({
+  email,
+  name,
+  isNewSource,
+  suggestedOrgName,
+  suggestedOrgType,
+  messageCount,
+  sampleSubjects,
+  organizations,
+  onAssignToOrg,
+  onCreateAndAssign,
+  onIgnore,
+}: {
+  email: string;
+  name: string;
+  isNewSource: boolean;
+  suggestedOrgName: string;
+  suggestedOrgType: OrgType;
+  messageCount: number | undefined;
+  sampleSubjects: string[];
+  organizations: Organization[];
+  onAssignToOrg: (orgId: Id<"organizations">) => void;
+  onCreateAndAssign: (name: string, type: OrgType) => void;
+  onIgnore: () => void;
+}) {
+  const [mode, setMode] = useState<"idle" | "assign" | "create">("idle");
+  const [orgName, setOrgName] = useState(suggestedOrgName);
+  const [orgType, setOrgType] = useState<OrgType>(suggestedOrgType);
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold truncate">{name}</span>
+            {isNewSource && <Tag variant="amber">new source</Tag>}
+          </div>
+          <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {email}
+            {messageCount !== undefined && ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
+            {sampleSubjects[0] && ` · "${sampleSubjects[0]}"`}
+          </div>
+          {mode === "idle" && (
+            <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Suggested org: <strong>{suggestedOrgName}</strong>
+            </div>
+          )}
+        </div>
+        {mode === "idle" && (
+          <div className="flex gap-2 flex-wrap shrink-0">
+            <Btn primary onClick={() => setMode("create")}>Create org</Btn>
+            <Btn onClick={() => setMode("assign")}>Assign existing</Btn>
+            <Btn danger onClick={onIgnore}>Ignore</Btn>
+          </div>
+        )}
+      </div>
+
+      {mode === "assign" && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+            Organization
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) { onAssignToOrg(e.target.value as Id<"organizations">); setMode("idle"); }
+              }}
+              className={input()}
+            >
+              <option value="">Choose…</option>
+              {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
+            </select>
+          </label>
+          <Btn onClick={() => setMode("idle")}>Cancel</Btn>
+        </div>
+      )}
+
+      {mode === "create" && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onCreateAndAssign(orgName, orgType);
+            setMode("idle");
+          }}
+          className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 grid gap-3 sm:grid-cols-[1fr_180px_auto] sm:items-end"
+        >
+          <Field label="New org name" value={orgName} onChange={setOrgName} required />
+          <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
+            Type
+            <select value={orgType} onChange={(e) => setOrgType(e.target.value as OrgType)} className={input()}>
+              {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <Btn primary>Create &amp; assign</Btn>
+            <Btn type="button" onClick={() => setMode("idle")}>Cancel</Btn>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
 function CandidateRow({
   candidate,
   onApprove,
@@ -640,111 +787,6 @@ function CandidateRow({
               className={input()}
             />
           </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function UnassignedSourceRow({
-  source,
-  organizations,
-  onAssign,
-  onCreateAndAssign,
-}: {
-  source: Listserv;
-  organizations: Organization[];
-  onAssign: (orgId: Id<"organizations">) => void;
-  onCreateAndAssign: (name: string, type: OrgType) => void;
-}) {
-  const suggested = suggestFromEmail(source.listEmail);
-  const [mode, setMode] = useState<"idle" | "assign" | "create">("idle");
-  const [orgName, setOrgName] = useState(suggested.organizationName);
-  const [orgType, setOrgType] = useState<OrgType>("club");
-
-  return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold">{source.name}</div>
-          <div className="text-[length:var(--font-size-body3)] text-amber-700">{source.listEmail}</div>
-          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            Suggested org: <strong>{suggested.organizationName}</strong>
-          </div>
-        </div>
-        {mode === "idle" && (
-          <div className="flex gap-2 flex-wrap">
-            <Btn primary onClick={() => setMode("assign")}>Assign to org</Btn>
-            <Btn onClick={() => setMode("create")}>Create new org</Btn>
-          </div>
-        )}
-      </div>
-      {mode === "assign" && (
-        <div className="border-t border-amber-200 bg-white px-4 py-3 flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
-            Organization
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                if (e.target.value) onAssign(e.target.value as Id<"organizations">);
-              }}
-              className={input()}
-            >
-              <option value="">Choose…</option>
-              {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
-            </select>
-          </label>
-          <Btn onClick={() => setMode("idle")}>Cancel</Btn>
-        </div>
-      )}
-      {mode === "create" && (
-        <form
-          onSubmit={(e) => { e.preventDefault(); onCreateAndAssign(orgName, orgType); setMode("idle"); }}
-          className="border-t border-amber-200 bg-white px-4 py-3 grid gap-3 sm:grid-cols-[1fr_180px_auto] sm:items-end"
-        >
-          <Field label="New org name" value={orgName} onChange={setOrgName} required />
-          <label className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold">
-            Type
-            <select value={orgType} onChange={(e) => setOrgType(e.target.value as OrgType)} className={input()}>
-              {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </label>
-          <div className="flex gap-2">
-            <Btn primary>Create</Btn>
-            <Btn type="button" onClick={() => setMode("idle")}>Cancel</Btn>
-          </div>
-        </form>
-      )}
-    </div>
-  );
-}
-
-function UnrecognizedSenderRow({ sender, onApprove }: { sender: UnassignedSender; onApprove: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-[length:var(--font-size-body2)]">{sender.senderEmail}</div>
-          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            {sender.count} message{sender.count !== 1 ? "s" : ""}
-            {sender.sampleSubjects[0] && ` · "${sender.sampleSubjects[0]}"`}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-[length:var(--font-size-body2)] rounded-lg bg-[var(--color-neutral-100)] px-3 py-1.5">
-            Will create: <strong>{sender.suggestion.organizationName}</strong>
-          </div>
-          <Btn primary onClick={onApprove}>Approve</Btn>
-          <Btn onClick={() => setExpanded(!expanded)}>Details</Btn>
-        </div>
-      </div>
-      {expanded && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
-          <strong>Subjects:</strong> {sender.sampleSubjects.join(" · ") || "—"}
-          <br />
-          <strong>Source type:</strong> {sender.suggestion.sourceType}
-          · <strong>Source name:</strong> {sender.suggestion.sourceName}
         </div>
       )}
     </div>
