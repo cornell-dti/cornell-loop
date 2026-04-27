@@ -347,10 +347,32 @@ const SAMPLE_RSVP_GROUPS = [
 ];
 
 const SAMPLE_CLUBS = [
-  { id: "cds", name: "CDS", notificationCount: 3 },
-  { id: "cai", name: "Cornell AI", notificationCount: 0 },
-  { id: "dtx", name: "DTX" },
-  { id: "cuse", name: "CUSE" },
+  {
+    id: "cds",
+    name: "CDS",
+    notificationCount: 3,
+    description:
+      "Cornell Data Science — ML project teams, workshops, and an annual hackathon focused on applied data science.",
+  },
+  {
+    id: "cai",
+    name: "Cornell AI",
+    notificationCount: 0,
+    description:
+      "Student group exploring artificial-intelligence research, reading groups, and applied AI projects across disciplines.",
+  },
+  {
+    id: "dtx",
+    name: "DTX",
+    description:
+      "Design Tech at Cornell — cross-disciplinary club pairing designers and engineers on product teams.",
+  },
+  {
+    id: "cuse",
+    name: "CUSE",
+    description:
+      "Cornell University Sustainable Enterprise — consulting projects and speaker events on sustainability and impact.",
+  },
 ];
 
 const SAMPLE_RESULT_GROUPS = [

@@ -5,12 +5,14 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./styles/*": "./src/styles/*"
+    "./styles/*": "./src/styles/*",
+    "./assets/*": "./src/assets/*"
   },
   "dependencies": {
     "lucide-react": "^0.544.0"
   },
   "peerDependencies": {
+    "lucide-react": "^0.544.0",
     "react": ">=18"
   },
   "devDependencies": {

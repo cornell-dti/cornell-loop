@@ -6,6 +6,78 @@ import { v } from "convex/values";
 export default defineSchema({
   ...authTables,
 
+  // Per-user profile (extends auth `users` row)
+  userProfiles: defineTable({
+    userId: v.id("users"),
+    major: v.optional(v.string()),
+    gradYear: v.optional(v.string()),
+    minor: v.optional(v.string()),
+    interests: v.array(v.string()),
+    onboardingCompletedAt: v.optional(v.number()),
+    isSeed: v.optional(v.boolean()),
+  }).index("by_user", ["userId"]),
+
+  // Organizations (clubs) — first-class entity for follows + org page
+  orgs: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    avatarUrl: v.optional(v.string()),
+    coverImageUrl: v.optional(v.string()),
+    description: v.string(),
+    tags: v.array(v.string()),
+    websiteUrl: v.optional(v.string()),
+    email: v.optional(v.string()),
+    isVerified: v.boolean(),
+    loopSummary: v.optional(v.string()), // populated by seed/AI branch later
+    isSeed: v.optional(v.boolean()),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_seed", ["isSeed"])
+    .searchIndex("search_orgs_name", { searchField: "name" })
+    .searchIndex("search_orgs_desc", { searchField: "description" }),
+
+  // Denormalized event<->org join so feed can be assembled per followed org
+  eventOrgs: defineTable({
+    eventId: v.id("events"),
+    orgId: v.id("orgs"),
+    eventCreationTime: v.number(),
+    isSeed: v.optional(v.boolean()),
+  })
+    .index("by_org", ["orgId", "eventCreationTime"])
+    .index("by_event", ["eventId"])
+    .index("by_seed", ["isSeed"]),
+
+  follows: defineTable({
+    userId: v.id("users"),
+    orgId: v.id("orgs"),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_org", ["userId", "orgId"])
+    .index("by_org", ["orgId"]),
+
+  bookmarks: defineTable({
+    userId: v.id("users"),
+    eventId: v.id("events"),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_event", ["userId", "eventId"]),
+
+  rsvps: defineTable({
+    userId: v.id("users"),
+    eventId: v.id("events"),
+    status: v.union(
+      v.literal("going"),
+      v.literal("interested"),
+      v.literal("maybe"),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_event", ["userId", "eventId"])
+    .index("by_event", ["eventId"]),
+
   // raw email data
   listservEmails: defineTable({
     listserv: v.string(), // listserv name
@@ -14,7 +86,10 @@ export default defineSchema({
     rawHtml: v.optional(v.string()),
     rawText: v.optional(v.string()),
     section: v.optional(v.string()), // "On-Campus", "Off-Campus", "Opportunities"
-  }).index("by_listserv", ["listserv"]),
+    isSeed: v.optional(v.boolean()),
+  })
+    .index("by_listserv", ["listserv"])
+    .index("by_seed", ["isSeed"]),
 
   // One row per listserv item
   events: defineTable({
@@ -119,8 +194,12 @@ export default defineSchema({
         v.literal("paid"),
       ),
     ),
+    isSeed: v.optional(v.boolean()),
   })
     .index("by_listserv", ["listserv"])
     .index("by_section", ["listservSection"])
-    .index("by_event_type", ["eventType"]),
+    .index("by_event_type", ["eventType"])
+    .index("by_seed", ["isSeed"])
+    .searchIndex("search_events_title", { searchField: "title" })
+    .searchIndex("search_events_desc", { searchField: "description" }),
 });

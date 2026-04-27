@@ -28,10 +28,18 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import type { ComponentPropsWithoutRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { Tag } from "./Tags";
 import { fallbackColorsForName } from "../utils/fallbackColors";
 import { DateBadge } from "./DateBadge";
+import { OrgHoverCard } from "./OrgHoverCard";
+import type { Organization } from "./Cards/DashboardPost";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -61,6 +69,12 @@ export interface Club {
   avatarUrl?: string;
   /** When > 0 an orange notification pill is rendered over the avatar. */
   notificationCount?: number;
+  /**
+   * Short blurb about the club — surfaced in hover/detail contexts (e.g.
+   * OrgHoverCard) and useful when the same fixture feeds both the sidebar
+   * list and a richer surface.
+   */
+  description?: string;
 }
 
 export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
@@ -68,6 +82,13 @@ export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
   rsvpGroups?: RsvpGroup[];
   /** Subscribed clubs shown in a wrap grid. */
   clubs?: Club[];
+  /**
+   * Called when a club row is clicked.
+   * Hover still triggers the OrgHoverCard preview regardless of this handler.
+   */
+  onClubClick?: (club: Club) => void;
+  /** Called when an RSVP'd event row is clicked. */
+  onRsvpClick?: (event: RsvpEvent) => void;
 }
 
 // ── SearchResultList types ────────────────────────────────────────────────────
@@ -125,23 +146,46 @@ const SECTION_TITLE =
 
 // ─── RsvpEventRow ─────────────────────────────────────────────────────────────
 
-function RsvpEventRow({ event }: { event: RsvpEvent }) {
+function RsvpEventRow({
+  event,
+  onClick,
+}: {
+  event: RsvpEvent;
+  onClick?: () => void;
+}) {
+  const interactive = Boolean(onClick);
   return (
     /*
      * Interactive states:
      *   Normal  → white bg, no shadow
      *   Hover   → surface-subtle bg (Figma: the same subtle wash used in nav tabs)
      * Matches Figma node 510:706 (RSVP card row)
+     *
+     * Renders as a button when clickable so keyboard activation + focus rings work.
      */
     <div
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       className={[
         "flex w-full items-center gap-[var(--space-3)]",
         "p-[var(--space-1-5)]",
         "rounded-[var(--radius-input)]",
         "bg-[var(--color-surface)]",
-        "cursor-pointer",
+        interactive ? "cursor-pointer" : "",
         "hover:bg-[var(--color-surface-subtle)]",
         "transition-colors duration-150",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary-700)]",
       ].join(" ")}
     >
       <DateBadge day={event.day} month={event.month} />
@@ -174,79 +218,136 @@ function RsvpEventRow({ event }: { event: RsvpEvent }) {
 
 // ─── ClubItem ─────────────────────────────────────────────────────────────────
 
-function ClubItem({ club }: { club: Club }) {
+function ClubItem({ club, onClick }: { club: Club; onClick?: () => void }) {
   const count = club.notificationCount ?? 0;
   const fallback = fallbackColorsForName(club.name);
 
+  // Hover card state — mirrors the pattern in DashboardPost so a club row
+  // reveals its description on hover. The card is placed to the LEFT of the
+  // row because the SearchPanel itself is a narrow right-side column; a
+  // bottom dropdown would overflow the panel horizontally.
+  const [hovered, setHovered] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const handleEnter = useCallback(() => {
+    clearHideTimer();
+    setHovered(true);
+  }, [clearHideTimer]);
+
+  const handleLeave = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setHovered(false), 120);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current !== null) {
+        clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Adapt Club → Organization shape for OrgHoverCard. Clubs in "Your Clubs"
+  // are by definition already subscribed, so default to `following: true`.
+  const org: Organization = {
+    name: club.name,
+    avatarUrl: club.avatarUrl,
+    description: club.description,
+    following: true,
+  };
+
+  const interactive = Boolean(onClick);
+  // Wrap the row as a real <button> so screen readers/axe see a single
+  // interactive control. The hover card lives outside the button as a
+  // positioned sibling — `nested-interactive` would fire if it sat inside.
+  const RowTag = interactive ? "button" : "div";
   return (
     <div
-      className={[
-        "flex w-full items-center gap-[var(--space-3)]",
-        "p-[var(--space-1-5)]",
-        "rounded-[var(--radius-input)]",
-        "cursor-pointer",
-        "hover:bg-[var(--color-surface-subtle)]",
-        "transition-colors duration-150",
-      ].join(" ")}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+      className="relative w-full"
     >
-      {/* Avatar + badge wrapper */}
-      <div className="relative shrink-0">
-        <div
-          className={[
-            "overflow-hidden rounded-full",
-            "size-[var(--space-8)]",
-            "bg-[var(--color-surface-subtle)]",
-          ].join(" ")}
-        >
-          {club.avatarUrl ? (
-            <img
-              src={club.avatarUrl}
-              alt={club.name}
-              className="size-full object-cover"
-            />
-          ) : (
+      <OrgHoverCard org={org} visible={hovered} placement="left" />
+      <RowTag
+        type={interactive ? "button" : undefined}
+        onClick={onClick}
+        aria-label={interactive ? `Open ${club.name}` : undefined}
+        className={[
+          "flex w-full items-center gap-[var(--space-3)]",
+          "p-[var(--space-1-5)]",
+          "rounded-[var(--radius-input)]",
+          interactive ? "cursor-pointer" : "",
+          "bg-transparent text-left",
+          "hover:bg-[var(--color-surface-subtle)]",
+          "transition-colors duration-150",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary-700)]",
+        ].join(" ")}
+      >
+        {/* Avatar + badge wrapper */}
+        <div className="relative shrink-0">
+          <div
+            className={[
+              "overflow-hidden rounded-full",
+              "size-[var(--space-8)]",
+              "bg-[var(--color-surface-subtle)]",
+            ].join(" ")}
+          >
+            {club.avatarUrl ? (
+              <img
+                src={club.avatarUrl}
+                alt={club.name}
+                className="size-full object-cover"
+              />
+            ) : (
+              <span
+                className={
+                  "flex size-full items-center justify-center " +
+                  "font-[family-name:var(--font-body)] font-semibold " +
+                  "text-[length:var(--font-size-body3)]"
+                }
+                style={{ backgroundColor: fallback.bg, color: fallback.fg }}
+              >
+                {club.name.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          {count > 0 && (
             <span
-              className={
-                "flex size-full items-center justify-center " +
-                "font-[family-name:var(--font-body)] font-semibold " +
-                "text-[length:var(--font-size-body3)]"
-              }
-              style={{ backgroundColor: fallback.bg, color: fallback.fg }}
+              className={[
+                "absolute top-[-5px] right-[-5px]",
+                "inline-flex items-center justify-center",
+                "h-[14px] min-w-[14px]",
+                "px-[3px]",
+                "rounded-full",
+                "bg-[var(--color-primary-700)]",
+                "font-[family-name:var(--font-body)] leading-none font-normal",
+                "text-[length:var(--font-size-badge)] text-[color:var(--color-white)]",
+              ].join(" ")}
+              aria-label={`${count} notifications`}
             >
-              {club.name.charAt(0).toUpperCase()}
+              {count}
             </span>
           )}
         </div>
 
-        {count > 0 && (
-          <span
-            className={[
-              "absolute top-[-5px] right-[-5px]",
-              "inline-flex items-center justify-center",
-              "h-[14px] min-w-[14px]",
-              "px-[3px]",
-              "rounded-full",
-              "bg-[var(--color-primary-700)]",
-              "font-[family-name:var(--font-body)] leading-none font-normal",
-              "text-[length:var(--font-size-badge)] text-[color:var(--color-white)]",
-            ].join(" ")}
-            aria-label={`${count} notifications`}
-          >
-            {count}
-          </span>
-        )}
-      </div>
-
-      {/* Club name */}
-      <span
-        className={
-          BODY2_SEMIBOLD +
-          " min-w-0 truncate text-[color:var(--color-neutral-900)]"
-        }
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {club.name}
-      </span>
+        {/* Club name */}
+        <span
+          className={
+            BODY2_SEMIBOLD +
+            " min-w-0 truncate text-[color:var(--color-neutral-900)]"
+          }
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          {club.name}
+        </span>
+      </RowTag>
     </div>
   );
 }
@@ -256,6 +357,8 @@ function ClubItem({ club }: { club: Club }) {
 export function SearchPanel({
   rsvpGroups = [],
   clubs = [],
+  onClubClick,
+  onRsvpClick,
   className,
   ...rest
 }: SearchPanelProps) {
@@ -276,11 +379,13 @@ export function SearchPanel({
         .join(" ")}
       {...rest}
     >
-      {/* ── Your RSVPs ── */}
-      {rsvpGroups.length > 0 && (
-        <section className="flex w-full flex-col gap-[var(--space-3)]">
-          <h2 className={SECTION_TITLE}>Your RSVPs</h2>
+      {/* ── Your RSVPs ── always rendered so the section never silently
+       * disappears; an empty-state placeholder takes the body when there
+       * are no RSVPs. */}
+      <section className="flex w-full flex-col gap-[var(--space-3)]">
+        <h2 className={SECTION_TITLE}>Your RSVPs</h2>
 
+        {rsvpGroups.length > 0 ? (
           <div className="flex w-full flex-col gap-[var(--space-2)]">
             {rsvpGroups.map((group) => (
               <div
@@ -298,26 +403,49 @@ export function SearchPanel({
                 </p>
 
                 {group.events.map((event, i) => (
-                  <RsvpEventRow key={i} event={event} />
+                  <RsvpEventRow
+                    key={i}
+                    event={event}
+                    onClick={onRsvpClick ? () => onRsvpClick(event) : undefined}
+                  />
                 ))}
               </div>
             ))}
           </div>
-        </section>
-      )}
+        ) : (
+          <p
+            className={BODY3 + " text-[color:var(--color-text-secondary)]"}
+            style={{ fontVariationSettings: "'opsz' 14" }}
+          >
+            No upcoming RSVPs yet. Tap RSVP on any post to see it here.
+          </p>
+        )}
+      </section>
 
-      {/* ── Your Clubs ── */}
-      {clubs.length > 0 && (
-        <section className="flex w-full flex-col gap-[var(--space-3)]">
-          <h2 className={SECTION_TITLE}>Your Clubs</h2>
+      {/* ── Your Clubs ── always rendered; empty-state placeholder shown
+       * when the user follows zero clubs. */}
+      <section className="flex w-full flex-col gap-[var(--space-3)]">
+        <h2 className={SECTION_TITLE}>Your Clubs</h2>
 
+        {clubs.length > 0 ? (
           <div className="flex flex-col gap-[var(--space-1)]">
             {clubs.map((club) => (
-              <ClubItem key={club.id} club={club} />
+              <ClubItem
+                key={club.id}
+                club={club}
+                onClick={onClubClick ? () => onClubClick(club) : undefined}
+              />
             ))}
           </div>
-        </section>
-      )}
+        ) : (
+          <p
+            className={BODY3 + " text-[color:var(--color-text-secondary)]"}
+            style={{ fontVariationSettings: "'opsz' 14" }}
+          >
+            Not following any clubs yet.
+          </p>
+        )}
+      </section>
     </aside>
   );
 }
