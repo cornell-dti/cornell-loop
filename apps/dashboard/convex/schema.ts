@@ -465,7 +465,6 @@ export default defineSchema({
     .index("by_dedupe_key", ["dedupeKey"])
     .index("by_section", ["listservSection"])
     .index("by_event_type", ["eventType"])
-    .index("by_creation_time", ["_creationTime"])
     .index("by_seed", ["isSeed"])
     .searchIndex("search_events_title", { searchField: "title" })
     .searchIndex("search_events_desc", { searchField: "description" }),

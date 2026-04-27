@@ -105,7 +105,6 @@ export const feed = query({
     ): Promise<Doc<"events">[]> => {
       const pool = await ctx.db
         .query("events")
-        .withIndex("by_creation_time")
         .order("desc")
         .take(RECOMMENDED_POOL_SIZE);
       const out: Doc<"events">[] = [];
@@ -203,14 +202,13 @@ export const feed = query({
       return [...personalised, ...recent];
     };
 
-    // "all" scope or signed-out: paginate over all events with by_creation_time
+    // "all" scope or signed-out: paginate over all events with creation-time
     // ordering, then opportunistically backfill the first page with
     // recommended events if the page comes up short. We tag every event with
     // source = "recommended" because the user has no follow context.
     if (scope === "all" || userId === null) {
       const result = await ctx.db
         .query("events")
-        .withIndex("by_creation_time")
         .order("desc")
         .paginate(args.paginationOpts);
 
