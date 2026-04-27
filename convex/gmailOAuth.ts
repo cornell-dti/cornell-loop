@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { httpAction, internalMutation, internalQuery, query } from "./_generated/server";
+import { httpAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -49,11 +49,52 @@ export const connectionStatus = query({
   },
 });
 
+// Called from the frontend (with the admin token over the Convex API, not in a URL).
+// Returns a short-lived one-time nonce the browser can use in the OAuth start URL
+// so the admin token itself never appears in a navigable URL or server access log.
+export const createOAuthNonce = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const nonce = crypto.randomUUID();
+    const now = Date.now();
+    await ctx.db.insert("gmailOAuthStates", {
+      state: nonce,
+      createdAt: now,
+      expiresAt: now + 5 * 60 * 1000, // 5 minutes
+      adminNonce: true,
+    });
+    return nonce;
+  },
+});
+
+export const consumeAdminNonce = internalMutation({
+  args: { nonce: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("gmailOAuthStates")
+      .withIndex("by_state", (q) => q.eq("state", args.nonce))
+      .unique();
+    if (!row || !row.adminNonce || row.usedAt || row.expiresAt < Date.now()) return false;
+    await ctx.db.patch(row._id, { usedAt: Date.now() });
+    return true;
+  },
+});
+
 export const start = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
-    const token = url.searchParams.get("token") ?? "";
-    requireAdminToken(token);
+
+    // Prefer the safe nonce-based flow. Fall back to legacy ?token= for backwards
+    // compatibility, but the frontend should always use the nonce path.
+    const nonce = url.searchParams.get("nonce");
+    if (nonce) {
+      const valid = await ctx.runMutation(internal.gmailOAuth.consumeAdminNonce, { nonce });
+      if (!valid) return textResponse("Nonce is invalid, already used, or expired.", 403);
+    } else {
+      const token = url.searchParams.get("token") ?? "";
+      requireAdminToken(token);
+    }
 
     const state = crypto.randomUUID();
     await ctx.runMutation(internal.gmailOAuth.createOAuthState, { state });

@@ -146,6 +146,52 @@ export const dashboard = query({
         .take(50),
     ]);
 
+    // Fields needed for the confirmation queue (link extraction + sender matching).
+    const confirmationFields = (m: (typeof recentMessages)[number]) => ({
+      _id: m._id,
+      _creationTime: m._creationTime,
+      receivedAt: m.receivedAt,
+      listservId: m.listservId,
+      subject: m.subject,
+      senderEmail: m.senderEmail,
+      sender: m.sender,
+      to: m.to,
+      cc: m.cc,
+      processingStatus: m.processingStatus,
+      confirmationClearedAt: m.confirmationClearedAt,
+      bodyText: m.bodyText,
+      bodyHtml: m.bodyHtml,
+    });
+
+    // Pending confirmations: uncleared messages that look like confirmation requests.
+    // These need body content so we keep those fields — but only for this targeted set.
+    const isConfirmation = (m: (typeof recentMessages)[number]) => {
+      const sender = m.senderEmail.toLowerCase();
+      const text = `${m.subject}\n${m.bodyText}`.toLowerCase();
+      return sender.startsWith("lyris-confirm-") ||
+        /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text);
+    };
+    const pendingConfirmations = recentMessages
+      .filter((m) => m.confirmationClearedAt === undefined && isConfirmation(m))
+      .map(confirmationFields);
+
+    // Project only the fields the admin UI actually needs for the general message
+    // list — never send email body content (bodyHtml / bodyText) there.
+    const recentMessagesProjected = recentMessages.map((m) => ({
+      _id: m._id,
+      _creationTime: m._creationTime,
+      receivedAt: m.receivedAt,
+      listservId: m.listservId,
+      subject: m.subject,
+      senderEmail: m.senderEmail,
+      processingStatus: m.processingStatus,
+    }));
+
+    // Cleared confirmations also need body fields for the same reasons.
+    const clearedConfirmationsFiltered = clearedConfirmations
+      .filter((message) => message.confirmationClearedAt !== undefined)
+      .map(confirmationFields);
+
     return {
       candidates,
       listservs,
@@ -153,10 +199,9 @@ export const dashboard = query({
       discoveryRuns,
       joinAttempts,
       ingestionRuns,
-      recentMessages,
-      clearedConfirmations: clearedConfirmations.filter(
-        (message) => message.confirmationClearedAt !== undefined,
-      ),
+      recentMessages: recentMessagesProjected,
+      pendingConfirmations,
+      clearedConfirmations: clearedConfirmationsFiltered,
     };
   },
 });

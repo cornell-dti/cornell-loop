@@ -179,11 +179,24 @@ export const overview = query({
     const readyMessages = newMessages.filter((m) => m.organizationId !== undefined);
     const needsAssignment = newMessages.filter((m) => m.organizationId === undefined);
 
+    // Project only what the admin UI needs — no email body content sent to client.
+    const projectMessage = (m: (typeof failedMessages)[number]) => ({
+      _id: m._id,
+      _creationTime: m._creationTime,
+      subject: m.subject,
+      senderEmail: m.senderEmail,
+      processingStatus: m.processingStatus,
+      parseError: m.parseError,
+      organizationId: m.organizationId,
+      listservId: m.listservId,
+      receivedAt: m.receivedAt,
+    });
+
     return {
       runs,
       drafts,
-      failedMessages,
-      readyMessages,
+      failedMessages: failedMessages.map(projectMessage),
+      readyMessages: readyMessages.map(projectMessage),
       needsAssignmentCount: needsAssignment.length,
     };
   },

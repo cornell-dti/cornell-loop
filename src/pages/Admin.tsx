@@ -12,7 +12,14 @@ type Candidate = Doc<"listservCandidates">;
 type Listserv = Doc<"listservs">;
 type IngestionState = Doc<"listservIngestionState">;
 type IngestionRun = Doc<"ingestionRuns">;
-type ListservMessage = Doc<"listservMessages">;
+// Full doc type — kept for reference but dashboard/overview queries return projected subsets.
+type _ListservMessageFull = Doc<"listservMessages">;
+// Projected shape returned by the dashboard query for the recent-messages table.
+type RecentMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "receivedAt" | "listservId" | "subject" | "senderEmail" | "processingStatus">;
+// Projected shape for confirmation messages (includes body fields needed for link extraction).
+type ConfirmationMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "receivedAt" | "listservId" | "subject" | "senderEmail" | "sender" | "to" | "cc" | "processingStatus" | "confirmationClearedAt" | "bodyText" | "bodyHtml">;
+// Projected shape returned by parser.overview for failed/ready messages.
+type ParseMessage = Pick<_ListservMessageFull, "_id" | "_creationTime" | "subject" | "senderEmail" | "processingStatus" | "parseError" | "organizationId" | "listservId" | "receivedAt">;
 type Organization = Doc<"organizations">;
 type EventDoc = Doc<"events">;
 type ParseRun = Doc<"parseRuns">;
@@ -89,7 +96,7 @@ const JOIN_STRATEGIES: JoinStrategy[] = [
 // ─── Root ────────────────────────────────────────────────────────────────────
 
 export default function Admin() {
-  const [token, setToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "");
+  const [token, setToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "");
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
     const p = new URLSearchParams(window.location.search).get("tab");
     return TABS.some((t) => t.id === p) ? (p as AdminTab) : "setup";
@@ -104,7 +111,7 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    if (token) localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+    if (token) sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
   }, [token]);
 
   function switchTab(tab: AdminTab) {
@@ -126,6 +133,7 @@ export default function Admin() {
   const runParseNow = useAction(api.parser.runParseNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
 
+  const createOAuthNonce = useMutation(api.gmailOAuth.createOAuthNonce);
   const seedCandidates = useMutation(api.listservAdmin.seedCandidates);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
   const approveCandidate = useMutation(api.listservAdmin.approveCandidate);
@@ -153,8 +161,9 @@ export default function Admin() {
   const listservs: Listserv[] = dashboard?.listservs ?? [];
   const ingestionStates: IngestionState[] = dashboard?.ingestionState ?? [];
   const ingestionRuns: IngestionRun[] = dashboard?.ingestionRuns ?? [];
-  const recentMessages: ListservMessage[] = dashboard?.recentMessages ?? [];
-  const clearedConfirmations: ListservMessage[] = dashboard?.clearedConfirmations ?? [];
+  const recentMessages: RecentMessage[] = (dashboard?.recentMessages ?? []) as RecentMessage[];
+  const pendingConfirmations: ConfirmationMessage[] = (dashboard?.pendingConfirmations ?? []) as ConfirmationMessage[];
+  const clearedConfirmations: ConfirmationMessage[] = (dashboard?.clearedConfirmations ?? []) as ConfirmationMessage[];
   const joinAttempts: JoinAttempt[] = dashboard?.joinAttempts ?? [];
 
   const organizations: Organization[] = sourceData?.organizations ?? [];
@@ -163,8 +172,8 @@ export default function Admin() {
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
   const drafts: EventDoc[] = parseData?.drafts ?? [];
-  const failedMessages: ListservMessage[] = parseData?.failedMessages ?? [];
-  const readyMessages: ListservMessage[] = parseData?.readyMessages ?? [];
+  const failedMessages: ParseMessage[] = (parseData?.failedMessages ?? []) as ParseMessage[];
+  const readyMessages: ParseMessage[] = (parseData?.readyMessages ?? []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
@@ -186,7 +195,7 @@ export default function Admin() {
           <div className="flex items-center gap-3">
             <GmailDot status={gmailStatus} />
             <button
-              onClick={() => { localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY); setToken(""); }}
+              onClick={() => { sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY); setToken(""); }}
               className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-neutral-700)]"
             >
               Sign out
@@ -225,10 +234,19 @@ export default function Admin() {
       <div className="mx-auto max-w-[1400px] px-6 py-6">
         {activeTab === "setup" && (
           <SetupTab
-            token={token}
             gmailStatus={gmailStatus}
             candidates={candidates}
             discoveryRuns={dashboard?.discoveryRuns ?? []}
+            onConnectGmail={async () => {
+              try {
+                const nonce = await createOAuthNonce({ token });
+                const siteUrl = getConvexSiteUrl();
+                if (!siteUrl) { showToast("Convex site URL not configured.", false); return; }
+                window.open(`${siteUrl}/gmail/oauth/start?nonce=${encodeURIComponent(nonce)}`, "_blank");
+              } catch (e) {
+                showToast(e instanceof Error ? e.message : "Failed to start OAuth.", false);
+              }
+            }}
             onRunDiscovery={() => act("Discovery complete.", () => runDiscovery({ token }))}
             onSeedCandidates={() => act("Candidates loaded.", () => seedCandidates({ token }))}
             onAddCandidate={(email, name, notes) =>
@@ -298,6 +316,7 @@ export default function Admin() {
             states={ingestionStates}
             runs={ingestionRuns}
             messages={recentMessages}
+            pendingConfirmations={pendingConfirmations}
             clearedConfirmations={clearedConfirmations}
             listservById={listservById}
             onRunNow={() => act("Ingestion complete.", () => runIngestionNow({ token }))}
@@ -354,18 +373,18 @@ function LoginScreen({ onToken }: { onToken: (t: string) => void }) {
 // ─── Setup tab ────────────────────────────────────────────────────────────────
 
 function SetupTab({
-  token,
   gmailStatus,
   candidates,
   discoveryRuns,
+  onConnectGmail,
   onRunDiscovery,
   onSeedCandidates,
   onAddCandidate,
 }: {
-  token: string;
   gmailStatus: GmailStatus | undefined;
   candidates: Candidate[];
   discoveryRuns: Doc<"discoveryRuns">[];
+  onConnectGmail: () => void;
   onRunDiscovery: () => void;
   onSeedCandidates: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
@@ -373,9 +392,6 @@ function SetupTab({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
-
-  const convexSiteUrl = getConvexSiteUrl();
-  const connectUrl = convexSiteUrl ? `${convexSiteUrl}/gmail/oauth/start?token=${encodeURIComponent(token)}` : "";
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -396,15 +412,9 @@ function SetupTab({
               {gmailStatus.lastError && <p className="mt-1 text-[length:var(--font-size-body3)] text-red-600">{gmailStatus.lastError}</p>}
             </div>
           )}
-          <a
-            href={connectUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-disabled={!connectUrl}
-            className="inline-flex shrink-0 items-center rounded-lg bg-[var(--color-primary-700)] px-4 py-2 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)] aria-disabled:opacity-40"
-          >
+          <Btn primary onClick={onConnectGmail}>
             {gmailStatus?.status === "connected" ? "Reconnect" : "Connect Gmail"}
-          </a>
+          </Btn>
         </div>
       </Card>
 
@@ -770,7 +780,7 @@ function JoinTab({
 }: {
   listservs: Listserv[];
   joinAttempts: JoinAttempt[];
-  clearedConfirmations: ListservMessage[];
+  clearedConfirmations: ConfirmationMessage[];
   joinDraft: JoinDraft | null;
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
@@ -948,6 +958,7 @@ function IngestTab({
   states,
   runs,
   messages,
+  pendingConfirmations,
   clearedConfirmations,
   listservById,
   onRunNow,
@@ -955,14 +966,14 @@ function IngestTab({
 }: {
   states: IngestionState[];
   runs: IngestionRun[];
-  messages: ListservMessage[];
-  clearedConfirmations: ListservMessage[];
+  messages: RecentMessage[];
+  pendingConfirmations: ConfirmationMessage[];
+  clearedConfirmations: ConfirmationMessage[];
   listservById: Map<Id<"listservs">, Listserv>;
   onRunNow: () => void;
   onClearConfirmation: (id: Id<"listservMessages">) => void;
 }) {
-  const pending = messages
-    .filter((m) => !m.confirmationClearedAt)
+  const pending = pendingConfirmations
     .map((m) => toConfirmationItem(m, listservById))
     .filter((i): i is ConfirmationItem => i !== null);
 
@@ -1121,7 +1132,7 @@ function PublishTab({
 }: {
   runs: ParseRun[];
   drafts: EventDoc[];
-  failedMessages: ListservMessage[];
+  failedMessages: ParseMessage[];
   readyCount: number;
   needsAssignment: number;
   onRunParse: () => void;
@@ -1493,10 +1504,9 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
 }
 
 function toConfirmationItem(
-  mail: ListservMessage,
+  mail: ConfirmationMessage,
   listservById: Map<Id<"listservs">, Listserv>,
 ): ConfirmationItem | null {
-  if (!isConfirmationMessage(mail)) return null;
   const link = extractConfirmationLink(mail.bodyText) ?? extractConfirmationLink(mail.bodyHtml);
   return {
     id: mail._id,
@@ -1509,15 +1519,7 @@ function toConfirmationItem(
   };
 }
 
-function isConfirmationMessage(mail: ListservMessage) {
-  const sender = mail.senderEmail.toLowerCase();
-  const text = `${mail.subject}\n${mail.bodyText}`.toLowerCase();
-  return sender.startsWith("lyris-confirm-") ||
-    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text);
-}
-
-function confirmationMatchesListserv(mail: ListservMessage, listserv: Listserv) {
-  if (!isConfirmationMessage(mail)) return false;
+function confirmationMatchesListserv(mail: ConfirmationMessage, listserv: Listserv) {
   if (mail.listservId === listserv._id) return true;
   const searchable = `${mail.subject}\n${mail.bodyText}\n${mail.senderEmail}\n${mail.to.join(" ")}\n${mail.cc.join(" ")}`.toLowerCase();
   const addresses = [listserv.listEmail, ...listserv.senderEmails].map((v) => v.toLowerCase());
@@ -1530,7 +1532,7 @@ function extractConfirmationLink(value: string) {
   return match?.[0].replace(/&amp;/g, "&");
 }
 
-function inferListNameFromMessage(mail: ListservMessage) {
+function inferListNameFromMessage(mail: ConfirmationMessage) {
   const match = `${mail.subject}\n${mail.bodyText}`.match(/(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i);
   return match?.[1] ?? "Possible confirmation";
 }

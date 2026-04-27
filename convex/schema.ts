@@ -261,6 +261,9 @@ export default defineSchema({
     createdAt: v.number(),
     expiresAt: v.number(),
     usedAt: v.optional(v.number()),
+    // When true this row was created as a short-lived admin-initiation nonce
+    // (used so the admin token never appears in a navigable URL).
+    adminNonce: v.optional(v.boolean()),
   }).index("by_state", ["state"]),
 
   // One row per listserv item
