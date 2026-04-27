@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
@@ -22,6 +22,11 @@ import featureCalendar from "../assets/landing/feature-mockup-calendar.svg";
 import featureClubDiscovery from "../assets/landing/feature-mockup-club-discovery.svg";
 import previewEventCard from "../assets/landing/preview-event-card.png";
 import previewLoopSummary from "../assets/landing/preview-loop-summary.png";
+import club1 from "../assets/landing/club-1.png";
+import club2 from "../assets/landing/club-2.png";
+import club3 from "../assets/landing/club-3.png";
+import club4 from "../assets/landing/club-4.jpeg";
+import club5 from "../assets/landing/club-5.png";
 
 // ─── Inline SVG icons ────────────────────────────────────────────────────────
 
@@ -138,14 +143,12 @@ const FEATURE_VARIANTS = {
 
 function FeatureCard({
   variant,
-  mockupSrc,
-  mockupAlt,
+  mockup,
   title,
   description,
 }: {
   variant: keyof typeof FEATURE_VARIANTS;
-  mockupSrc: string;
-  mockupAlt: string;
+  mockup: ReactNode;
   title: string;
   description: string;
 }) {
@@ -158,14 +161,8 @@ function FeatureCard({
         v.border,
       ].join(" ")}
     >
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
-        <img
-          src={mockupSrc}
-          alt={mockupAlt}
-          loading="lazy"
-          decoding="async"
-          className="h-full max-h-full w-full object-contain object-center"
-        />
+      <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center">
+        {mockup}
       </div>
       <div className="flex flex-col gap-1">
         <h3
@@ -187,6 +184,168 @@ function FeatureCard({
           {description}
         </p>
       </div>
+    </div>
+  );
+}
+
+// ─── Club discovery mockup (network graph) ──────────────────────────────────
+//
+// IEEE popup at the center of a small graph: club marks on the perimeter,
+// dashed edges connecting marks to each other and to the IEEE hub. Hovering
+// a mark brightens the edges incident on it (and its mark scales up); other
+// marks dim. Static — no floating.
+//
+// Marks accept an optional `logoSrc`; fallback is a two-letter monogram.
+
+type MarkSize = "sm" | "md" | "lg";
+
+const MARK_SIZE_PX: Record<MarkSize, number> = { sm: 42, md: 54, lg: 68 };
+
+interface ClubMark {
+  name: string;
+  initials: string;
+  logoSrc?: string;
+  size: MarkSize;
+  /** Solid background. */
+  bg: string;
+  /** Initials colour. */
+  fg: string;
+  /** Center position as % of container. */
+  rxPct: number;
+  ryPct: number;
+}
+
+const DISCOVERY_CLUBS: ClubMark[] = [
+  // Top row
+  {
+    name: "ACSU",
+    initials: "AC",
+    logoSrc: club1,
+    size: "lg",
+    bg: "var(--color-primary-500)",
+    fg: "var(--color-primary-900)",
+    rxPct: 26,
+    ryPct: 16,
+  },
+  {
+    name: "WICC",
+    initials: "WI",
+    logoSrc: club2,
+    size: "md",
+    bg: "#ffffff",
+    fg: "var(--color-primary-700)",
+    rxPct: 72,
+    ryPct: 16,
+  },
+  // Bottom row
+  {
+    name: "DTI",
+    initials: "DT",
+    logoSrc: club3,
+    size: "sm",
+    bg: "var(--color-primary-600)",
+    fg: "#ffffff",
+    rxPct: 18,
+    ryPct: 84,
+  },
+  {
+    name: "GCC",
+    initials: "GC",
+    logoSrc: club4,
+    size: "md",
+    bg: "var(--color-secondary-700)",
+    fg: "#ffffff",
+    rxPct: 50,
+    ryPct: 87,
+  },
+  {
+    name: "AAP",
+    initials: "AA",
+    logoSrc: club5,
+    size: "sm",
+    bg: "#ffffff",
+    fg: "var(--color-secondary-700)",
+    rxPct: 82,
+    ryPct: 84,
+  },
+];
+
+function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
+  return (
+    <div className="relative h-full min-h-[320px] w-full select-none">
+      {/* Spokes from each chip to the IEEE banner center. */}
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 h-full w-full"
+        preserveAspectRatio="none"
+      >
+        {DISCOVERY_CLUBS.map((c, i) => (
+          <line
+            key={`s-${i}`}
+            x1={`${c.rxPct}%`}
+            y1={`${c.ryPct}%`}
+            x2="50%"
+            y2="50%"
+            stroke="var(--color-secondary-700)"
+            strokeOpacity={0.35}
+            strokeDasharray="4 6"
+            strokeLinecap="round"
+            style={{
+              strokeWidth: 3,
+              vectorEffect: "non-scaling-stroke",
+            }}
+          />
+        ))}
+      </svg>
+
+      {/* IEEE popup hub — full-width banner across the middle. */}
+      <img
+        src={ieeeSrc}
+        alt="IEEE club discovery card"
+        loading="lazy"
+        decoding="async"
+        className="pointer-events-none absolute top-1/2 left-0 z-10 block w-full -translate-y-1/2 drop-shadow-[0_10px_28px_rgba(20,40,80,0.14)]"
+      />
+
+      {/* Club marks (graph nodes). */}
+      {DISCOVERY_CLUBS.map((c) => {
+        const size = MARK_SIZE_PX[c.size];
+        return (
+          <div
+            key={c.name}
+            aria-label={`${c.name} club`}
+            className="absolute z-20 flex items-center justify-center overflow-hidden rounded-full shadow-[0_8px_22px_rgba(20,40,80,0.16)] ring-1 ring-[color:rgba(20,40,80,0.08)]"
+            style={{
+              left: `calc(${c.rxPct}% - ${size / 2}px)`,
+              top: `calc(${c.ryPct}% - ${size / 2}px)`,
+              width: size,
+              height: size,
+              // When a real logo is dropped in, force a white background so
+              // the surrounding `object-contain` letterbox blends into the
+              // chip. Otherwise honour the designed monogram colours.
+              backgroundColor: c.logoSrc ? "#ffffff" : c.bg,
+              color: c.fg,
+            }}
+          >
+            {c.logoSrc ? (
+              <img
+                src={c.logoSrc}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className="h-full w-full object-contain p-[10%]"
+              />
+            ) : (
+              <span
+                className="font-[family-name:var(--font-brand)] font-bold tracking-[-0.02em]"
+                style={{ fontSize: size * 0.42, lineHeight: 1 }}
+              >
+                {c.initials}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -540,36 +699,29 @@ export default function Landing() {
       {/* ── Value Proposition Banner ──────────────────────────────── */}
       <section className="relative px-4 pb-12 md:px-8 md:pb-24 lg:px-[121px]">
         <div className="relative overflow-hidden rounded-3xl bg-[var(--color-black)] px-6 py-8 text-center md:px-16 md:py-[37px] lg:px-[145px]">
-          <div className="relative flex flex-col items-center gap-1">
-            <p
-              className="inline-flex flex-wrap items-center justify-center gap-2 font-[family-name:var(--font-body)] text-[28px] leading-[36px] tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              <LoopLogo
-                variant="mark"
-                size="md"
-                className="inline-block [&_svg]:size-[30px]"
+          <p
+            className="font-[family-name:var(--font-body)] text-[28px] leading-[36px] font-medium tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
+            style={{ fontVariationSettings: "'opsz' 14" }}
+          >
+            <LoopLogo
+              variant="mark"
+              size="md"
+              className="mr-2 inline-flex !size-[1em] align-[-0.18em] [&_svg]:!size-[1em]"
+            />
+            <span className="font-bold">Loop</span>{" "}
+            <span>cuts through newsletter clutter and </span>
+            <span ref={highlightRef} className="relative inline-block">
+              <span
+                aria-hidden="true"
+                className="absolute inset-y-1 -right-1 -left-1 origin-left rounded-xl bg-[var(--color-primary-700)] transition-transform duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]"
+                style={{
+                  transform: isHighlighted ? "scaleX(1)" : "scaleX(0)",
+                }}
               />
-              <span className="font-bold">Loop</span>
-              <span className="font-medium">
-                cuts through newsletter clutter and
-              </span>
-            </p>
-            <p
-              className="font-[family-name:var(--font-body)] text-[28px] leading-[36px] font-medium tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              <span ref={highlightRef} className="relative inline-block">
-                <span
-                  aria-hidden="true"
-                  className="absolute top-0 -right-2 bottom-0 -left-2 rounded-xl bg-white/40 transition-opacity duration-700 ease-out"
-                  style={{ opacity: isHighlighted ? 1 : 0 }}
-                />
-                <span className="relative">highlights</span>
-              </span>{" "}
-              what&apos;s important.
-            </p>
-          </div>
+              <span className="relative">highlights</span>
+            </span>{" "}
+            what&apos;s important.
+          </p>
         </div>
       </section>
 
@@ -587,8 +739,15 @@ export default function Landing() {
             {/* Card A — Directly in your inbox */}
             <FeatureCard
               variant="primary"
-              mockupSrc={featureSubscriptionFeed}
-              mockupAlt="Preview of subscription feed in email inbox"
+              mockup={
+                <img
+                  src={featureSubscriptionFeed}
+                  alt="Preview of subscription feed in email inbox"
+                  loading="lazy"
+                  decoding="async"
+                  className="h-full max-h-full w-full object-contain object-center"
+                />
+              }
               title="Directly in your inbox"
               description="See the highlights from all your favorite clubs and more."
             />
@@ -596,17 +755,23 @@ export default function Landing() {
             {/* Card B — See if you're free */}
             <FeatureCard
               variant="neutral"
-              mockupSrc={featureCalendar}
-              mockupAlt="Calendar view with highlighted event"
+              mockup={
+                <img
+                  src={featureCalendar}
+                  alt="Calendar view with highlighted event"
+                  loading="lazy"
+                  decoding="async"
+                  className="h-full max-h-full w-full object-contain object-center"
+                />
+              }
               title="See if you're free"
               description="Hover over any event to see it in your GCal schedule."
             />
 
-            {/* Card C — Discover new clubs */}
+            {/* Card C — Discover new clubs (interactive physics chips) */}
             <FeatureCard
               variant="secondary"
-              mockupSrc={featureClubDiscovery}
-              mockupAlt="IEEE club discovery card"
+              mockup={<ClubDiscoveryMockup ieeeSrc={featureClubDiscovery} />}
               title="Discover new clubs"
               description="Stay in the loop with clubs across campus, tailored to your interests."
             />
