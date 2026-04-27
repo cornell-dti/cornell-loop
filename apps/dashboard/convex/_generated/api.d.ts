@@ -8,17 +8,25 @@
  * @module
  */
 
+import type * as _shared_adminToken from "../_shared/adminToken.js";
 import type * as auth from "../auth.js";
 import type * as bookmarks from "../bookmarks.js";
 import type * as dev from "../dev.js";
 import type * as events from "../events.js";
 import type * as follows from "../follows.js";
+import type * as crons from "../crons.js";
+import type * as gmailConnection from "../gmailConnection.js";
+import type * as gmailOAuth from "../gmailOAuth.js";
 import type * as http from "../http.js";
 import type * as orgs from "../orgs.js";
 import type * as rsvps from "../rsvps.js";
 import type * as seed from "../seed.js";
 import type * as seedData from "../seedData.js";
 import type * as users from "../users.js";
+import type * as ingestion from "../ingestion.js";
+import type * as listservAdmin from "../listservAdmin.js";
+import type * as parser from "../parser.js";
+import type * as sourceAdmin from "../sourceAdmin.js";
 
 import type {
   ApiFromModules,
@@ -27,17 +35,25 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "_shared/adminToken": typeof _shared_adminToken;
   auth: typeof auth;
   bookmarks: typeof bookmarks;
   dev: typeof dev;
   events: typeof events;
   follows: typeof follows;
+  crons: typeof crons;
+  gmailConnection: typeof gmailConnection;
+  gmailOAuth: typeof gmailOAuth;
   http: typeof http;
   orgs: typeof orgs;
   rsvps: typeof rsvps;
   seed: typeof seed;
   seedData: typeof seedData;
   users: typeof users;
+  ingestion: typeof ingestion;
+  listservAdmin: typeof listservAdmin;
+  parser: typeof parser;
+  sourceAdmin: typeof sourceAdmin;
 }>;
 
 /**

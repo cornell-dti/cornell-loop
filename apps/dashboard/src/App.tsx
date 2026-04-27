@@ -16,6 +16,7 @@ import { Org } from "./pages/Org";
 import { ProfileModalRoute } from "./pages/profile";
 import { DevAutoSignIn } from "./components/DevAutoSignIn";
 import { Search } from "./pages/Search";
+import Admin from "./pages/Admin";
 import Onboarding from "./pages/Onboarding";
 import { useCurrentProfile } from "./lib/useCurrentProfile";
 import type { SideBarItemId } from "@app/ui";
@@ -302,6 +303,7 @@ function AppRoutes() {
           </AuthOnlyRoute>
         }
       />
+      <Route path="/admin" element={<Admin />} />
 
       {/* Dev-only design system page */}
       {import.meta.env.DEV && (

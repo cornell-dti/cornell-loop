@@ -17,6 +17,9 @@
     "format:check": "prettier --check .",
     "test:e2e": "bun run --cwd apps/dashboard test:e2e"
   },
+  "dependencies": {
+    "@google/genai": "^1.44.0"
+  },
   "devDependencies": {
     "playwright": "^1.59.1",
     "prettier": "^3.8.2",
