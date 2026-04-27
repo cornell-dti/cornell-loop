@@ -134,7 +134,6 @@ export default function Admin() {
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
 
   const createOAuthNonce = useMutation(api.gmailOAuth.createOAuthNonce);
-  const seedCandidates = useMutation(api.listservAdmin.seedCandidates);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
   const approveCandidate = useMutation(api.listservAdmin.approveCandidate);
   const rejectCandidate = useMutation(api.listservAdmin.rejectCandidate);
@@ -251,7 +250,6 @@ export default function Admin() {
               }
             }}
             onRunDiscovery={() => act("Discovery complete.", () => runDiscovery({ token }))}
-            onSeedCandidates={() => act("Candidates loaded.", () => seedCandidates({ token }))}
             onAddCandidate={(email, name, notes) =>
               act("Candidate added.", () => addCandidate({ token, email, displayName: name || undefined, notes: notes || undefined }))
             }
@@ -393,7 +391,6 @@ function SetupTab({
   discoveryRuns,
   onConnectGmail,
   onRunDiscovery,
-  onSeedCandidates,
   onAddCandidate,
 }: {
   gmailStatus: GmailStatus | undefined;
@@ -401,7 +398,6 @@ function SetupTab({
   discoveryRuns: Doc<"discoveryRuns">[];
   onConnectGmail: () => void;
   onRunDiscovery: () => void;
-  onSeedCandidates: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -438,7 +434,6 @@ function SetupTab({
         <CardHeader title="Discover" subtitle="Find probable Cornell list addresses from the sender dataset." />
         <div className="mt-4 flex flex-wrap gap-2">
           <Btn primary onClick={onRunDiscovery}>Run discovery</Btn>
-          <Btn onClick={onSeedCandidates}>Load cached set</Btn>
         </div>
         {discoveryRuns.length > 0 && (
           <div className="mt-4 grid gap-1">

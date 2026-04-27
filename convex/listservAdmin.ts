@@ -67,56 +67,6 @@ type JoinDetection = {
   joinDetectedAt: number;
 };
 
-const SEED_CANDIDATES: CandidateInput[] = [
-  candidate("wicc-l@list.cornell.edu", "WICC", 95, 6, [
-    "list domain",
-    "list-style address",
-    "high overlap",
-  ]),
-  candidate("acsu-l@list.cornell.edu", "ACSU", 92, 5, [
-    "list domain",
-    "list-style address",
-    "high overlap",
-  ]),
-  candidate("entrepreneurship-l@mm.list.cornell.edu", "Entrepreneurship", 90, 6, [
-    "list domain",
-    "list-style address",
-    "high overlap",
-  ]),
-  candidate("swemail-l@list.cornell.edu", "SWE Mail", 82, 2, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("lindseth_climbing_wall-l@list.cornell.edu", "Lindseth Climbing Wall", 78, 3, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("meng-students@list.cs.cornell.edu", "MEng Students", 72, 1, [
-    "list domain",
-  ]),
-  candidate("emotionkpop-l@list.cornell.edu", "E.Motion K-Pop", 70, 1, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("flute-l@list.cornell.edu", "Flute List", 68, 1, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("psc-lep-l@list.cornell.edu", "PSC LEP", 68, 1, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("fgssgradminors-l@list.cornell.edu", "FGSS Grad Minors", 66, 1, [
-    "list domain",
-    "list-style address",
-  ]),
-  candidate("achresidents-l@list.cornell.edu", "ACH Residents", 54, 1, [
-    "list domain",
-    "list-style address",
-    "possibly private",
-  ]),
-];
-
 export const dashboard = query({
   args: { token: v.string() },
   handler: async (ctx, args) => {
@@ -242,14 +192,6 @@ export const runDiscovery = action({
       });
       throw error;
     }
-  },
-});
-
-export const seedCandidates = mutation({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    requireAdminToken(args.token);
-    return upsertCandidates(ctx, SEED_CANDIDATES);
   },
 });
 
@@ -1046,16 +988,6 @@ async function sendGmailMessage(
   }
 
   return (await response.json()) as GmailSendResponse;
-}
-
-function candidate(
-  email: string,
-  displayName: string,
-  confidence: number,
-  popularity: number,
-  matchedReasons: string[],
-): CandidateInput {
-  return { email, displayName, confidence, popularity, matchedReasons };
 }
 
 function normalizeEmail(email: string) {
