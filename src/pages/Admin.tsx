@@ -30,6 +30,28 @@ type JoinDraft = {
   body: string;
 };
 
+type JoinStrategy = NonNullable<Listserv["joinStrategy"]>;
+const JOIN_STRATEGIES: JoinStrategy[] = [
+  "cornell_lyris",
+  "cornell_lyris_owner_contact",
+  "campus_groups",
+  "newsletter",
+  "direct_org_email",
+  "manual",
+  "unknown",
+];
+
+type EffectiveJoin = {
+  joinStrategy: JoinStrategy;
+  joinRecipient?: string;
+  ownerRecipient?: string;
+  joinSubject?: string;
+  joinBody?: string;
+  joinInstructions?: string;
+  joinConfidence: number;
+  joinDetectionReasons: string[];
+};
+
 export default function Admin() {
   const [token, setToken] = useState(() =>
     localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? "",
@@ -60,6 +82,7 @@ export default function Admin() {
   const rejectCandidate = useMutation(api.listservAdmin.rejectCandidate);
   const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
   const updateJoinStatus = useMutation(api.listservAdmin.updateJoinStatus);
+  const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
 
   useEffect(() => {
     if (token) localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
@@ -246,6 +269,11 @@ export default function Admin() {
               await updateJoinStatus({ token, listservId, joinStatus });
             })
           }
+          onJoinStrategyChange={(listservId, joinStrategy) =>
+            runAdminAction("Join method updated.", async () => {
+              await updateJoinStrategy({ token, listservId, joinStrategy });
+            })
+          }
         />
 
         <IngestionPanel
@@ -416,6 +444,7 @@ function JoinPanel({
   onSendJoin,
   onStatusChange,
   onJoinStatusChange,
+  onJoinStrategyChange,
 }: {
   listservs: Listserv[];
   joinAttempts: JoinAttempt[];
@@ -425,6 +454,7 @@ function JoinPanel({
   onSendJoin: (event: FormEvent) => void;
   onStatusChange: (listservId: Id<"listservs">, status: Listserv["status"]) => void;
   onJoinStatusChange: (listservId: Id<"listservs">, joinStatus: Listserv["joinStatus"]) => void;
+  onJoinStrategyChange: (listservId: Id<"listservs">, joinStrategy: JoinStrategy) => void;
 }) {
   return (
     <section className="rounded-[var(--radius-card)] bg-[var(--color-surface)] p-[var(--space-5)] shadow-[var(--shadow-1)]">
@@ -471,6 +501,7 @@ function JoinPanel({
             <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
               <TableHead>Name</TableHead>
               <TableHead>List email</TableHead>
+              <TableHead>Join method</TableHead>
               <TableHead>Source status</TableHead>
               <TableHead>Join status</TableHead>
               <TableHead>Last received</TableHead>
@@ -478,25 +509,69 @@ function JoinPanel({
             </tr>
           </thead>
           <tbody>
-            {listservs.map((listserv) => (
+            {listservs.map((listserv) => {
+              const join = getEffectiveJoin(listserv);
+              return (
               <tr key={listserv._id} className="border-b border-[var(--color-border)] last:border-0">
                 <TableCell>{listserv.name}</TableCell>
-                <TableCell>{listserv.listEmail}</TableCell>
-                <TableCell><StatusPill value={listserv.status} /></TableCell>
-                <TableCell><StatusPill value={listserv.joinStatus ?? "not_started"} /></TableCell>
+                <TableCell>
+                  <div>{listserv.listEmail}</div>
+                  {join.joinRecipient && <div className="text-[color:var(--color-text-muted)]">to {join.joinRecipient}</div>}
+                </TableCell>
+                <TableCell>
+                  <div className="grid gap-[var(--space-2)]">
+                    <select
+                      value={join.joinStrategy}
+                      onChange={(event) => onJoinStrategyChange(listserv._id, event.target.value as JoinStrategy)}
+                      className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-2)] py-[var(--space-1)] text-[length:var(--font-size-body2)]"
+                    >
+                      {JOIN_STRATEGIES.map((strategy) => (
+                        <option key={strategy} value={strategy}>{strategy.replace(/_/g, " ")}</option>
+                      ))}
+                    </select>
+                    <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                      {join.joinConfidence}% · {join.joinDetectionReasons.join(", ")}
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <select
+                    value={listserv.status}
+                    onChange={(event) => onStatusChange(listserv._id, event.target.value as Listserv["status"])}
+                    className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-2)] py-[var(--space-1)] text-[length:var(--font-size-body2)]"
+                  >
+                    {(["joining", "active", "paused", "failed"] as const).map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                </TableCell>
+                <TableCell>
+                  <select
+                    value={listserv.joinStatus ?? "not_started"}
+                    onChange={(event) => onJoinStatusChange(listserv._id, event.target.value as Listserv["joinStatus"])}
+                    className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-2)] py-[var(--space-1)] text-[length:var(--font-size-body2)]"
+                  >
+                    {(["not_started", "join_email_sent", "awaiting_confirmation", "joined", "failed", "manual_required"] as const).map((status) => (
+                      <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </TableCell>
                 <TableCell>{formatDate(listserv.lastReceivedAt)}</TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-[var(--space-2)]">
-                    <SmallButton onClick={() => onPrepareJoin(defaultJoinDraft(listserv))}>Prepare join</SmallButton>
-                    <SmallButton onClick={() => onJoinStatusChange(listserv._id, "awaiting_confirmation")}>Awaiting</SmallButton>
-                    <SmallButton onClick={() => onJoinStatusChange(listserv._id, "joined")}>Joined</SmallButton>
-                    <SmallButton onClick={() => onStatusChange(listserv._id, listserv.status === "active" ? "paused" : "active")}>
-                      {listserv.status === "active" ? "Pause" : "Activate"}
+                    <SmallButton
+                      disabled={!canPrepareJoin(join)}
+                      onClick={() => onPrepareJoin(defaultJoinDraft(listserv))}
+                    >
+                      Prepare email
                     </SmallButton>
+                  </div>
+                  <div className="mt-[var(--space-2)] max-w-[360px] text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {join.joinInstructions}
                   </div>
                 </TableCell>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       </div>
@@ -785,11 +860,69 @@ function TableCell({ children }: { children: ReactNode }) {
 }
 
 function defaultJoinDraft(listserv: Listserv): JoinDraft {
+  const join = getEffectiveJoin(listserv);
   return {
     listservId: listserv._id,
-    recipient: listserv.listEmail,
-    subject: `Subscribe request for ${listserv.name}`,
-    body: `Hello,\n\nPlease subscribe dtiincubator@gmail.com to ${listserv.listEmail}.\n\nThanks,\nCornell Loop`,
+    recipient: join.joinRecipient ?? listserv.listEmail,
+    subject: join.joinSubject ?? `Request to join ${listserv.name}`,
+    body: join.joinBody ?? "",
+  };
+}
+
+function canPrepareJoin(join: EffectiveJoin) {
+  return Boolean(join.joinRecipient && join.joinSubject !== undefined);
+}
+
+function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
+  const auto = detectJoinDefaults(listserv);
+  if (
+    auto.joinStrategy === "cornell_lyris" &&
+    (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")
+  ) {
+    return auto;
+  }
+
+  return {
+    joinStrategy: listserv.joinStrategy ?? auto.joinStrategy,
+    joinRecipient: listserv.joinRecipient ?? auto.joinRecipient,
+    ownerRecipient: listserv.ownerRecipient ?? auto.ownerRecipient,
+    joinSubject: listserv.joinSubject ?? auto.joinSubject,
+    joinBody: listserv.joinBody ?? auto.joinBody,
+    joinInstructions: listserv.joinInstructions ?? auto.joinInstructions,
+    joinConfidence: listserv.joinConfidence ?? auto.joinConfidence,
+    joinDetectionReasons: listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
+  };
+}
+
+function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
+  const email = listserv.listEmail.toLowerCase();
+  const [local = "", domain = ""] = email.split("@");
+
+  if (["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(domain)) {
+    const listName = local.replace(/^owner-/, "");
+    const canonical = listName.endsWith("-l");
+    return {
+      joinStrategy: "cornell_lyris",
+      joinRecipient: `${listName}-request@cornell.edu`,
+      ownerRecipient: `owner-${listName}@cornell.edu`,
+      joinSubject: "join",
+      joinBody: "",
+      joinInstructions:
+        "Cornell list address. Default: send subject 'join' to listname-request@cornell.edu with a blank body.",
+      joinConfidence: canonical ? 95 : 75,
+      joinDetectionReasons: [canonical ? "Cornell Lyris list address" : "Cornell list domain"],
+    };
+  }
+
+  return {
+    joinStrategy: listserv.joinStrategy ?? "unknown",
+    joinRecipient: listserv.joinRecipient,
+    ownerRecipient: listserv.ownerRecipient,
+    joinSubject: listserv.joinSubject,
+    joinBody: listserv.joinBody,
+    joinInstructions: listserv.joinInstructions ?? "No reliable automated join flow detected. Review manually before sending anything.",
+    joinConfidence: listserv.joinConfidence ?? 20,
+    joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };
 }
 

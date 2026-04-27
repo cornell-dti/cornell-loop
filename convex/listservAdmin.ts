@@ -46,6 +46,27 @@ type GmailConnectionSnapshot = {
   refreshToken: string;
 };
 
+type JoinStrategy =
+  | "cornell_lyris"
+  | "cornell_lyris_owner_contact"
+  | "campus_groups"
+  | "newsletter"
+  | "direct_org_email"
+  | "manual"
+  | "unknown";
+
+type JoinDetection = {
+  joinStrategy: JoinStrategy;
+  joinRecipient?: string;
+  ownerRecipient?: string;
+  joinSubject?: string;
+  joinBody?: string;
+  joinInstructions?: string;
+  joinConfidence: number;
+  joinDetectionReasons: string[];
+  joinDetectedAt: number;
+};
+
 const SEED_CANDIDATES: CandidateInput[] = [
   candidate("wicc-l@list.cornell.edu", "WICC", 95, 6, [
     "list domain",
@@ -255,6 +276,7 @@ export const approveCandidate = mutation({
       .unique();
 
     const now = Date.now();
+    const joinDetection = detectJoinStrategy(listEmail, [candidateRow.email, listEmail]);
     const listservFields = {
       name: cleanOptional(args.name) ?? candidateRow.displayName ?? inferDisplayName(listEmail),
       listEmail,
@@ -262,6 +284,7 @@ export const approveCandidate = mutation({
       status: "joining" as const,
       joinMethod: args.joinMethod ?? ("unknown" as const),
       joinStatus: "not_started" as const,
+      ...joinDetection,
       source: candidateRow.source,
       candidateId: args.candidateId,
       notes: cleanOptional(args.notes) ?? candidateRow.notes,
@@ -305,7 +328,7 @@ export const sendJoinEmail = action({
 
     const recipient = cleanRequired(args.recipient, "Recipient");
     const subject = cleanRequired(args.subject, "Subject");
-    const body = cleanRequired(args.body, "Body");
+    const body = args.body;
 
     try {
       const connection = await getGmailConnection(ctx);
@@ -333,6 +356,46 @@ export const sendJoinEmail = action({
       });
       throw error;
     }
+  },
+});
+
+export const recomputeJoinStrategy = mutation({
+  args: { token: v.string(), listservId: v.id("listservs") },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+
+    await ctx.db.patch(args.listservId, {
+      ...detectJoinStrategy(listserv.listEmail, listserv.senderEmails),
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updateJoinStrategy = mutation({
+  args: {
+    token: v.string(),
+    listservId: v.id("listservs"),
+    joinStrategy: v.union(
+      v.literal("cornell_lyris"),
+      v.literal("cornell_lyris_owner_contact"),
+      v.literal("campus_groups"),
+      v.literal("newsletter"),
+      v.literal("direct_org_email"),
+      v.literal("manual"),
+      v.literal("unknown"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+
+    await ctx.db.patch(args.listservId, {
+      ...buildJoinDefaults(args.joinStrategy, listserv.listEmail, listserv.name),
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -637,6 +700,164 @@ function scoreCandidate(emailValue: string, popularity: number): CandidateInput[
       matchedReasons: reasons.length > 0 ? reasons : ["pattern match"],
     },
   ];
+}
+
+function detectJoinStrategy(listEmail: string, senderEmails: string[]): JoinDetection {
+  const allEmails = [listEmail, ...senderEmails].map(normalizeEmail);
+  const primary = normalizeEmail(listEmail);
+  const [local = "", domain = ""] = primary.split("@");
+
+  if (isCornellListDomainAddress(primary)) {
+    return buildJoinDefaults("cornell_lyris", primary, inferDisplayName(primary), [
+      isCornellLyrisAddress(primary) ? "Cornell Lyris list address" : "Cornell list domain",
+      "Official flow: send subject 'join' to listname-request@cornell.edu",
+    ]);
+  }
+
+  const lyrisSender = allEmails.find(isCornellListDomainAddress);
+  if (lyrisSender) {
+    return buildJoinDefaults("cornell_lyris", lyrisSender, inferDisplayName(lyrisSender), [
+      isCornellLyrisAddress(lyrisSender)
+        ? "Sender alias looks like Cornell Lyris"
+        : "Sender uses Cornell list domain",
+      "Official flow: send subject 'join' to listname-request@cornell.edu",
+    ]);
+  }
+
+  if (domain === "campusgroups.com" || allEmails.some((email) => email.endsWith("@campusgroups.com"))) {
+    return buildJoinDefaults("campus_groups", primary, inferDisplayName(primary), [
+      "CampusGroups sender",
+      "Usually requires web signup or org membership",
+    ]);
+  }
+
+  if (isNewsletterDomain(domain) || /newsletter|digest/.test(local)) {
+    return buildJoinDefaults("newsletter", primary, inferDisplayName(primary), [
+      "Newsletter-style sender",
+      "Usually requires a web signup flow",
+    ]);
+  }
+
+  if (domain.endsWith("cornell.edu") && !/noreply|no-reply|notification|daemon|receipt/.test(local)) {
+    return buildJoinDefaults("direct_org_email", primary, inferDisplayName(primary), [
+      "Cornell sender address",
+      "Can draft a polite subscribe request",
+    ]);
+  }
+
+  return buildJoinDefaults("unknown", primary, inferDisplayName(primary), ["No reliable join pattern detected"]);
+}
+
+function buildJoinDefaults(
+  joinStrategy: JoinStrategy,
+  listEmail: string,
+  name: string,
+  reasons?: string[],
+): JoinDetection {
+  const email = normalizeEmail(listEmail);
+  const [local = ""] = email.split("@");
+  const now = Date.now();
+
+  if (joinStrategy === "cornell_lyris") {
+    const listName = local.replace(/^owner-/, "");
+    const looksCanonical = listName.endsWith("-l");
+    return {
+      joinStrategy,
+      joinRecipient: `${listName}-request@cornell.edu`,
+      ownerRecipient: `owner-${listName}@cornell.edu`,
+      joinSubject: "join",
+      joinBody: "",
+      joinInstructions:
+        "Cornell Lyris lists are joined by sending a blank email with subject 'join' to listname-request@cornell.edu from the receiving inbox.",
+      joinConfidence: looksCanonical ? 95 : 75,
+      joinDetectionReasons: reasons ?? ["Cornell Lyris list address"],
+      joinDetectedAt: now,
+    };
+  }
+
+  if (joinStrategy === "cornell_lyris_owner_contact") {
+    const listName = local.replace(/^owner-/, "").replace(/-request$/, "");
+    return {
+      joinStrategy,
+      joinRecipient: `owner-${listName}@cornell.edu`,
+      ownerRecipient: `owner-${listName}@cornell.edu`,
+      joinSubject: `Request to join ${listName}`,
+      joinBody: ownerContactBody(listName),
+      joinInstructions: "Use this if the list is private/closed or the normal join request fails.",
+      joinConfidence: 75,
+      joinDetectionReasons: reasons ?? ["Owner contact fallback"],
+      joinDetectedAt: now,
+    };
+  }
+
+  if (joinStrategy === "campus_groups") {
+    return {
+      joinStrategy,
+      joinInstructions: "CampusGroups lists usually require manual web signup or org membership. Mark manual required unless you find a public signup link.",
+      joinConfidence: 70,
+      joinDetectionReasons: reasons ?? ["CampusGroups sender"],
+      joinDetectedAt: now,
+    };
+  }
+
+  if (joinStrategy === "newsletter") {
+    return {
+      joinStrategy,
+      joinInstructions: "Newsletter senders usually need manual web signup. Use the sender/site link rather than emailing this address unless you know it accepts requests.",
+      joinConfidence: 60,
+      joinDetectionReasons: reasons ?? ["Newsletter-style sender"],
+      joinDetectedAt: now,
+    };
+  }
+
+  if (joinStrategy === "direct_org_email") {
+    return {
+      joinStrategy,
+      joinRecipient: email,
+      joinSubject: "Request to join mailing list",
+      joinBody: directRequestBody(name),
+      joinInstructions: "This is a direct request to a likely org/admin address. Review before sending.",
+      joinConfidence: 55,
+      joinDetectionReasons: reasons ?? ["Direct Cornell sender"],
+      joinDetectedAt: now,
+    };
+  }
+
+  return {
+    joinStrategy,
+    joinRecipient: joinStrategy === "manual" ? undefined : email,
+    joinSubject: joinStrategy === "manual" ? undefined : "Request to join mailing list",
+    joinBody: joinStrategy === "manual" ? undefined : directRequestBody(name),
+    joinInstructions: "No reliable automated join flow detected. Review manually before sending anything.",
+    joinConfidence: joinStrategy === "manual" ? 100 : 20,
+    joinDetectionReasons: reasons ?? ["Manual review required"],
+    joinDetectedAt: now,
+  };
+}
+
+function isCornellLyrisAddress(email: string) {
+  const [local = "", domain = ""] = normalizeEmail(email).split("@");
+  return (
+    local.endsWith("-l") &&
+    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(domain)
+  );
+}
+
+function isCornellListDomainAddress(email: string) {
+  const [, domain = ""] = normalizeEmail(email).split("@");
+  return ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(domain);
+}
+
+function isNewsletterDomain(domain: string) {
+  return /substack|beehiiv|mailchimp|mailerlite|ccsend|constantcontact|newsletter/.test(domain);
+}
+
+function ownerContactBody(listName: string) {
+  return `Hello,\n\nCould you please add dtiincubator@gmail.com to ${listName}?\n\nThis inbox is used by Cornell Loop to aggregate public Cornell student organization announcements for Cornell students.\n\nThank you.`;
+}
+
+function directRequestBody(name: string) {
+  return `Hello,\n\nCould you please add dtiincubator@gmail.com to ${name}'s mailing list?\n\nThis inbox is used by Cornell Loop to aggregate public Cornell student organization announcements for Cornell students.\n\nThank you.`;
 }
 
 async function getGmailConnection(ctx: ActionCtx) {
