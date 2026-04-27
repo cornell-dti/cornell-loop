@@ -4,7 +4,8 @@
  * Sections extracted: Colors, Typography, Effects (Shadows + Border Radius)
  */
 
-:root {
+:root,
+:host {
   /* ─────────────────────────────────────────────
    * PRIMARY PALETTE  (warm orange-brown brand)
    * ───────────────────────────────────────────── */
@@ -75,7 +76,6 @@
   /* ─────────────────────────────────────────────
    * TYPOGRAPHY — FONT FAMILIES
    * Primary typeface: DM Sans (headings + body copy)
-   * Secondary typeface: Inter (UI labels, metadata)
    * Brand wordmark: Manrope (sidebar logo)
    * ───────────────────────────────────────────── */
   --font-heading: "DM Sans", sans-serif;

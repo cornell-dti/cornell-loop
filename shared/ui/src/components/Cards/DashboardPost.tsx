@@ -34,6 +34,11 @@ export type { TagItem };
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 export interface Organization {
+  /**
+   * Stable identifier — typically the URL slug used for the org page route
+   * (e.g. "cuauv" for /orgs/cuauv). Required for `onOrgClick` to fire.
+   */
+  id?: string;
   /** Display name shown beside the avatar stack. */
   name: string;
   /** Optional avatar image URL. Falls back to an initial-letter badge. */
@@ -64,6 +69,11 @@ export interface DashboardPostProps {
   onShare?: () => void;
   bookmarked?: boolean;
   onBookmark?: () => void;
+  /**
+   * Called when an organisation in the post header is clicked.
+   * Hover preview (OrgHoverCard) is independent of this handler.
+   */
+  onOrgClick?: (org: Organization) => void;
   className?: string;
 }
 
@@ -89,6 +99,7 @@ export function DashboardPost({
   onShare,
   bookmarked,
   onBookmark,
+  onOrgClick,
   className,
 }: DashboardPostProps) {
   const cardProps: DashboardEventCardProps = {
@@ -206,19 +217,44 @@ export function DashboardPost({
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            {organizations.map((org, i) => (
-              <span key={i} className="flex items-center">
-                <span
-                  className="relative cursor-pointer hover:underline"
-                  onMouseEnter={() => handleOrgEnter(i)}
-                  onMouseLeave={handleOrgLeave}
-                >
-                  {org.name}
-                  <OrgHoverCard org={org} visible={hoveredOrgIdx === i} />
+            {organizations.map((org, i) => {
+              const clickable = Boolean(onOrgClick && org.id);
+              const handleClick = clickable
+                ? () => onOrgClick?.(org)
+                : undefined;
+              return (
+                <span key={i} className="flex items-center">
+                  <span
+                    className={[
+                      "relative",
+                      clickable ? "cursor-pointer hover:underline" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    onMouseEnter={() => handleOrgEnter(i)}
+                    onMouseLeave={handleOrgLeave}
+                    onClick={handleClick}
+                    onKeyDown={
+                      clickable
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleClick?.();
+                            }
+                          }
+                        : undefined
+                    }
+                    role={clickable ? "link" : undefined}
+                    tabIndex={clickable ? 0 : undefined}
+                    aria-label={clickable ? `Open ${org.name}` : undefined}
+                  >
+                    {org.name}
+                    <OrgHoverCard org={org} visible={hoveredOrgIdx === i} />
+                  </span>
+                  {i < organizations.length - 1 && <span>,&nbsp;</span>}
                 </span>
-                {i < organizations.length - 1 && <span>,&nbsp;</span>}
-              </span>
-            ))}
+              );
+            })}
           </span>
 
           {/* "Following" pill badge */}

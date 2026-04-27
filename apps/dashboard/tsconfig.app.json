@@ -19,7 +19,10 @@
     /* Path aliases */
     "paths": {
       "@app/ui": ["../../shared/ui/src/index.ts"],
-      "@app/ui/*": ["../../shared/ui/src/*"]
+      "@app/ui/*": ["../../shared/ui/src/*"],
+      "@convex-dev/auth/react": [
+        "./node_modules/@convex-dev/auth/dist/react/index.d.ts"
+      ]
     },
 
     /* Linting */

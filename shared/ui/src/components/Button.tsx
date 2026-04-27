@@ -53,16 +53,19 @@ const BASE_CLASSES =
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   /**
    * Primary — filled brand orange.
-   * Default  → Primary/700 (#eb7128)
-   * Hover    → Primary/hover (#d35910) + glow ring
-   * Press    → Primary/800 (#a74409) + glow ring
-   * Disabled → Neutral/500 (#adb5bd)
-   * Source: Figma Frame95 (node 382:822) and Frame94 CTA (node 390:793)
+   * Default  → Primary/700 (#eb7128) — Loop's brand identity colour. Button
+   *            text is body-2 SemiBold which qualifies as "large text" under
+   *            WCAG (AA threshold drops to 3:1) so the brand orange is
+   *            acceptable against white.
+   * Hover    → Primary/800 (#a74409) — darken slightly on hover.
+   * Press    → Primary/900 (#592100) + glow ring.
+   * Disabled → Neutral/500 (#adb5bd).
+   * Source: Figma Frame95 (node 382:822) and Frame94 CTA (node 390:793).
    */
   primary:
     "bg-[var(--color-primary-700)] text-[color:var(--color-white)] " +
-    "hover:bg-[var(--color-primary-hover)] hover:shadow-[var(--shadow-primary-glow)] " +
-    "active:bg-[var(--color-primary-800)] active:shadow-[var(--shadow-primary-glow)] " +
+    "hover:bg-[var(--color-primary-800)] hover:shadow-[var(--shadow-primary-glow)] " +
+    "active:bg-[var(--color-primary-900)] active:shadow-[var(--shadow-primary-glow)] " +
     "focus-visible:outline-[var(--color-primary-700)] " +
     "disabled:bg-[var(--color-neutral-500)] disabled:shadow-none",
 

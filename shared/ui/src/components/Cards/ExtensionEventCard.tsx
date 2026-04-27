@@ -38,6 +38,7 @@
  */
 
 import { useState, type ComponentPropsWithoutRef } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { Bookmark } from "../Bookmark";
 import { Avatar } from "../Avatar";
 import { DateBadge } from "../DateBadge";
@@ -82,6 +83,11 @@ export interface ExtensionEventItem {
   bookmarked?: boolean;
   /** Called when the bookmark button is clicked. */
   onBookmark?: () => void;
+  /**
+   * Optional click handler for the whole row (e.g. edge-case events that open
+   * OriginalEmailView). When provided the row gets cursor-pointer styling.
+   */
+  onRowClick?: () => void;
 }
 
 // ─── ExtensionEventRow ────────────────────────────────────────────────────────
@@ -104,6 +110,7 @@ export function ExtensionEventRow({
   description,
   bookmarked: bookmarkedProp = false,
   onBookmark,
+  onRowClick,
   className,
   ...rest
 }: ExtensionEventRowProps) {
@@ -125,10 +132,12 @@ export function ExtensionEventRow({
         "bg-[var(--color-surface)]",
         "hover:bg-[var(--color-surface-subtle)]",
         "transition-colors duration-150",
+        onRowClick ? "cursor-pointer" : "",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
+      onClick={onRowClick}
       {...rest}
     >
       {/* Thumbnail badge */}
@@ -194,12 +203,24 @@ export interface ExtensionEventCardProps extends ComponentPropsWithoutRef<"div">
   orgAvatarUrl?: string;
   /** List of events shown as rows inside the card. */
   events?: ExtensionEventItem[];
+  /**
+   * When provided, renders a centred "View more" footer (chevron-down + label).
+   * Figma: node 554:5235 — below the event rows, centred, DM Sans Regular 12px Neutral/700.
+   */
+  onViewMore?: () => void;
+  /**
+   * When provided, renders a centred "View less" footer (chevron-up + label)
+   * replacing the "View more" footer in the expanded state.
+   */
+  onViewLess?: () => void;
 }
 
 export function ExtensionEventCard({
   orgName,
   orgAvatarUrl,
   events = [],
+  onViewMore,
+  onViewLess,
   className,
   ...rest
 }: ExtensionEventCardProps) {
@@ -233,6 +254,38 @@ export function ExtensionEventCard({
             <ExtensionEventRow key={i} {...event} />
           ))}
         </div>
+      )}
+
+      {/* ── View more / View less footer — Figma: centred chevron + label ── */}
+      {(onViewMore || onViewLess) && (
+        <button
+          type="button"
+          onClick={onViewLess ?? onViewMore}
+          className={[
+            "flex w-full items-center justify-center gap-[var(--space-1)]",
+            "cursor-pointer",
+            BODY3,
+            "text-[color:var(--color-neutral-700)]",
+            "transition-colors duration-150 hover:text-[color:var(--color-neutral-900)]",
+          ].join(" ")}
+        >
+          {onViewLess ? (
+            <ChevronUp
+              aria-hidden="true"
+              size={15}
+              className="shrink-0 text-[color:var(--color-neutral-700)]"
+            />
+          ) : (
+            <ChevronDown
+              aria-hidden="true"
+              size={15}
+              className="shrink-0 text-[color:var(--color-neutral-700)]"
+            />
+          )}
+          <span style={{ fontVariationSettings: "'opsz' 14" }}>
+            {onViewLess ? "View less" : "View more"}
+          </span>
+        </button>
       )}
     </div>
   );
