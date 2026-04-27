@@ -8,8 +8,14 @@
  * @module
  */
 
+import type * as _shared_adminToken from "../_shared/adminToken.js";
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
+import type * as gmailConnection from "../gmailConnection.js";
+import type * as gmailOAuth from "../gmailOAuth.js";
 import type * as http from "../http.js";
+import type * as ingestion from "../ingestion.js";
+import type * as listservAdmin from "../listservAdmin.js";
 
 import type {
   ApiFromModules,
@@ -18,8 +24,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "_shared/adminToken": typeof _shared_adminToken;
   auth: typeof auth;
+  crons: typeof crons;
+  gmailConnection: typeof gmailConnection;
+  gmailOAuth: typeof gmailOAuth;
   http: typeof http;
+  ingestion: typeof ingestion;
+  listservAdmin: typeof listservAdmin;
 }>;
 
 /**
