@@ -65,10 +65,12 @@ type ParsedEmail = {
 
 type StoredParsedEmail = ParsedEmail & {
   listservId?: Id<"listservs">;
+  organizationId?: Id<"organizations">;
 };
 
 type MatchableListserv = {
   _id: Id<"listservs">;
+  organizationId?: Id<"organizations">;
   listEmail: string;
   senderEmails: string[];
 };
@@ -130,12 +132,8 @@ export const pollListservInbox = internalAction({
           const email = parseGmailMessage(message);
           if (!email) return [];
 
-          return [
-            {
-              ...email,
-              listservId: matchListserv(email, listservs),
-            },
-          ];
+          const sourceMatch = matchListserv(email, listservs);
+          return [{ ...email, ...sourceMatch }];
         });
 
         if (parsed.length > 0) {
@@ -206,6 +204,7 @@ export const getMatchableListservs = internalQuery({
       .filter((listserv) => listserv.status === "active" || listserv.status === "joining")
       .map((listserv) => ({
         _id: listserv._id,
+        organizationId: listserv.organizationId,
         listEmail: listserv.listEmail,
         senderEmails: listserv.senderEmails,
       }));
@@ -355,6 +354,7 @@ export const storeParsedMessages = internalMutation({
         gmailMessageId: v.string(),
         threadId: v.optional(v.string()),
         listservId: v.optional(v.id("listservs")),
+        organizationId: v.optional(v.id("organizations")),
         sender: v.string(),
         senderEmail: v.string(),
         to: v.array(v.string()),
@@ -630,7 +630,7 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
       value.toLowerCase(),
     );
     if (candidates.some((candidate) => emailSignals.has(candidate))) {
-      return listserv._id;
+      return { listservId: listserv._id, organizationId: listserv.organizationId };
     }
   }
 
@@ -640,11 +640,13 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
       const localParts = [listserv.listEmail, ...listserv.senderEmails]
         .map((value) => value.toLowerCase().split("@")[0])
         .filter(Boolean);
-      if (localParts.some((local) => searchable.includes(local))) return listserv._id;
+      if (localParts.some((local) => searchable.includes(local))) {
+        return { listservId: listserv._id, organizationId: listserv.organizationId };
+      }
     }
   }
 
-  return undefined;
+  return {};
 }
 
 function isJoinConfirmation(email: Pick<ParsedEmail, "senderEmail" | "subject" | "bodyText">) {

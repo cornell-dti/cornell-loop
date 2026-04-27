@@ -16,6 +16,27 @@ export default defineSchema({
     section: v.optional(v.string()), // "On-Campus", "Off-Campus", "Opportunities"
   }).index("by_listserv", ["listserv"]),
 
+  organizations: defineTable({
+    name: v.string(),
+    slug: v.string(),
+    type: v.union(
+      v.literal("club"),
+      v.literal("department"),
+      v.literal("official"),
+      v.literal("publication"),
+      v.literal("company"),
+      v.literal("other"),
+    ),
+    description: v.optional(v.string()),
+    website: v.optional(v.string()),
+    tags: v.array(v.string()),
+    status: v.union(v.literal("active"), v.literal("hidden")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_status", ["status"]),
+
   listservCandidates: defineTable({
     email: v.string(),
     displayName: v.optional(v.string()),
@@ -41,8 +62,19 @@ export default defineSchema({
 
   listservs: defineTable({
     name: v.string(),
+    displayName: v.optional(v.string()),
     listEmail: v.string(),
     senderEmails: v.array(v.string()),
+    organizationId: v.optional(v.id("organizations")),
+    sourceType: v.optional(
+      v.union(
+        v.literal("lyris"),
+        v.literal("campus_groups"),
+        v.literal("newsletter"),
+        v.literal("direct_email"),
+        v.literal("unknown"),
+      ),
+    ),
     status: v.union(
       v.literal("joining"),
       v.literal("active"),
@@ -94,12 +126,14 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_list_email", ["listEmail"])
+    .index("by_organization", ["organizationId"])
     .index("by_status", ["status"]),
 
   listservMessages: defineTable({
     gmailMessageId: v.string(),
     threadId: v.optional(v.string()),
     listservId: v.optional(v.id("listservs")),
+    organizationId: v.optional(v.id("organizations")),
     sender: v.string(),
     senderEmail: v.string(),
     to: v.array(v.string()),
@@ -120,11 +154,13 @@ export default defineSchema({
       v.literal("ignored"),
       v.literal("failed"),
     ),
+    parseError: v.optional(v.string()),
     confirmationClearedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_gmail_message_id", ["gmailMessageId"])
     .index("by_listserv", ["listservId"])
+    .index("by_organization", ["organizationId"])
     .index("by_received_at", ["receivedAt"])
     .index("by_confirmation_cleared_at", ["confirmationClearedAt"])
     .index("by_processing_status", ["processingStatus"]),
@@ -186,6 +222,29 @@ export default defineSchema({
     error: v.optional(v.string()),
   }).index("by_started_at", ["startedAt"]),
 
+  parseRuns: defineTable({
+    trigger: v.union(
+      v.literal("manual"),
+      v.literal("cron"),
+      v.literal("single_message"),
+    ),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    provider: v.optional(v.union(v.literal("openai"), v.literal("gemini"))),
+    model: v.optional(v.string()),
+    messagesScanned: v.number(),
+    messagesParsed: v.number(),
+    eventsCreated: v.number(),
+    eventsUpdated: v.number(),
+    messagesIgnored: v.number(),
+    error: v.optional(v.string()),
+  }).index("by_started_at", ["startedAt"]),
+
   gmailConnections: defineTable({
     key: v.string(),
     email: v.string(),
@@ -206,7 +265,10 @@ export default defineSchema({
 
   // One row per listserv item
   events: defineTable({
-    listservEmailId: v.id("listservEmails"), // link to the listserv email data
+    listservEmailId: v.optional(v.id("listservEmails")), // legacy link to the listserv email data
+    sourceMessageId: v.optional(v.id("listservMessages")),
+    listservId: v.optional(v.id("listservs")),
+    organizationId: v.optional(v.id("organizations")),
     listserv: v.string(),
     listservSection: v.string(),
 
@@ -307,8 +369,21 @@ export default defineSchema({
         v.literal("paid"),
       ),
     ),
+    visibility: v.optional(
+      v.union(v.literal("draft"), v.literal("published"), v.literal("hidden")),
+    ),
+    parseConfidence: v.optional(v.number()),
+    parseWarnings: v.optional(v.array(v.string())),
+    dedupeKey: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_listserv", ["listserv"])
+    .index("by_source_message", ["sourceMessageId"])
+    .index("by_listserv_id", ["listservId"])
+    .index("by_organization", ["organizationId"])
+    .index("by_visibility", ["visibility"])
+    .index("by_dedupe_key", ["dedupeKey"])
     .index("by_section", ["listservSection"])
     .index("by_event_type", ["eventType"]),
 });

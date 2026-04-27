@@ -13,6 +13,9 @@ type DiscoveryRun = Doc<"discoveryRuns">;
 type JoinAttempt = Doc<"joinAttempts">;
 type IngestionRun = Doc<"ingestionRuns">;
 type ListservMessage = Doc<"listservMessages">;
+type Organization = Doc<"organizations">;
+type EventDoc = Doc<"events">;
+type ParseRun = Doc<"parseRuns">;
 
 type GmailConnectionStatus = {
   email: string;
@@ -40,6 +43,14 @@ const JOIN_STRATEGIES: JoinStrategy[] = [
   "manual",
   "unknown",
 ];
+const ORG_TYPES: Organization["type"][] = [
+  "club",
+  "department",
+  "official",
+  "publication",
+  "company",
+  "other",
+];
 
 type EffectiveJoin = {
   joinStrategy: JoinStrategy;
@@ -62,7 +73,20 @@ type ConfirmationItem = {
   link?: string;
 };
 
-type AdminTab = "setup" | "discover" | "review" | "join" | "ingest";
+type UnassignedSender = {
+  senderEmail: string;
+  count: number;
+  latestReceivedAt: number;
+  sampleSubjects: string[];
+  suggestion: {
+    organizationName: string;
+    organizationType: Organization["type"];
+    sourceName: string;
+    sourceType: NonNullable<Listserv["sourceType"]>;
+  };
+};
+
+type AdminTab = "setup" | "discover" | "review" | "organizations" | "sources" | "join" | "ingest" | "parse";
 
 const ADMIN_TABS: Array<{
   id: AdminTab;
@@ -72,8 +96,11 @@ const ADMIN_TABS: Array<{
   { id: "setup", label: "1. Setup", description: "Connect Gmail" },
   { id: "discover", label: "2. Discover", description: "Find sources" },
   { id: "review", label: "3. Review", description: "Approve candidates" },
-  { id: "join", label: "4. Join", description: "Send requests" },
-  { id: "ingest", label: "5. Ingest", description: "Poll inbox" },
+  { id: "organizations", label: "4. Orgs", description: "Define groups" },
+  { id: "sources", label: "5. Sources", description: "Assign senders" },
+  { id: "join", label: "6. Join", description: "Send requests" },
+  { id: "ingest", label: "7. Ingest", description: "Poll inbox" },
+  { id: "parse", label: "8. Parse", description: "Draft items" },
 ];
 
 export default function Admin() {
@@ -86,6 +113,8 @@ export default function Admin() {
   const [manualNotes, setManualNotes] = useState("");
   const [joinDraft, setJoinDraft] = useState<JoinDraft | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("setup");
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgType, setNewOrgType] = useState<Organization["type"]>("club");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,10 +126,19 @@ export default function Admin() {
     api.gmailOAuth.connectionStatus,
     token ? { token } : "skip",
   ) as GmailConnectionStatus | undefined;
+  const sourceOverview = useQuery(
+    api.sourceAdmin.overview,
+    token ? { token } : "skip",
+  );
+  const parseOverview = useQuery(
+    api.parser.overview,
+    token ? { token } : "skip",
+  );
 
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
   const runIngestionNow = useAction(api.listservAdmin.runIngestionNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
+  const runParseNow = useAction(api.parser.runParseNow);
   const seedCandidates = useMutation(api.listservAdmin.seedCandidates);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
   const approveCandidate = useMutation(api.listservAdmin.approveCandidate);
@@ -108,6 +146,11 @@ export default function Admin() {
   const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
+  const createOrganization = useMutation(api.sourceAdmin.createOrganization);
+  const assignSender = useMutation(api.sourceAdmin.assignSender);
+  const assignSourceOrganization = useMutation(api.sourceAdmin.assignSourceOrganization);
+  const publishEvent = useMutation(api.parser.publishEvent);
+  const hideEvent = useMutation(api.parser.hideEvent);
 
   useEffect(() => {
     if (token) localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
@@ -121,6 +164,13 @@ export default function Admin() {
   const ingestionRuns: IngestionRun[] = dashboard?.ingestionRuns ?? [];
   const recentMessages: ListservMessage[] = dashboard?.recentMessages ?? [];
   const clearedConfirmations: ListservMessage[] = dashboard?.clearedConfirmations ?? [];
+  const organizations: Organization[] = sourceOverview?.organizations ?? [];
+  const sourceListservs: Listserv[] = sourceOverview?.listservs ?? listservs;
+  const unassignedSenders: UnassignedSender[] = sourceOverview?.unassignedSenders ?? [];
+  const parseRuns: ParseRun[] = parseOverview?.runs ?? [];
+  const draftEvents: EventDoc[] = parseOverview?.drafts ?? [];
+  const failedParseMessages: ListservMessage[] = parseOverview?.failedMessages ?? [];
+  const unparsedMessages: ListservMessage[] = parseOverview?.unparsedMessages ?? [];
 
   const listservById = new Map(listservs.map((listserv) => [listserv._id, listserv]));
 
@@ -163,6 +213,15 @@ export default function Admin() {
     await runAdminAction("Join email sent.", async () => {
       await sendJoinEmail({ token, ...joinDraft });
       setJoinDraft(null);
+    });
+  }
+
+  async function handleCreateOrganization(event: FormEvent) {
+    event.preventDefault();
+    await runAdminAction("Organization created.", async () => {
+      await createOrganization({ token, name: newOrgName, type: newOrgType });
+      setNewOrgName("");
+      setNewOrgType("club");
     });
   }
 
@@ -285,6 +344,42 @@ export default function Admin() {
             />
           )}
 
+          {activeTab === "organizations" && (
+            <OrganizationsPanel
+              organizations={organizations}
+              newOrgName={newOrgName}
+              newOrgType={newOrgType}
+              onNameChange={setNewOrgName}
+              onTypeChange={setNewOrgType}
+              onCreate={handleCreateOrganization}
+            />
+          )}
+
+          {activeTab === "sources" && (
+            <SourcesPanel
+              organizations={organizations}
+              listservs={sourceListservs}
+              unassignedSenders={unassignedSenders}
+              onAssignSuggestion={(sender) =>
+                runAdminAction("Sender assigned.", async () => {
+                  await assignSender({
+                    token,
+                    senderEmail: sender.senderEmail,
+                    organizationName: sender.suggestion.organizationName,
+                    organizationType: sender.suggestion.organizationType,
+                    sourceName: sender.suggestion.sourceName,
+                    sourceType: sender.suggestion.sourceType,
+                  });
+                })
+              }
+              onAssignSource={(listservId, organizationId) =>
+                runAdminAction("Source assigned.", async () => {
+                  await assignSourceOrganization({ token, listservId, organizationId });
+                })
+              }
+            />
+          )}
+
           {activeTab === "join" && (
             <JoinPanel
               listservs={listservs}
@@ -322,6 +417,35 @@ export default function Admin() {
               onRunNow={() =>
                 runAdminAction("Ingestion run complete.", async () => {
                   await runIngestionNow({ token });
+                })
+              }
+            />
+          )}
+
+          {activeTab === "parse" && (
+            <ParsePanel
+              runs={parseRuns}
+              drafts={draftEvents}
+              failedMessages={failedParseMessages}
+              unparsedMessages={unparsedMessages}
+              onRunParse={() =>
+                runAdminAction("Parse run complete.", async () => {
+                  await runParseNow({ token });
+                })
+              }
+              onPublish={(eventId) =>
+                runAdminAction("Draft published.", async () => {
+                  await publishEvent({ token, eventId });
+                })
+              }
+              onHide={(eventId) =>
+                runAdminAction("Draft hidden.", async () => {
+                  await hideEvent({ token, eventId });
+                })
+              }
+              onReparse={(messageId) =>
+                runAdminAction("Message reparsed.", async () => {
+                  await runParseNow({ token, messageId });
                 })
               }
             />
@@ -367,7 +491,7 @@ function TabNav({
 }) {
   return (
     <nav className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[var(--space-1-5)] shadow-[var(--shadow-1)]">
-      <div className="grid gap-[var(--space-1)] md:grid-cols-5">
+      <div className="grid gap-[var(--space-1)] md:grid-cols-4 xl:grid-cols-8">
         {ADMIN_TABS.map((tab) => {
           const active = tab.id === activeTab;
           return (
@@ -540,6 +664,159 @@ function CandidateTable({
             ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+function OrganizationsPanel({
+  organizations,
+  newOrgName,
+  newOrgType,
+  onNameChange,
+  onTypeChange,
+  onCreate,
+}: {
+  organizations: Organization[];
+  newOrgName: string;
+  newOrgType: Organization["type"];
+  onNameChange: (value: string) => void;
+  onTypeChange: (value: Organization["type"]) => void;
+  onCreate: (event: FormEvent) => void;
+}) {
+  return (
+    <section>
+      <SectionHeader
+        title="Organizations"
+        description="Organizations are the user-facing groups. Sources/senders are assigned to them."
+      />
+      <form onSubmit={onCreate} className="mt-[var(--space-4)] grid gap-[var(--space-3)] rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)] md:grid-cols-[1fr_220px_auto] md:items-end">
+        <AdminInput label="Organization name" value={newOrgName} onChange={onNameChange} required />
+        <label className="flex flex-col gap-[var(--space-1)] text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)]">
+          Type
+          <select
+            value={newOrgType}
+            onChange={(event) => onTypeChange(event.target.value as Organization["type"])}
+            className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-3)] py-[var(--space-2)] font-normal"
+          >
+            {ORG_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        <PrimaryButton>Create</PrimaryButton>
+      </form>
+
+      <div className="mt-[var(--space-4)] overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse text-[length:var(--font-size-body2)]">
+          <thead>
+            <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
+              <TableHead>Name</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Tags</TableHead>
+            </tr>
+          </thead>
+          <tbody>
+            {organizations.map((org) => (
+              <tr key={org._id} className="border-b border-[var(--color-border)] last:border-0">
+                <TableCell>{org.name}</TableCell>
+                <TableCell>{org.type}</TableCell>
+                <TableCell><StatusPill value={org.status} /></TableCell>
+                <TableCell>{org.tags.join(", ") || "-"}</TableCell>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function SourcesPanel({
+  organizations,
+  listservs,
+  unassignedSenders,
+  onAssignSuggestion,
+  onAssignSource,
+}: {
+  organizations: Organization[];
+  listservs: Listserv[];
+  unassignedSenders: UnassignedSender[];
+  onAssignSuggestion: (sender: UnassignedSender) => void;
+  onAssignSource: (listservId: Id<"listservs">, organizationId: Id<"organizations">) => void;
+}) {
+  const unassignedSources = listservs.filter((source) => !source.organizationId);
+
+  return (
+    <section>
+      <SectionHeader
+        title="Sources"
+        description="Assign email senders to organizations. Suggested values come from sender patterns and recent ingested messages."
+      />
+
+      <div className="mt-[var(--space-4)] grid gap-[var(--space-4)]">
+        <div className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)]">
+          <h3 className="font-semibold">Unassigned ingested senders</h3>
+          {unassignedSenders.length === 0 ? (
+            <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">No unassigned senders found.</p>
+          ) : (
+            <div className="mt-[var(--space-3)] overflow-x-auto">
+              <table className="w-full min-w-[940px] border-collapse text-[length:var(--font-size-body2)]">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
+                    <TableHead>Sender</TableHead>
+                    <TableHead>Suggested org</TableHead>
+                    <TableHead>Count</TableHead>
+                    <TableHead>Sample subjects</TableHead>
+                    <TableHead>Action</TableHead>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unassignedSenders.map((sender) => (
+                    <tr key={sender.senderEmail} className="border-b border-[var(--color-border)] last:border-0">
+                      <TableCell>{sender.senderEmail}</TableCell>
+                      <TableCell>
+                        <div className="font-semibold">{sender.suggestion.organizationName}</div>
+                        <div className="text-[color:var(--color-text-muted)]">{sender.suggestion.sourceName} · {sender.suggestion.sourceType}</div>
+                      </TableCell>
+                      <TableCell>{sender.count}</TableCell>
+                      <TableCell>{sender.sampleSubjects.join(" | ") || "-"}</TableCell>
+                      <TableCell><SmallButton onClick={() => onAssignSuggestion(sender)}>Approve suggestion</SmallButton></TableCell>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-[var(--radius-input)] border border-[var(--color-border)] p-[var(--space-4)]">
+          <h3 className="font-semibold">Existing sources without organization</h3>
+          {unassignedSources.length === 0 ? (
+            <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">All existing sources are assigned.</p>
+          ) : (
+            <div className="mt-[var(--space-3)] grid gap-[var(--space-2)]">
+              {unassignedSources.map((source) => (
+                <div key={source._id} className="grid gap-[var(--space-2)] rounded-[var(--radius-input)] bg-[var(--color-surface-subtle)] p-[var(--space-3)] md:grid-cols-[1fr_260px] md:items-center">
+                  <div>
+                    <div className="font-semibold">{source.name}</div>
+                    <div className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">{source.listEmail}</div>
+                  </div>
+                  <select
+                    defaultValue=""
+                    onChange={(event) => {
+                      const orgId = event.target.value as Id<"organizations">;
+                      if (orgId) onAssignSource(source._id, orgId);
+                    }}
+                    className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--font-size-body2)]"
+                  >
+                    <option value="">Assign organization...</option>
+                    {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -965,6 +1242,100 @@ function IngestionPanel({
             ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+function ParsePanel({
+  runs,
+  drafts,
+  failedMessages,
+  unparsedMessages,
+  onRunParse,
+  onPublish,
+  onHide,
+  onReparse,
+}: {
+  runs: ParseRun[];
+  drafts: EventDoc[];
+  failedMessages: ListservMessage[];
+  unparsedMessages: ListservMessage[];
+  onRunParse: () => void;
+  onPublish: (eventId: Id<"events">) => void;
+  onHide: (eventId: Id<"events">) => void;
+  onReparse: (messageId: Id<"listservMessages">) => void;
+}) {
+  return (
+    <section>
+      <div className="flex flex-col justify-between gap-[var(--space-4)] md:flex-row md:items-start">
+        <SectionHeader
+          title="Parse"
+          description="Convert assigned raw messages into draft feed items. Drafts require admin publish before users see them."
+        />
+        <PrimaryButton onClick={onRunParse}>Run parser now</PrimaryButton>
+      </div>
+
+      <div className="mt-[var(--space-4)] grid gap-[var(--space-4)] md:grid-cols-3">
+        <MetricCard label="Drafts" value={drafts.length} />
+        <MetricCard label="Unparsed" value={unparsedMessages.length} />
+        <MetricCard label="Failed" value={failedMessages.length} />
+      </div>
+
+      <div className="mt-[var(--space-4)] rounded-[var(--radius-input)] border border-[var(--color-border)] p-[var(--space-4)]">
+        <h3 className="font-semibold">Draft items</h3>
+        {drafts.length === 0 ? (
+          <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">No draft items yet.</p>
+        ) : (
+          <div className="mt-[var(--space-3)] grid gap-[var(--space-3)]">
+            {drafts.map((event) => (
+              <div key={event._id} className="rounded-[var(--radius-input)] bg-[var(--color-surface-subtle)] p-[var(--space-3)]">
+                <div className="flex flex-col justify-between gap-[var(--space-2)] md:flex-row md:items-start">
+                  <div>
+                    <div className="font-semibold">{event.title}</div>
+                    <div className="text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">{event.aiDescription || event.description}</div>
+                    <div className="mt-[var(--space-1)] text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                      {event.listserv} · {event.eventType} · confidence {event.parseConfidence ?? 0}%
+                    </div>
+                    {(event.parseWarnings ?? []).length > 0 && (
+                      <div className="mt-[var(--space-1)] text-[length:var(--font-size-body3)] text-amber-700">
+                        {(event.parseWarnings ?? []).join("; ")}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-[var(--space-2)]">
+                    <SmallButton onClick={() => onPublish(event._id)}>Publish</SmallButton>
+                    <SmallButton onClick={() => onHide(event._id)}>Hide</SmallButton>
+                    {event.sourceMessageId && <SmallButton onClick={() => onReparse(event.sourceMessageId!)}>Reparse source</SmallButton>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-[var(--space-4)] grid gap-[var(--space-4)] lg:grid-cols-2">
+        <HistoryList
+          title="Recent parse runs"
+          empty="No parse runs yet."
+          items={runs.map((run) => ({
+            id: run._id,
+            title: `${run.status} · ${run.trigger}`,
+            detail: `scanned ${run.messagesScanned}, parsed ${run.messagesParsed}, created ${run.eventsCreated}, ignored ${run.messagesIgnored}${run.error ? ` · ${run.error}` : ""}`,
+            time: run.startedAt,
+          }))}
+        />
+        <HistoryList
+          title="Failed messages"
+          empty="No failed parse messages."
+          items={failedMessages.map((message) => ({
+            id: message._id,
+            title: message.subject || "(no subject)",
+            detail: message.parseError ?? message.senderEmail,
+            time: message.receivedAt,
+          }))}
+        />
       </div>
     </section>
   );
