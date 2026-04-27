@@ -1087,23 +1087,27 @@ function OrgRow({
       <div className="flex items-center gap-3 px-4 py-3">
         {editing ? (
           <>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className={`${input()} flex-1`}
-              autoFocus
-            />
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as OrgType)}
-              className={`${input()} w-36`}
-            >
-              {ORG_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+            <div className="min-w-0 flex-1">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={input()}
+                autoFocus
+              />
+            </div>
+            <div className="w-36 shrink-0">
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value as OrgType)}
+                className={input()}
+              >
+                {ORG_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
             <Btn
               primary
               onClick={() => {
