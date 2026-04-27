@@ -1,8 +1,15 @@
 import { useState } from "react";
 import App from "../App";
+import type { AppProps } from "../App";
 import FloatingIcon from "../../public/floating_icon.svg?react";
 
-export default function FloatingPanel() {
+export interface FloatingPanelProps
+  extends Pick<AppProps, "pageContext" | "onPreviewSlot"> {}
+
+export default function FloatingPanel({
+  pageContext,
+  onPreviewSlot,
+}: FloatingPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -27,7 +34,11 @@ export default function FloatingPanel() {
           transform: isOpen ? "translateX(0)" : "translateX(calc(100% + 1rem))",
         }}
       >
-        <App onClose={() => setIsOpen(false)} />
+        <App
+          onClose={() => setIsOpen(false)}
+          pageContext={pageContext}
+          onPreviewSlot={onPreviewSlot}
+        />
       </div>
     </>
   );

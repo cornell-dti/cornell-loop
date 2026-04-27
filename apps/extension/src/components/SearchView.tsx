@@ -1,6 +1,24 @@
-import { Tag } from "@app/ui";
+/**
+ * SearchView — empty state (popular searches) + results state.
+ *
+ * Empty state (no query):
+ *   • Clicking a popular search row calls onSearchSelect(term) → populates the
+ *     search bar in App.tsx via handleSearchSelect.
+ *
+ * Results state (query present):
+ *   • Filters MOCK_EVENTS using useSearchResults(query).
+ *   • "Sort by" tag strip filters results further (OR match).
+ *   • Tag strip supports +, pencil edit mode, and × delete via SortByTags.
+ *   • Each BookmarkCard wires RSVP / Add to Calendar / bookmark actions.
+ */
+
+import { useState } from "react";
+import type { EventItem } from "../data/types";
+import { useSearchResults } from "../data/useEvents";
+import { getPrimaryLink, getLinkLabel, openExternalUrl } from "../utils/linkUtils";
+import { buildGCalUrl } from "../utils/calendarUtils";
 import { BookmarkCard } from "./BookmarkCard";
-import EditIcon from "@app/ui/assets/edit_icon.svg?react";
+import { SortByTags } from "./SortByTags";
 
 // ── Shared typography ──────────────────────────────────────────────────────
 
@@ -9,16 +27,9 @@ const UI_BODY =
   "font-[family-name:var(--font-body)] font-normal " +
   "text-[1rem] leading-[1.5] tracking-[-0.176px] text-[#5f5f5f]";
 
-// Figma: Inter Regular 16px label for "Sort by" (same style as UI_BODY)
 const SORT_LABEL = UI_BODY + " whitespace-nowrap";
 
-const SORT_TAGS = [
-  "Internships",
-  "Early career",
-  "Tech",
-  "Mentorship",
-  "Just for fun",
-];
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const POPULAR_SEARCHES = [
   { rank: "#1", term: "Recruitment" },
@@ -28,11 +39,21 @@ const POPULAR_SEARCHES = [
   { rank: "#5", term: "A&S" },
 ];
 
-// ── SearchEmptyState ───────────────────────────────────────────────────────
-// Figma 554:7828 — shown when the search bar is focused but has no query.
-// Displays "Popular searches this week" + 5 ranked trending rows.
+const INITIAL_SORT_TAGS = [
+  "Internships",
+  "Early career",
+  "Tech",
+  "Mentorship",
+  "Just for fun",
+];
 
-function SearchEmptyState() {
+// ── SearchEmptyState ───────────────────────────────────────────────────────
+
+interface SearchEmptyStateProps {
+  onSelect: (term: string) => void;
+}
+
+function SearchEmptyState({ onSelect }: SearchEmptyStateProps) {
   return (
     <div className="flex w-full flex-col gap-[var(--space-3)]">
       {/* Heading — Figma: DM Sans Medium 18px, #5f5f5f, lh 28px, tracking -0.5px */}
@@ -47,12 +68,13 @@ function SearchEmptyState() {
         Popular searches this week
       </p>
 
-      {/* Ranked rows — Figma: bg #f9f9f9, rounded-[16px], px-16 py-8, gap-12 */}
+      {/* Ranked rows */}
       <div className="flex w-full flex-col gap-[var(--space-2)]">
         {POPULAR_SEARCHES.map(({ rank, term }) => (
           <button
             key={rank}
             type="button"
+            onClick={() => onSelect(term)}
             className={
               "flex w-full items-center gap-[var(--space-3)] " +
               "rounded-[var(--radius-button)] bg-[#f9f9f9] " +
@@ -71,81 +93,133 @@ function SearchEmptyState() {
 }
 
 // ── SearchResultsState ─────────────────────────────────────────────────────
-// Figma 554:6324 — shown when there are search results.
-// Displays "Sort by" tags + BookmarkCards.
 
-function SearchResultsState() {
+interface SearchResultsStateProps {
+  query: string;
+  bookmarkedIds: Set<string>;
+  onBookmark: (id: string) => void;
+  onEmailView: (event: EventItem) => void;
+}
+
+function SearchResultsState({
+  query,
+  bookmarkedIds,
+  onBookmark,
+  onEmailView,
+}: SearchResultsStateProps) {
+  const results = useSearchResults(query);
+
+  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+
+  const handleTagToggle = (tag: string) =>
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+
+  const handleTagAdd = (tag: string) => {
+    setAvailableTags((prev) => [...prev, tag]);
+    setActiveTags((prev) => [...prev, tag]);
+  };
+
+  const handleTagRemove = (tag: string) => {
+    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+    setActiveTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const filtered =
+    activeTags.length === 0
+      ? results
+      : results.filter((e) => activeTags.some((tag) => e.tags.includes(tag)));
+
   return (
     <div className="flex w-full flex-col gap-[var(--space-4)]">
       {/* Sort by */}
       <section className="flex flex-col gap-[var(--space-2)]">
         <p className={SORT_LABEL}>Sort by</p>
-        <div className="flex flex-wrap items-center gap-[9px]">
-          {SORT_TAGS.map((label) => (
-            <Tag key={label} color="neutral">
-              {label}
-            </Tag>
-          ))}
-          <Tag color="neutral">+</Tag>
-          <button
-            type="button"
-            aria-label="Edit filter tags"
-            className="size-4 shrink-0 cursor-pointer opacity-60 transition-opacity hover:opacity-100"
-          >
-            <EditIcon className="size-full" />
-          </button>
-        </div>
+        <SortByTags
+          tags={availableTags}
+          activeTags={activeTags}
+          onTagToggle={handleTagToggle}
+          onTagAdd={handleTagAdd}
+          onTagRemove={handleTagRemove}
+        />
       </section>
 
       {/* Result cards */}
       <div className="flex flex-col gap-[var(--space-4)]">
-        {/* Card 1 — date, RSVP + Add to Calendar */}
-        <BookmarkCard
-          orgName="Cornell DTI"
-          thumbnailVariant="date"
-          day={24}
-          month="Mar"
-          title="Datadog recruitment event"
-          subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
-          tags={["Internships", "Early career"]}
-          onRsvp={() => {}}
-          onAddToCalendar={() => {}}
-        />
+        {filtered.length === 0 && (
+          <p className="text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
+            No results found.
+          </p>
+        )}
 
-        {/* Card 2 — news, single-line subtitle, Add to Calendar only */}
-        <BookmarkCard
-          orgName="Cornell DTI"
-          thumbnailVariant="news"
-          title="Datadog recruitment event"
-          subtitle="For early career designers and developers"
-          tags={["Internships", "Early career"]}
-          onAddToCalendar={() => {}}
-        />
+        {filtered.map((event) => {
+          const primaryLink = getPrimaryLink(event);
+          const primaryAction = primaryLink
+            ? {
+                label: getLinkLabel(primaryLink),
+                onClick: () => openExternalUrl(primaryLink.url),
+              }
+            : undefined;
 
-        {/* Card 3 — date, no action buttons */}
-        <BookmarkCard
-          orgName="Cornell DTI"
-          thumbnailVariant="date"
-          day={24}
-          month="Mar"
-          title="Datadog recruitment event"
-          subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
-          tags={["Internships", "Early career"]}
-        />
+          const onAddToCalendar = event.calendarEvent
+            ? () => openExternalUrl(buildGCalUrl(event.calendarEvent!))
+            : undefined;
+
+          return (
+            <BookmarkCard
+              key={event.id}
+              orgName={event.orgName}
+              thumbnailVariant={event.thumbnailVariant}
+              day={event.day}
+              month={event.month}
+              title={event.title}
+              subtitle={event.subtitle}
+              onSubtitleClick={
+                event.isEdgeCase ? () => onEmailView(event) : undefined
+              }
+              tags={event.tags}
+              primaryAction={primaryAction}
+              onAddToCalendar={onAddToCalendar}
+              onUnbookmark={
+                bookmarkedIds.has(event.id)
+                  ? () => onBookmark(event.id)
+                  : undefined
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
 // ── SearchView ─────────────────────────────────────────────────────────────
-// Root export. Switches between the empty / popular state and the results
-// state based on whether a query string is present.
 
 export interface SearchViewProps {
-  /** The current search query. Empty string or undefined → popular state. */
   query?: string;
+  onSearchSelect?: (term: string) => void;
+  bookmarkedIds?: Set<string>;
+  onBookmark?: (id: string) => void;
+  onEmailView?: (event: EventItem) => void;
 }
 
-export default function SearchView({ query = "" }: SearchViewProps) {
-  return query.trim() === "" ? <SearchEmptyState /> : <SearchResultsState />;
+export default function SearchView({
+  query = "",
+  onSearchSelect,
+  bookmarkedIds = new Set(),
+  onBookmark = () => {},
+  onEmailView = () => {},
+}: SearchViewProps) {
+  return query.trim() === "" ? (
+    <SearchEmptyState onSelect={onSearchSelect ?? (() => {})} />
+  ) : (
+    <SearchResultsState
+      query={query}
+      bookmarkedIds={bookmarkedIds}
+      onBookmark={onBookmark}
+      onEmailView={onEmailView}
+    />
+  );
 }

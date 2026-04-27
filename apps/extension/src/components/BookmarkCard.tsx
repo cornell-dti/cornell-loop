@@ -13,17 +13,16 @@
  *   │              Subtitle line 2          │
  *   │ [Tag] [Tag]                           │  ← tags (optional)
  *   │ ─────────────────────────────────     │
- *   │ [ RSVP ]  [ Add to Calendar ]         │  ← actions (each conditional)
+ *   │ [ RSVP / Apply ]  [ Add to Calendar ] │  ← actions (each conditional)
  *   └───────────────────────────────────────┘
  *
- * Uses design system components: DateBadge, Tag, Button
- * Uses design system SVG: bookmark-filled.svg (always filled — this is the
- * bookmarks view so every card is already saved)
+ * Subtitle variants (Figma annotations):
+ *   string[]  → event with time + location: ['4:00–5:30 pm', 'Hollister Hall 312']
+ *   string    → informative summary or edge-case "Click to see original email"
+ *   undefined → no subtitle shown
  *
- * Subtitle variants (from Figma annotations):
- *   events      → string[] e.g. ['4:00 pm – 5:30 pm', 'Hollister Hall 312']
- *   informative → string   e.g. 'For early career designers and developers'
- *   edge case   → string   e.g. 'Click to see original email'
+ * When `onSubtitleClick` is provided (edge-case event), clicking the subtitle
+ * opens OriginalEmailView. The cursor changes to pointer to signal interactivity.
  */
 
 import type { ComponentPropsWithoutRef } from "react";
@@ -54,23 +53,29 @@ export interface BookmarkCardProps extends ComponentPropsWithoutRef<"div"> {
   thumbnailVariant?: ThumbnailVariant;
   /** Day-of-month for the "date" thumbnail (e.g. 24). */
   day?: number | string;
-  /** Abbreviated month for the "date" thumbnail (e.g. "Mar"). */
+  /** Abbreviated month for the "date" thumbnail (e.g. "Apr"). */
   month?: string;
   /** Event title — DM Sans SemiBold 14 px, Neutral/900. */
   title: string;
   /**
-   * Subtitle shown below the title in the event row.
+   * Subtitle shown below the title.
+   *   string[]  → multiple lines (e.g. time + location)
    *   string    → single line (informative summary or edge-case message)
-   *   string[]  → multiple lines, e.g. ['4:00 pm – 5:30 pm', 'Hollister Hall 312']
    */
   subtitle?: string | string[];
+  /**
+   * When provided, clicking the subtitle triggers this handler.
+   * Used for edge-case events where the subtitle reads "Click to see original email".
+   */
+  onSubtitleClick?: () => void;
   /** Neutral/200 category tags shown beneath the event row. */
   tags?: string[];
   /**
-   * When provided, an RSVP button is rendered.
-   * Figma annotation: "appears only if there's an RSVP link".
+   * Primary action button (RSVP / Apply / Register).
+   * Figma annotation: "appears only if there's a primary link".
+   * Prefer `links[]` → `getPrimaryLink()` to derive this from EventItem.
    */
-  onRsvp?: () => void;
+  primaryAction?: { label: string; onClick: () => void };
   /**
    * When provided, an Add to Calendar button is rendered.
    * Figma annotation: "appears only when there's specific date and time".
@@ -78,6 +83,12 @@ export interface BookmarkCardProps extends ComponentPropsWithoutRef<"div"> {
   onAddToCalendar?: () => void;
   /** Called when the filled bookmark icon is pressed to remove the save. */
   onUnbookmark?: () => void;
+  /**
+   * Hover handlers wired to GCal grid highlight (passed from BookmarkView).
+   * noop when not on a GCal page.
+   */
+  onPreviewEnter?: () => void;
+  onPreviewLeave?: () => void;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -90,17 +101,21 @@ export function BookmarkCard({
   month,
   title,
   subtitle,
+  onSubtitleClick,
   tags,
-  onRsvp,
+  primaryAction,
   onAddToCalendar,
   onUnbookmark,
+  onPreviewEnter,
+  onPreviewLeave,
   className,
   ...rest
 }: BookmarkCardProps) {
   const subtitleLines: string[] =
     subtitle == null ? [] : Array.isArray(subtitle) ? subtitle : [subtitle];
 
-  const hasActions = onRsvp != null || onAddToCalendar != null;
+  const hasActions = primaryAction != null || onAddToCalendar != null;
+  const subtitleClickable = onSubtitleClick != null && subtitleLines.length > 0;
 
   return (
     <div
@@ -114,6 +129,8 @@ export function BookmarkCard({
       ]
         .filter(Boolean)
         .join(" ")}
+      onMouseEnter={onPreviewEnter}
+      onMouseLeave={onPreviewLeave}
       {...rest}
     >
       {/* ── Org header ── */}
@@ -155,7 +172,7 @@ export function BookmarkCard({
       {/* ── Middle: event row + tags ── */}
       <div className="flex w-full flex-col gap-[var(--space-2)]">
         {/* Event row — DateBadge + text + filled bookmark */}
-        <div className="flex w-full items-center gap-[var(--space-3)] rounded-[var(--radius-input)] bg-[var(--color-surface)] p-[var(--space-1-5)]">
+        <div className="flex w-full items-start gap-[var(--space-3)] rounded-[var(--radius-input)] bg-[var(--color-surface)] p-[var(--space-1-5)]">
           <DateBadge variant={thumbnailVariant} day={day} month={month} />
 
           {/* Title + subtitle */}
@@ -163,7 +180,7 @@ export function BookmarkCard({
             <p
               className={
                 BODY2_SEMIBOLD +
-                " w-full truncate text-[var(--color-neutral-900)]"
+                " w-full text-[var(--color-neutral-900)]"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
@@ -171,12 +188,27 @@ export function BookmarkCard({
             </p>
 
             {subtitleLines.length > 0 && (
-              <div className="flex flex-col">
+              <div
+                className={[
+                  "flex flex-col gap-[1px]",
+                  subtitleClickable
+                    ? "cursor-pointer hover:underline"
+                    : "",
+                ].join(" ")}
+                onClick={subtitleClickable ? onSubtitleClick : undefined}
+                role={subtitleClickable ? "button" : undefined}
+                tabIndex={subtitleClickable ? 0 : undefined}
+                onKeyDown={
+                  subtitleClickable
+                    ? (e) => e.key === "Enter" && onSubtitleClick?.()
+                    : undefined
+                }
+              >
                 {subtitleLines.map((line, i) => (
                   <p
                     key={i}
                     className={
-                      BODY3 + " w-full truncate text-[var(--color-neutral-700)]"
+                      BODY3 + " w-full text-[var(--color-neutral-700)]"
                     }
                     style={{ fontVariationSettings: "'opsz' 14" }}
                   >
@@ -217,14 +249,14 @@ export function BookmarkCard({
       {/* ── Action buttons ── */}
       {hasActions && (
         <div className="flex w-full gap-[var(--space-2)]">
-          {onRsvp && (
+          {primaryAction && (
             <Button
               variant="secondary"
               size="cta"
               className="flex-1"
-              onClick={onRsvp}
+              onClick={primaryAction.onClick}
             >
-              RSVP
+              {primaryAction.label}
             </Button>
           )}
           {onAddToCalendar && (

@@ -1,6 +1,28 @@
-import { Tag } from "@app/ui";
+/**
+ * BookmarkView — "Your Bookmarks"
+ *
+ * Shows events the user has saved.  Tag-strip supports:
+ *   • Click to toggle filter (OR match across active tags)
+ *   • + to add a custom tag
+ *   • Pencil → edit mode → × to delete a tag
+ *
+ * On Google Calendar (pageContext === "gcal"):
+ *   • Subheader "Hover on the events to preview time on your calendar" is shown
+ *   • Hovering a card calls onPreviewSlot to inject the orange-border highlight
+ *     into the actual GCal grid via the content-script bridge.
+ */
+
+import { useState } from "react";
+import type { EventItem } from "../data/types";
+import type { PageContext } from "../App";
+import { useAllEvents } from "../data/useEvents";
+import { getPrimaryLink, getLinkLabel, openExternalUrl } from "../utils/linkUtils";
+import { buildGCalUrl } from "../utils/calendarUtils";
+import { removeSlotPreview } from "../gcalHighlight";
 import { BookmarkCard } from "./BookmarkCard";
-import EditIcon from "@app/ui/assets/edit_icon.svg?react";
+import { SortByTags } from "./SortByTags";
+
+// ── Typography ─────────────────────────────────────────────────────────────
 
 // Figma: Inter Regular 16px, #5f5f5f, tracking -0.176px, leading 1.5
 const SORT_LABEL =
@@ -14,7 +36,13 @@ const SECTION_HEADING =
   "text-[1.25rem] leading-[1.5] tracking-[-0.22px] " +
   "text-[#5f5f5f] whitespace-nowrap";
 
-const SORT_TAGS = [
+// GCal subheader — Inter Regular 14px, #5f5f5f (Figma annotation)
+const GCAL_SUBHEADER =
+  "font-[family-name:var(--font-body)] font-normal " +
+  "text-[length:var(--font-size-body2)] leading-[1.5] " +
+  "text-[#5f5f5f]";
+
+const INITIAL_SORT_TAGS = [
   "Internships",
   "Early career",
   "Tech",
@@ -22,77 +50,140 @@ const SORT_TAGS = [
   "Just for fun",
 ];
 
-export default function BookmarkView() {
+// ── Props ───────────────────────────────────────────────────────────────────
+
+interface BookmarkViewProps {
+  bookmarkedIds: Set<string>;
+  onBookmark: (id: string) => void;
+  onEmailView: (event: EventItem) => void;
+  pageContext: PageContext;
+  onPreviewSlot?: (event: EventItem | null) => void;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+export default function BookmarkView({
+  bookmarkedIds,
+  onBookmark,
+  onEmailView,
+  pageContext,
+  onPreviewSlot,
+}: BookmarkViewProps) {
+  const allEvents = useAllEvents();
+
+  // Derive bookmarked events from the full list
+  const bookmarkedEvents = allEvents.filter((e) => bookmarkedIds.has(e.id));
+
+  // ── Tag filter state ──────────────────────────────────────────────────
+  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+
+  const handleTagToggle = (tag: string) => {
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  };
+
+  const handleTagAdd = (tag: string) => {
+    setAvailableTags((prev) => [...prev, tag]);
+    setActiveTags((prev) => [...prev, tag]);
+  };
+
+  const handleTagRemove = (tag: string) => {
+    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+    setActiveTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  // Filter: show all when no active tags; OR match otherwise
+  const filteredEvents =
+    activeTags.length === 0
+      ? bookmarkedEvents
+      : bookmarkedEvents.filter((e) =>
+          activeTags.some((tag) => e.tags.includes(tag)),
+        );
+
   return (
     <div className="flex w-full flex-col gap-[var(--space-4)]">
       {/* ── Sort by ── */}
       <section className="flex flex-col gap-[var(--space-2)]">
         <p className={SORT_LABEL}>Sort by</p>
-
-        {/* Figma: flex-wrap gap-[9px], tag chips + pencil icon at end */}
-        <div className="flex flex-wrap items-center gap-[9px]">
-          {SORT_TAGS.map((label) => (
-            <Tag key={label} color="neutral">
-              {label}
-            </Tag>
-          ))}
-
-          {/* "+" add tag chip */}
-          <Tag color="neutral">+</Tag>
-
-          {/* Pencil / edit icon — 16px, Figma node 528:5470 */}
-          <button
-            type="button"
-            aria-label="Edit filter tags"
-            className="size-4 shrink-0 cursor-pointer opacity-60 transition-opacity hover:opacity-100"
-          >
-            <EditIcon className="size-full" />
-          </button>
-        </div>
+        <SortByTags
+          tags={availableTags}
+          activeTags={activeTags}
+          onTagToggle={handleTagToggle}
+          onTagAdd={handleTagAdd}
+          onTagRemove={handleTagRemove}
+        />
       </section>
 
       {/* ── Your Bookmarks ── */}
-      <section className="flex flex-col gap-[var(--space-4)]">
-        <p className={SECTION_HEADING}>Your Bookmarks</p>
+      <section className="flex flex-col gap-[var(--space-3)]">
+        <div className="flex flex-col gap-[var(--space-1)]">
+          <p className={SECTION_HEADING}>Your Bookmarks</p>
+
+          {/* GCal-only subheader */}
+          {pageContext === "gcal" && (
+            <p className={GCAL_SUBHEADER}>
+              Hover on the events to preview time on your calendar
+            </p>
+          )}
+        </div>
+
+        {filteredEvents.length === 0 && (
+          <p className="text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
+            {bookmarkedEvents.length === 0
+              ? "Bookmark events from the Feed to save them here."
+              : "No bookmarks match the selected filters."}
+          </p>
+        )}
 
         <div className="flex flex-col gap-[var(--space-4)]">
-          {/* Card 1 — RSVP + Add to Calendar */}
-          <BookmarkCard
-            orgName="Cornell DTI"
-            thumbnailVariant="date"
-            day={24}
-            month="Mar"
-            title="Datadog recruitment event"
-            subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
-            tags={["Internships", "Early career"]}
-            onRsvp={() => {}}
-            onAddToCalendar={() => {}}
-          />
+          {filteredEvents.map((event) => {
+            const primaryLink = getPrimaryLink(event);
+            const primaryAction = primaryLink
+              ? {
+                  label: getLinkLabel(primaryLink),
+                  onClick: () => openExternalUrl(primaryLink.url),
+                }
+              : undefined;
 
-          {/* Card 2 — Add to Calendar only */}
-          <BookmarkCard
-            orgName="Cornell DTI"
-            thumbnailVariant="date"
-            day={24}
-            month="Mar"
-            title="Datadog recruitment event"
-            subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
-            tags={["Internships", "Early career"]}
-            onAddToCalendar={() => {}}
-          />
+            const onAddToCalendar = event.calendarEvent
+              ? () => {
+                  removeSlotPreview();
+                  // Full GCal event editor (new tab) — pre-filled via URL template
+                  openExternalUrl(buildGCalUrl(event.calendarEvent!));
+                }
+              : undefined;
 
-          {/* Card 3 — RSVP + Add to Calendar */}
-          <BookmarkCard
-            orgName="Cornell DTI"
-            thumbnailVariant="date"
-            day={24}
-            month="Mar"
-            title="Datadog recruitment event"
-            subtitle={["4:00 pm - 5:30 pm", "Hollister hall 312"]}
-            tags={["Internships", "Early career"]}
-            onRsvp={() => {}}
-            onAddToCalendar={() => {}}
-          />
+            return (
+              <BookmarkCard
+                key={event.id}
+                orgName={event.orgName}
+                thumbnailVariant={event.thumbnailVariant}
+                day={event.day}
+                month={event.month}
+                title={event.title}
+                subtitle={event.subtitle}
+                onSubtitleClick={
+                  event.isEdgeCase ? () => onEmailView(event) : undefined
+                }
+                tags={event.tags}
+                primaryAction={primaryAction}
+                onAddToCalendar={onAddToCalendar}
+                onUnbookmark={() => onBookmark(event.id)}
+                onPreviewEnter={
+                  pageContext === "gcal" && event.calendarEvent
+                    ? () => onPreviewSlot?.(event)
+                    : undefined
+                }
+                onPreviewLeave={
+                  pageContext === "gcal" && event.calendarEvent
+                    ? () => onPreviewSlot?.(null)
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       </section>
     </div>

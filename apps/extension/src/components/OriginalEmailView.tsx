@@ -1,4 +1,5 @@
 import { Avatar } from "@app/ui";
+import type { EventItem } from "../data/types";
 
 // Figma: Inter SemiBold 20px, #5f5f5f, tracking -0.22px, leading 1.5
 const SECTION_HEADING =
@@ -18,34 +19,31 @@ const EMAIL_BODY =
   "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)] text-[#5f5f5f]";
 
-// Email body split into paragraphs. Empty strings render as blank-line spacers.
-const EMAIL_PARAGRAPHS = [
+// Fallback content shown when no event is selected (shouldn't happen in normal flow)
+const FALLBACK_PARAGRAPHS = [
   "Hello Eship,",
   "",
-  "For Cornell builders, aspiring VCs, and startup enthusiasts: Startup Hours is being held from 7:30–9pm Thursday, on the third floor of eHub Collegetown. Startup Hours is a student-run event supported by most of the entrepreneurship groups on campus where you can come by to work on your projects, meet with VCs and mentors for funding, find out about startup resources, and catch up with other builders and early-stage investors.",
+  "For Cornell builders, aspiring VCs, and startup enthusiasts: Startup Hours is being held from 7:30–9pm Thursday, on the third floor of eHub Collegetown.",
   "",
-  "Startup Hours is hosted by Cornell Entrepreneurship Club, and is backed by Entrepreneurship at Cornell, along with VCs like Contrary Capital, Dorm Room Fund, .406 Ventures, Discipulus Ventures, and General Catalyst.",
-  "",
-  "Please fill out this form for Dos Amigos catering by Wednesday 5pm, so we have a proper headcount.",
+  "Please fill out this form for catering by Wednesday 5pm so we have a proper headcount.",
   "",
   "Best,",
   "Alli",
 ];
 
 export interface OriginalEmailViewProps {
-  /** Organisation that sent the email. */
-  orgName?: string;
-  /** Email subject line shown as the card title. */
-  emailTitle?: string;
-  /** Paragraphs of the email body. Empty strings render as blank-line spacers. */
-  paragraphs?: string[];
+  /**
+   * The EventItem whose raw email content should be displayed.
+   * When null/undefined (shouldn't happen in normal flow) fallback placeholder is shown.
+   */
+  event?: EventItem | null;
 }
 
-export default function OriginalEmailView({
-  orgName = "Cornell DTI",
-  emailTitle = "Datadog recruitment event",
-  paragraphs = EMAIL_PARAGRAPHS,
-}: OriginalEmailViewProps) {
+export default function OriginalEmailView({ event }: OriginalEmailViewProps) {
+  const orgName = event?.orgName ?? "Cornell DTI";
+  const emailTitle = event?.rawEmailTitle ?? event?.title ?? "Original Email";
+  const paragraphs = event?.rawEmailParagraphs ?? FALLBACK_PARAGRAPHS;
+
   return (
     <div className="flex w-full flex-col gap-[var(--space-1-5)]">
       {/* "Original Email" heading — Inter SemiBold 20px */}

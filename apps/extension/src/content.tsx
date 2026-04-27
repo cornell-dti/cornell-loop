@@ -4,6 +4,9 @@ import { createRoot } from "react-dom/client";
 import { ConvexReactClient } from "convex/react";
 import FloatingPanel from "./components/FloatingPanel.tsx";
 import contentStyles from "./content.css?inline";
+import { showSlotPreview, removeSlotPreview } from "./gcalHighlight";
+import type { EventItem } from "./data/types";
+import type { PageContext } from "./App";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 
@@ -30,6 +33,13 @@ function mount() {
 
   const convex = new ConvexReactClient(convexUrl);
 
+  // Detect which Google product the content script is running in.
+  const pageContext: PageContext = window.location.hostname.includes(
+    "calendar.google.com",
+  )
+    ? "gcal"
+    : "gmail";
+
   loadFonts();
 
   const host = document.createElement("div");
@@ -54,10 +64,26 @@ function mount() {
   mountPoint.style.pointerEvents = "auto";
   shadow.appendChild(mountPoint);
 
+  /**
+   * Bridge: called by BookmarkView (inside shadow DOM) when a card is hovered.
+   * This function runs in the content-script context and has access to
+   * document.body, so it can inject the GCal grid overlay.
+   */
+  const handlePreviewSlot = (event: EventItem | null) => {
+    if (event?.calendarEvent) {
+      showSlotPreview(event.calendarEvent);
+    } else {
+      removeSlotPreview();
+    }
+  };
+
   createRoot(mountPoint).render(
     <StrictMode>
       <ConvexAuthProvider client={convex}>
-        <FloatingPanel />
+        <FloatingPanel
+          pageContext={pageContext}
+          onPreviewSlot={handlePreviewSlot}
+        />
       </ConvexAuthProvider>
     </StrictMode>,
   );
