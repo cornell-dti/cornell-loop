@@ -169,13 +169,23 @@ export const overview = query({
   args: { token: v.string() },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const [runs, drafts, failedMessages, unparsedMessages] = await Promise.all([
+    const [runs, drafts, failedMessages, newMessages] = await Promise.all([
       ctx.db.query("parseRuns").withIndex("by_started_at").order("desc").take(20),
       ctx.db.query("events").withIndex("by_visibility", (q) => q.eq("visibility", "draft")).order("desc").take(50),
       ctx.db.query("listservMessages").withIndex("by_processing_status", (q) => q.eq("processingStatus", "failed")).order("desc").take(25),
-      ctx.db.query("listservMessages").withIndex("by_processing_status", (q) => q.eq("processingStatus", "new")).order("desc").take(25),
+      ctx.db.query("listservMessages").withIndex("by_processing_status", (q) => q.eq("processingStatus", "new")).order("desc").take(200),
     ]);
-    return { runs, drafts, failedMessages, unparsedMessages };
+
+    const readyMessages = newMessages.filter((m) => m.organizationId !== undefined);
+    const needsAssignment = newMessages.filter((m) => m.organizationId === undefined);
+
+    return {
+      runs,
+      drafts,
+      failedMessages,
+      readyMessages,
+      needsAssignmentCount: needsAssignment.length,
+    };
   },
 });
 
@@ -183,17 +193,28 @@ export const getMessagesForParsing = internalQuery({
   args: { messageId: v.optional(v.id("listservMessages")), limit: v.number() },
   handler: async (ctx, args) => {
     const singleMessage = args.messageId ? await ctx.db.get(args.messageId) : null;
-    const messages = args.messageId
-      ? (singleMessage ? [singleMessage] : [])
-      : await ctx.db
-          .query("listservMessages")
-          .withIndex("by_processing_status", (q) => q.eq("processingStatus", "new"))
-          .order("desc")
-          .take(args.limit);
+
+    // For a single-message parse, try even without organizationId
+    if (args.messageId) {
+      if (!singleMessage || !singleMessage.organizationId) return [];
+      const [listserv, organization] = await Promise.all([
+        singleMessage.listservId ? ctx.db.get(singleMessage.listservId) : null,
+        ctx.db.get(singleMessage.organizationId),
+      ]);
+      return [{ ...singleMessage, listserv, organization }];
+    }
+
+    // Scan a larger window so unassigned messages don't block assigned ones
+    const candidates = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_processing_status", (q) => q.eq("processingStatus", "new"))
+      .order("desc")
+      .take(args.limit * 10);
 
     const enriched: SourceMessage[] = [];
-    for (const message of messages) {
-      if (!message || !message.organizationId) continue;
+    for (const message of candidates) {
+      if (!message.organizationId) continue;
+      if (enriched.length >= args.limit) break;
       const [listserv, organization] = await Promise.all([
         message.listservId ? ctx.db.get(message.listservId) : null,
         ctx.db.get(message.organizationId),

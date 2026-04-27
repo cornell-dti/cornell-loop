@@ -170,7 +170,8 @@ export default function Admin() {
   const parseRuns: ParseRun[] = parseOverview?.runs ?? [];
   const draftEvents: EventDoc[] = parseOverview?.drafts ?? [];
   const failedParseMessages: ListservMessage[] = parseOverview?.failedMessages ?? [];
-  const unparsedMessages: ListservMessage[] = parseOverview?.unparsedMessages ?? [];
+  const readyMessages: ListservMessage[] = parseOverview?.readyMessages ?? [];
+  const needsAssignmentCount: number = parseOverview?.needsAssignmentCount ?? 0;
 
   const listservById = new Map(listservs.map((listserv) => [listserv._id, listserv]));
 
@@ -427,7 +428,8 @@ export default function Admin() {
               runs={parseRuns}
               drafts={draftEvents}
               failedMessages={failedParseMessages}
-              unparsedMessages={unparsedMessages}
+              readyMessages={readyMessages}
+              needsAssignmentCount={needsAssignmentCount}
               onRunParse={() =>
                 runAdminAction("Parse run complete.", async () => {
                   await runParseNow({ token });
@@ -745,19 +747,69 @@ function SourcesPanel({
   onAssignSource: (listservId: Id<"listservs">, organizationId: Id<"organizations">) => void;
 }) {
   const unassignedSources = listservs.filter((source) => !source.organizationId);
+  const totalNeedingAction = unassignedSources.length + unassignedSenders.length;
 
   return (
     <section>
       <SectionHeader
         title="Sources"
-        description="Assign email senders to organizations. Suggested values come from sender patterns and recent ingested messages."
+        description="Assign email senders to organizations so their messages can be parsed into feed items."
       />
 
+      {totalNeedingAction === 0 ? (
+        <p className="mt-[var(--space-4)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+          All sources are assigned. Messages from known sources will be ready to parse.
+        </p>
+      ) : (
+        <p className="mt-[var(--space-3)] text-[length:var(--font-size-body2)] text-amber-700">
+          {totalNeedingAction} source{totalNeedingAction !== 1 ? "s" : ""} need organization assignment before their messages can be parsed.
+        </p>
+      )}
+
       <div className="mt-[var(--space-4)] grid gap-[var(--space-4)]">
+        {unassignedSources.length > 0 && (
+          <div className="rounded-[var(--radius-input)] border border-amber-200 bg-amber-50 p-[var(--space-4)]">
+            <h3 className="font-semibold text-amber-900">
+              Known sources without organization ({unassignedSources.length})
+            </h3>
+            <p className="mt-[var(--space-1)] text-[length:var(--font-size-body2)] text-amber-800">
+              These are already-joined sources. Assign them to an organization and their messages will become ready to parse immediately.
+            </p>
+            <div className="mt-[var(--space-3)] grid gap-[var(--space-2)]">
+              {unassignedSources.map((source) => {
+                const suggestion = suggestFromEmail(source.listEmail);
+                return (
+                  <div key={source._id} className="grid gap-[var(--space-2)] rounded-[var(--radius-input)] bg-[var(--color-white)] p-[var(--space-3)] md:grid-cols-[1fr_auto_260px] md:items-center">
+                    <div>
+                      <div className="font-semibold">{source.name}</div>
+                      <div className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">{source.listEmail}</div>
+                      <div className="text-[length:var(--font-size-body3)] text-amber-700">Suggested: {suggestion.organizationName}</div>
+                    </div>
+                    <select
+                      defaultValue=""
+                      onChange={(event) => {
+                        const orgId = event.target.value as Id<"organizations">;
+                        if (orgId) onAssignSource(source._id, orgId);
+                      }}
+                      className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--font-size-body2)]"
+                    >
+                      <option value="">Assign to existing org...</option>
+                      {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-[var(--space-4)]">
-          <h3 className="font-semibold">Unassigned ingested senders</h3>
+          <h3 className="font-semibold">Unrecognized ingested senders ({unassignedSenders.length})</h3>
+          <p className="mt-[var(--space-1)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+            These senders don't match any known source. Approve to create a new source and organization.
+          </p>
           {unassignedSenders.length === 0 ? (
-            <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">No unassigned senders found.</p>
+            <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">None found.</p>
           ) : (
             <div className="mt-[var(--space-3)] overflow-x-auto">
               <table className="w-full min-w-[940px] border-collapse text-[length:var(--font-size-body2)]">
@@ -765,7 +817,7 @@ function SourcesPanel({
                   <tr className="border-b border-[var(--color-border)] text-[color:var(--color-text-muted)]">
                     <TableHead>Sender</TableHead>
                     <TableHead>Suggested org</TableHead>
-                    <TableHead>Count</TableHead>
+                    <TableHead>Messages</TableHead>
                     <TableHead>Sample subjects</TableHead>
                     <TableHead>Action</TableHead>
                   </tr>
@@ -785,35 +837,6 @@ function SourcesPanel({
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-[var(--radius-input)] border border-[var(--color-border)] p-[var(--space-4)]">
-          <h3 className="font-semibold">Existing sources without organization</h3>
-          {unassignedSources.length === 0 ? (
-            <p className="mt-[var(--space-2)] text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">All existing sources are assigned.</p>
-          ) : (
-            <div className="mt-[var(--space-3)] grid gap-[var(--space-2)]">
-              {unassignedSources.map((source) => (
-                <div key={source._id} className="grid gap-[var(--space-2)] rounded-[var(--radius-input)] bg-[var(--color-surface-subtle)] p-[var(--space-3)] md:grid-cols-[1fr_260px] md:items-center">
-                  <div>
-                    <div className="font-semibold">{source.name}</div>
-                    <div className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">{source.listEmail}</div>
-                  </div>
-                  <select
-                    defaultValue=""
-                    onChange={(event) => {
-                      const orgId = event.target.value as Id<"organizations">;
-                      if (orgId) onAssignSource(source._id, orgId);
-                    }}
-                    className="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-white)] px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--font-size-body2)]"
-                  >
-                    <option value="">Assign organization...</option>
-                    {organizations.map((org) => <option key={org._id} value={org._id}>{org.name}</option>)}
-                  </select>
-                </div>
-              ))}
             </div>
           )}
         </div>
@@ -1251,7 +1274,8 @@ function ParsePanel({
   runs,
   drafts,
   failedMessages,
-  unparsedMessages,
+  readyMessages,
+  needsAssignmentCount,
   onRunParse,
   onPublish,
   onHide,
@@ -1260,12 +1284,15 @@ function ParsePanel({
   runs: ParseRun[];
   drafts: EventDoc[];
   failedMessages: ListservMessage[];
-  unparsedMessages: ListservMessage[];
+  readyMessages: ListservMessage[];
+  needsAssignmentCount: number;
   onRunParse: () => void;
   onPublish: (eventId: Id<"events">) => void;
   onHide: (eventId: Id<"events">) => void;
   onReparse: (messageId: Id<"listservMessages">) => void;
 }) {
+  const blocked = readyMessages.length === 0 && needsAssignmentCount > 0;
+
   return (
     <section>
       <div className="flex flex-col justify-between gap-[var(--space-4)] md:flex-row md:items-start">
@@ -1273,14 +1300,23 @@ function ParsePanel({
           title="Parse"
           description="Convert assigned raw messages into draft feed items. Drafts require admin publish before users see them."
         />
-        <PrimaryButton onClick={onRunParse}>Run parser now</PrimaryButton>
+        <PrimaryButton onClick={onRunParse} disabled={readyMessages.length === 0}>
+          Run parser now
+        </PrimaryButton>
       </div>
 
-      <div className="mt-[var(--space-4)] grid gap-[var(--space-4)] md:grid-cols-3">
+      <div className="mt-[var(--space-4)] grid gap-[var(--space-4)] md:grid-cols-4">
+        <MetricCard label="Ready to parse" value={readyMessages.length} />
+        <MetricCard label="Needs source assignment" value={needsAssignmentCount} />
         <MetricCard label="Drafts" value={drafts.length} />
-        <MetricCard label="Unparsed" value={unparsedMessages.length} />
         <MetricCard label="Failed" value={failedMessages.length} />
       </div>
+
+      {blocked && (
+        <div className="mt-[var(--space-4)] rounded-[var(--radius-input)] border border-amber-200 bg-amber-50 p-[var(--space-4)] text-[length:var(--font-size-body2)] text-amber-800">
+          <strong>No messages are ready to parse.</strong> {needsAssignmentCount} message{needsAssignmentCount !== 1 ? "s" : ""} cannot be parsed because their senders are not yet assigned to an organization. Go to <strong>5. Sources</strong> to approve sender assignments.
+        </div>
+      )}
 
       <div className="mt-[var(--space-4)] rounded-[var(--radius-input)] border border-[var(--color-border)] p-[var(--space-4)]">
         <h3 className="font-semibold">Draft items</h3>
@@ -1634,6 +1670,17 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
     joinConfidence: listserv.joinConfidence ?? 20,
     joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };
+}
+
+function suggestFromEmail(email: string) {
+  const [local = "", domain = ""] = email.toLowerCase().split("@");
+  const cleaned = local.replace(/^owner-/, "").replace(/-request$/, "").replace(/-l$/, "");
+  const name = cleaned
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((part) => (part.length <= 4 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join(" ") || domain.split(".")[0] || "Unknown";
+  return { organizationName: name };
 }
 
 function formatDate(timestamp: number | undefined) {
