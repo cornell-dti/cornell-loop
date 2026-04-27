@@ -113,7 +113,7 @@ export const start = httpAction(async (ctx, request) => {
 
     const redirectUri = getRedirectUri(request);
     const params = new URLSearchParams({
-      client_id: getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID"),
+      client_id: getRequiredEnv("ADMIN_GOOGLE_OAUTH_CLIENT_ID"),
       redirect_uri: redirectUri,
       response_type: "code",
       scope: GMAIL_SCOPES.join(" "),
@@ -260,7 +260,7 @@ export const storeConnection = internalMutation({
 });
 
 function getRedirectUri(request: Request) {
-  const configured = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+  const configured = process.env.ADMIN_GOOGLE_OAUTH_REDIRECT_URI;
   if (configured) return configured;
 
   const url = new URL(request.url);
@@ -270,8 +270,8 @@ function getRedirectUri(request: Request) {
 async function exchangeCodeForTokens(code: string, redirectUri: string) {
   const params = new URLSearchParams({
     code,
-    client_id: getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID"),
-    client_secret: getRequiredEnv("GOOGLE_OAUTH_CLIENT_SECRET"),
+    client_id: getRequiredEnv("ADMIN_GOOGLE_OAUTH_CLIENT_ID"),
+    client_secret: getRequiredEnv("ADMIN_GOOGLE_OAUTH_CLIENT_SECRET"),
     redirect_uri: redirectUri,
     grant_type: "authorization_code",
   });

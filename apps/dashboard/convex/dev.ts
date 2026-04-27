@@ -17,9 +17,7 @@ declare const process: { env: Record<string, string | undefined> };
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Throws if the current Convex deployment explicitly identifies itself as prod.
- * Convex does not automatically expose the local `.env.local` deployment marker
- * to function runtime env, so an unset value must still be allowed for dev.
+ * Dev helpers refuse to run against production deployments.
  */
 function assertDev(): void {
   const deployment = process.env.CONVEX_DEPLOYMENT;

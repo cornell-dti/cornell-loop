@@ -1053,11 +1053,13 @@ async function getGmailConnection(ctx: ActionCtx) {
 }
 
 async function refreshGmailAccessToken(ctx: ActionCtx, refreshToken: string) {
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const clientId = process.env.ADMIN_GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.ADMIN_GOOGLE_OAUTH_CLIENT_SECRET;
 
   if (!refreshToken || !clientId || !clientSecret) {
-    throw new Error("Gmail OAuth client env vars are not configured.");
+    throw new Error(
+      "Admin ingestion Google OAuth client env vars are not configured.",
+    );
   }
 
   const params = new URLSearchParams({
