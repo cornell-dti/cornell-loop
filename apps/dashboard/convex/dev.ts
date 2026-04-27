@@ -17,21 +17,13 @@ declare const process: { env: Record<string, string | undefined> };
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Throws if the current Convex deployment looks like a production deployment,
- * or if no deployment env var is set (paranoid: refuse to run in unknown
- * environments). Read from `process.env.CONVEX_DEPLOYMENT`, which Convex
- * exposes server-side.
+ * Throws if the current Convex deployment explicitly identifies itself as prod.
+ * Convex does not automatically expose the local `.env.local` deployment marker
+ * to function runtime env, so an unset value must still be allowed for dev.
  */
 function assertDev(): void {
   const deployment = process.env.CONVEX_DEPLOYMENT;
-  if (deployment === undefined || deployment === "") {
-    throw new ConvexError({
-      code: "DEV_ONLY",
-      message:
-        "Refusing to run dev mutation: CONVEX_DEPLOYMENT is not set. This function is dev-only.",
-    });
-  }
-  if (deployment.startsWith("prod:")) {
+  if (deployment?.startsWith("prod:")) {
     throw new ConvexError({
       code: "DEV_ONLY",
       message: "Refusing to run dev mutation against a production deployment.",
