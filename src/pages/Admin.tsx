@@ -141,7 +141,9 @@ export default function Admin() {
   const assignSender = useMutation(api.sourceAdmin.assignSender);
   const assignSourceOrg = useMutation(api.sourceAdmin.assignSourceOrganization);
   const createOrg = useMutation(api.sourceAdmin.createOrganization);
+  const updateOrg = useMutation(api.sourceAdmin.updateOrganization);
   const ignoreSender = useMutation(api.sourceAdmin.ignoreSender);
+  const unignoreSource = useMutation(api.sourceAdmin.unignoreSource);
   const updateListservStatus = useMutation(api.listservAdmin.updateListservStatus);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
@@ -268,22 +270,18 @@ export default function Admin() {
             onRejectCandidate={(id) =>
               act("Candidate rejected.", () => rejectCandidate({ token, candidateId: id }))
             }
-            // Known source (listservs row exists) — assign to existing org
             onAssignSource={(listservId, orgId) =>
               act("Source assigned.", () => assignSourceOrg({ token, listservId, organizationId: orgId }))
             }
-            // Known source — create new org and assign
             onCreateAndAssignSource={(listservId, name, type) =>
               act(`${name} created and assigned.`, async () => {
                 const orgId = await createOrg({ token, name, type });
                 await assignSourceOrg({ token, listservId, organizationId: orgId });
               })
             }
-            // Inbox-only sender — assign to existing org (creates source row)
             onAssignInboxSenderToOrg={(senderEmail, orgId) =>
               act("Source assigned.", () => assignSender({ token, senderEmail, organizationId: orgId }))
             }
-            // Inbox-only sender — create new org and assign
             onCreateAndAssignInboxSender={(senderEmail, name, type, sourceName, sourceType) =>
               act(`${name} created and assigned.`, async () => {
                 const orgId = await createOrg({ token, name, type });
@@ -293,8 +291,14 @@ export default function Admin() {
             onIgnoreSender={(senderEmail) =>
               act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
             }
+            onUnignoreSource={(listservId) =>
+              act("Source reactivated.", () => unignoreSource({ token, listservId }))
+            }
             onCreateOrg={(name, type) =>
               act(`${name} created.`, () => createOrg({ token, name, type }))
+            }
+            onUpdateOrg={(orgId, name, type) =>
+              act("Organization updated.", () => updateOrg({ token, organizationId: orgId, name, type, status: "active", tags: [] }))
             }
           />
         )}
@@ -492,7 +496,9 @@ function SourcesTab({
   onAssignInboxSenderToOrg,
   onCreateAndAssignInboxSender,
   onIgnoreSender,
+  onUnignoreSource,
   onCreateOrg,
+  onUpdateOrg,
 }: {
   candidates: Candidate[];
   listservs: Listserv[];
@@ -505,14 +511,17 @@ function SourcesTab({
   onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"organizations">) => void;
   onCreateAndAssignInboxSender: (senderEmail: string, name: string, type: OrgType, sourceName: string, sourceType: NonNullable<Listserv["sourceType"]>) => void;
   onIgnoreSender: (senderEmail: string) => void;
+  onUnignoreSource: (listservId: Id<"listservs">) => void;
   onCreateOrg: (name: string, type: OrgType) => void;
+  onUpdateOrg: (orgId: Id<"organizations">, name: string, type: OrgType) => void;
 }) {
-  // Known listservs rows that have no org yet and aren't paused/ignored
+  // Partition listservs into three buckets
   const unassignedSources = listservs.filter((s) => !s.organizationId && s.status !== "paused");
+  const assignedSources   = listservs.filter((s) => !!s.organizationId);
+  const ignoredSources    = listservs.filter((s) => s.status === "paused");
   const pendingCandidates = candidates.filter((c) => c.status === "candidate");
 
-  // Build a unified list: known sources + inbox-only senders, sorted by
-  // message recency / count so the most active surface first.
+  // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
     | { kind: "known"; source: Listserv; suggestion: ReturnType<typeof suggestFromEmail> }
     | { kind: "inbox"; sender: UnassignedSender };
@@ -525,7 +534,6 @@ function SourcesTab({
     })),
     ...unassigned.map((sender) => ({ kind: "inbox" as const, sender })),
   ];
-  // Stable sort: inbox senders with more messages first, then by recency
   unifiedItems.sort((a, b) => {
     const countA = a.kind === "inbox" ? a.sender.count : 0;
     const countB = b.kind === "inbox" ? b.sender.count : 0;
@@ -538,7 +546,7 @@ function SourcesTab({
 
   return (
     <div className="grid gap-6">
-      {totalAction === 0 && (
+      {totalAction === 0 && unifiedItems.length === 0 && (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[length:var(--font-size-body2)] text-green-800">
           All sources are assigned and ready. Messages will be parsed when you run the parser.
         </div>
@@ -615,27 +623,219 @@ function SourcesTab({
         </Card>
       )}
 
-      {/* Organizations overview */}
+      {/* Assigned sources — always visible so assignments can be changed */}
+      {assignedSources.length > 0 && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4" open={unifiedItems.length === 0}>
+          <summary className="cursor-pointer select-none font-semibold text-[length:var(--font-size-body2)]">
+            {assignedSources.length} assigned source{assignedSources.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {assignedSources.map((src) => {
+              const org = organizations.find((o) => o._id === src.organizationId);
+              return (
+                <AssignedSourceRow
+                  key={src._id}
+                  source={src}
+                  orgName={org?.name ?? "Unknown org"}
+                  organizations={organizations}
+                  onReassign={(orgId) => onAssignSource(src._id, orgId)}
+                  onIgnore={() => onIgnoreSender(src.listEmail)}
+                />
+              );
+            })}
+          </div>
+        </details>
+      )}
+
+      {/* Ignored / paused sources */}
+      {ignoredSources.length > 0 && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer select-none font-semibold text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            {ignoredSources.length} ignored source{ignoredSources.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {ignoredSources.map((src) => (
+              <IgnoredSourceRow
+                key={src._id}
+                source={src}
+                organizations={organizations}
+                onReactivate={() => onUnignoreSource(src._id)}
+                onAssign={(orgId) => { onUnignoreSource(src._id); onAssignSource(src._id, orgId); }}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Organizations — view, edit, create */}
       <Card>
         <CardHeader
           title={`${organizations.length} organization${organizations.length !== 1 ? "s" : ""}`}
-          subtitle="Create new organizations here if suggestions don't match."
+          subtitle="Edit name or type, or create new organizations."
         />
         {organizations.length > 0 && (
           <div className="mt-4 grid gap-2">
             {organizations.map((org) => (
-              <div key={org._id} className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]">
-                <span className="font-semibold">{org.name}</span>
-                <Tag>{org.type}</Tag>
-                <span className="ml-auto text-[color:var(--color-text-muted)]">
-                  {listservs.filter((s) => s.organizationId === org._id).length} source{listservs.filter((s) => s.organizationId === org._id).length !== 1 ? "s" : ""}
-                </span>
-              </div>
+              <OrgRow
+                key={org._id}
+                org={org}
+                sourceCount={listservs.filter((s) => s.organizationId === org._id).length}
+                onUpdate={(name, type) => onUpdateOrg(org._id, name, type)}
+              />
             ))}
           </div>
         )}
         <CreateOrgForm className="mt-4" onCreate={onCreateOrg} />
       </Card>
+    </div>
+  );
+}
+
+function AssignedSourceRow({
+  source,
+  orgName,
+  organizations,
+  onReassign,
+  onIgnore,
+}: {
+  source: Listserv;
+  orgName: string;
+  organizations: Organization[];
+  onReassign: (orgId: Id<"organizations">) => void;
+  onIgnore: () => void;
+}) {
+  const [reassigning, setReassigning] = useState(false);
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold truncate">{source.name}</div>
+          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {source.listEmail} · <span className="text-[color:var(--color-neutral-700)]">{orgName}</span>
+          </div>
+        </div>
+        {!reassigning && (
+          <div className="flex gap-2 shrink-0">
+            <Btn onClick={() => setReassigning(true)}>Reassign</Btn>
+            <Btn danger onClick={onIgnore}>Ignore</Btn>
+          </div>
+        )}
+      </div>
+      {reassigning && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+            Reassign to
+            <select
+              defaultValue={source.organizationId ?? ""}
+              onChange={(e) => { if (e.target.value) { onReassign(e.target.value as Id<"organizations">); setReassigning(false); } }}
+              className={input()}
+            >
+              <option value="">Choose…</option>
+              {organizations.map((org) => (
+                <option key={org._id} value={org._id}>{org.name}</option>
+              ))}
+            </select>
+          </label>
+          <Btn onClick={() => setReassigning(false)}>Cancel</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IgnoredSourceRow({
+  source,
+  organizations,
+  onReactivate,
+  onAssign,
+}: {
+  source: Listserv;
+  organizations: Organization[];
+  onReactivate: () => void;
+  onAssign: (orgId: Id<"organizations">) => void;
+}) {
+  const [assigning, setAssigning] = useState(false);
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)] overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold truncate text-[color:var(--color-text-muted)]">{source.name}</div>
+          <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">{source.listEmail}</div>
+        </div>
+        {!assigning && (
+          <div className="flex gap-2 shrink-0">
+            <Btn primary onClick={onReactivate}>Reactivate</Btn>
+            <Btn onClick={() => setAssigning(true)}>Assign org</Btn>
+          </div>
+        )}
+      </div>
+      {assigning && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col gap-1 flex-1 min-w-[180px] text-[length:var(--font-size-body2)] font-semibold">
+            Assign to org
+            <select
+              defaultValue=""
+              onChange={(e) => { if (e.target.value) { onAssign(e.target.value as Id<"organizations">); setAssigning(false); } }}
+              className={input()}
+            >
+              <option value="">Choose…</option>
+              {organizations.map((org) => (
+                <option key={org._id} value={org._id}>{org.name}</option>
+              ))}
+            </select>
+          </label>
+          <Btn onClick={() => setAssigning(false)}>Cancel</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrgRow({
+  org,
+  sourceCount,
+  onUpdate,
+}: {
+  org: Organization;
+  sourceCount: number;
+  onUpdate: (name: string, type: OrgType) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(org.name);
+  const [type, setType] = useState<OrgType>(org.type);
+
+  // Reset draft if org prop changes (e.g. after save)
+  const savedName = org.name;
+  const savedType = org.type;
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3">
+        {editing ? (
+          <>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={`${input()} flex-1`}
+              autoFocus
+            />
+            <select value={type} onChange={(e) => setType(e.target.value as OrgType)} className={`${input()} w-36`}>
+              {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <Btn primary onClick={() => { onUpdate(name.trim() || savedName, type); setEditing(false); }}>Save</Btn>
+            <Btn onClick={() => { setName(savedName); setType(savedType); setEditing(false); }}>Cancel</Btn>
+          </>
+        ) : (
+          <>
+            <span className="flex-1 font-semibold">{org.name}</span>
+            <Tag>{org.type}</Tag>
+            <span className="text-[color:var(--color-text-muted)] text-[length:var(--font-size-body3)]">
+              {sourceCount} source{sourceCount !== 1 ? "s" : ""}
+            </span>
+            <Btn onClick={() => setEditing(true)}>Edit</Btn>
+          </>
+        )}
+      </div>
     </div>
   );
 }

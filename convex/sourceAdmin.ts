@@ -213,6 +213,17 @@ export const ignoreSender = mutation({
   },
 });
 
+export const unignoreSource = mutation({
+  args: {
+    token: v.string(),
+    listservId: v.id("listservs"),
+  },
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    await ctx.db.patch(args.listservId, { status: "joining", updatedAt: Date.now() });
+  },
+});
+
 export const assignSourceOrganization = mutation({
   args: {
     token: v.string(),
