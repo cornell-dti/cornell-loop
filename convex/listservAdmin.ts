@@ -485,11 +485,15 @@ export const clearConfirmation = mutation({
     requireAdminToken(args.token);
     const now = Date.now();
     const message = await ctx.db.get(args.messageId);
+    const listservId = message?.listservId ?? (message ? await resolveListservFromMessage(ctx, message) : undefined);
 
-    await ctx.db.patch(args.messageId, { confirmationClearedAt: now });
+    await ctx.db.patch(args.messageId, {
+      confirmationClearedAt: now,
+      listservId,
+    });
 
-    if (message?.listservId) {
-      await ctx.db.patch(message.listservId, {
+    if (listservId) {
+      await ctx.db.patch(listservId, {
         joinStatus: "joined",
         status: "active",
         updatedAt: now,
@@ -497,6 +501,36 @@ export const clearConfirmation = mutation({
     }
   },
 });
+
+async function resolveListservFromMessage(
+  ctx: MutationCtx,
+  message: {
+    subject: string;
+    bodyText: string;
+    senderEmail: string;
+    to: string[];
+    cc: string[];
+  },
+) {
+  const listservs = await ctx.db.query("listservs").collect();
+  const searchable = `${message.subject}\n${message.bodyText}\n${message.senderEmail}\n${message.to.join(" ")}\n${message.cc.join(" ")}`.toLowerCase();
+
+  for (const listserv of listservs) {
+    const addresses = [listserv.listEmail, ...listserv.senderEmails].map((value) =>
+      value.toLowerCase(),
+    );
+    const localParts = addresses.map((value) => value.split("@")[0]).filter(Boolean);
+
+    if (
+      addresses.some((address) => searchable.includes(address)) ||
+      localParts.some((local) => searchable.includes(local))
+    ) {
+      return listserv._id;
+    }
+  }
+
+  return undefined;
+}
 
 export const startDiscoveryRun = internalMutation({
   args: {},

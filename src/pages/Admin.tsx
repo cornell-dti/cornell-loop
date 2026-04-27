@@ -289,6 +289,7 @@ export default function Admin() {
             <JoinPanel
               listservs={listservs}
               joinAttempts={joinAttempts}
+              clearedConfirmations={clearedConfirmations}
               joinDraft={joinDraft}
               onPrepareJoin={setJoinDraft}
               onDraftChange={setJoinDraft}
@@ -547,6 +548,7 @@ function CandidateTable({
 function JoinPanel({
   listservs,
   joinAttempts,
+  clearedConfirmations,
   joinDraft,
   onPrepareJoin,
   onDraftChange,
@@ -556,6 +558,7 @@ function JoinPanel({
 }: {
   listservs: Listserv[];
   joinAttempts: JoinAttempt[];
+  clearedConfirmations: ListservMessage[];
   joinDraft: JoinDraft | null;
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
@@ -563,8 +566,19 @@ function JoinPanel({
   onStatusChange: (listservId: Id<"listservs">, status: Listserv["status"]) => void;
   onJoinStrategyChange: (listservId: Id<"listservs">, joinStrategy: JoinStrategy) => void;
 }) {
-  const pendingListservs = listservs.filter((listserv) => listserv.joinStatus !== "joined");
-  const joinedListservs = listservs.filter((listserv) => listserv.joinStatus === "joined");
+  const clearedConfirmationListservIds = new Set(
+    listservs
+      .filter((listserv) =>
+        clearedConfirmations.some((confirmation) =>
+          confirmationMatchesListserv(confirmation, listserv),
+        ),
+      )
+      .map((listserv) => listserv._id),
+  );
+  const isJoined = (listserv: Listserv) =>
+    listserv.joinStatus === "joined" || clearedConfirmationListservIds.has(listserv._id);
+  const pendingListservs = listservs.filter((listserv) => !isJoined(listserv));
+  const joinedListservs = listservs.filter(isJoined);
 
   return (
     <section>
@@ -1169,6 +1183,22 @@ function isConfirmationMessage(mail: ListservMessage) {
   return (
     sender.startsWith("lyris-confirm-") ||
     /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(text)
+  );
+}
+
+function confirmationMatchesListserv(mail: ListservMessage, listserv: Listserv) {
+  if (!isConfirmationMessage(mail)) return false;
+  if (mail.listservId === listserv._id) return true;
+
+  const searchable = `${mail.subject}\n${mail.bodyText}\n${mail.senderEmail}\n${mail.to.join(" ")}\n${mail.cc.join(" ")}`.toLowerCase();
+  const addresses = [listserv.listEmail, ...listserv.senderEmails].map((value) =>
+    value.toLowerCase(),
+  );
+  const localParts = addresses.map((value) => value.split("@")[0]).filter(Boolean);
+
+  return (
+    addresses.some((address) => searchable.includes(address)) ||
+    localParts.some((local) => searchable.includes(local))
   );
 }
 
