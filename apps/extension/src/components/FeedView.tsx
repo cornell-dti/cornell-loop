@@ -52,15 +52,16 @@ export default function FeedView({
   const trendingEvents = useTrendingEvents();
 
   // Track which org sections have been expanded beyond the 3-event cap.
+  // Keyed by orgId (stable Convex ID or fallback orgName).
   const [expandedOrgs, setExpandedOrgs] = useState<Set<string>>(new Set());
 
-  const toggleExpand = (orgName: string) => {
+  const toggleExpand = (orgId: string) => {
     setExpandedOrgs((prev) => {
       const next = new Set(prev);
-      if (next.has(orgName)) {
-        next.delete(orgName);
+      if (next.has(orgId)) {
+        next.delete(orgId);
       } else {
-        next.add(orgName);
+        next.add(orgId);
       }
       return next;
     });
@@ -78,16 +79,15 @@ export default function FeedView({
           </p>
         )}
 
-        {feedSections.map(({ orgName, events }) => {
-          const isExpanded = expandedOrgs.has(orgName);
+        {feedSections.map(({ orgId, orgName, events }) => {
+          const isExpanded = expandedOrgs.has(orgId);
           const visibleEvents = isExpanded
             ? events
             : events.slice(0, MAX_VISIBLE);
-          const hiddenCount = events.length - MAX_VISIBLE;
 
           return (
             <ExtensionEventCard
-              key={orgName}
+              key={orgId}
               orgName={orgName}
               events={visibleEvents.map((event) => ({
                 thumbnailVariant: event.thumbnailVariant,
@@ -103,10 +103,10 @@ export default function FeedView({
               }))}
               onViewMore={
                 !isExpanded && events.length > MAX_VISIBLE
-                  ? () => toggleExpand(orgName)
+                  ? () => toggleExpand(orgId)
                   : undefined
               }
-              onViewLess={isExpanded ? () => toggleExpand(orgName) : undefined}
+              onViewLess={isExpanded ? () => toggleExpand(orgId) : undefined}
             />
           );
         })}

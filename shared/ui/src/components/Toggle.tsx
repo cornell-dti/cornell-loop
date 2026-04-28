@@ -167,6 +167,7 @@ export function Toggle({
             type="button"
             role="tab"
             aria-selected={isActive}
+            data-testid={`tab-${opt.value}`}
             onClick={() => onChange(opt.value)}
             className={[
               OPTION_BASE,

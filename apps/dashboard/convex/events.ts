@@ -184,6 +184,8 @@ export const feed = query({
       }
       scoredOrgs.sort((a, b) => b.score - a.score);
 
+      // Pull recent events for each scoring org and combine scores
+      // (org-tag overlap + event-tag overlap with interests).
       const candidateById = new Map<
         Id<"events">,
         { event: Doc<"events">; score: number }

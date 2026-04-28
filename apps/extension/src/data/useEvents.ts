@@ -1,16 +1,17 @@
 /**
  * Data hooks for the extension.
  *
- * All hooks return EventItem[] (or grouped OrgSection[]) derived from mock data.
- * When Convex queries are ready, swap MOCK_EVENTS for useQuery(api.events.list, ...)
- * and keep the same grouping/filtering logic here — nothing in the view layer changes.
- *
- * Import path for Convex (when ready):
- *   import { useQuery } from "convex/react";
- *   import { api } from "@app/convex/_generated/api";
+ * All hooks call the shared Convex backend (same deployment as the dashboard).
+ * Raw Convex results are mapped through mapper.ts before being returned;
+ * UI components only ever see EventItem, never Convex Doc types.
  */
 
-import { MOCK_EVENTS } from "./mockData";
+import { useMemo } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@app/convex/_generated/api";
+import type { Id } from "@app/convex/_generated/dataModel";
+import type { Doc } from "@app/convex/_generated/dataModel";
+import { mapHydratedEventToEventItem } from "./mapper";
 import type { EventItem } from "./types";
 
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
@@ -18,80 +19,143 @@ const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface OrgSection {
+  /** Stable key — primary org _id, or orgName when no org is linked. */
+  orgId: string;
   orgName: string;
-  /** All events for this org (sorted newest first). FeedView slices to 3. */
   events: EventItem[];
+}
+
+/**
+ * Type predicate that narrows a string to Id<"events">.
+ * All EventItem.id values originate from event._id in the mapper, so the
+ * narrowing is sound even though the brand cannot be checked at runtime.
+ */
+function isEventId(id: string): id is Id<"events"> {
+  return id.length > 0;
 }
 
 // ── Feed ───────────────────────────────────────────────────────────────────
 
 /**
- * Returns events from the last 14 days, sorted newest first, grouped by org.
- * Each OrgSection.events is sorted newest-first within the org.
- * The section order mirrors the first event's sentAt (org with freshest email first).
+ * Events from followed orgs in the last 14 days, grouped by org.
+ * Falls back to an empty array while loading.
  */
 export function useFeedSections(): OrgSection[] {
-  const cutoff = Date.now() - TWO_WEEKS_MS;
+  // All hook calls must precede any early returns.
+  // eslint-disable-next-line react-hooks/purity
+  const cutoff = useMemo(() => Date.now() - TWO_WEEKS_MS, []);
 
-  const recent = [...MOCK_EVENTS]
-    .filter((e) => e.sentAt != null && e.sentAt >= cutoff)
-    .sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0));
+  const result = useQuery(api.events.feed, {
+    paginationOpts: { numItems: 50, cursor: null },
+    scope: "followed",
+  });
 
-  // Group preserving insertion order (= newest org first)
-  const orgMap = new Map<string, EventItem[]>();
-  for (const event of recent) {
-    const existing = orgMap.get(event.orgName) ?? [];
-    orgMap.set(event.orgName, [...existing, event]);
+  if (result === undefined) return [];
+
+  const orgMap = new Map<string, { orgName: string; events: EventItem[] }>();
+  for (const hydrated of result.page) {
+    if (hydrated.sentAt !== undefined && hydrated.sentAt < cutoff) continue;
+
+    const item = mapHydratedEventToEventItem(hydrated);
+    // Group by primary org _id for stable keys (not display name strings)
+    const orgKey = hydrated.orgs[0]?._id ?? item.orgName;
+    const section = orgMap.get(orgKey) ?? { orgName: item.orgName, events: [] };
+    section.events.push(item);
+    orgMap.set(orgKey, section);
   }
 
-  return Array.from(orgMap.entries()).map(([orgName, events]) => ({
+  return Array.from(orgMap.entries()).map(([orgId, { orgName, events }]) => ({
+    orgId,
     orgName,
     events,
   }));
 }
 
 /**
- * Returns trending events (last 14 days, newest-first, limited to 4).
- * Shows as standalone cards (not grouped) in the Trending section.
- * In production this will use bookmark/view counts; for now it's recency-based.
+ * Up to 4 trending events from the last 14 days, recency-ordered.
+ * Falls back to an empty array while loading.
  */
 export function useTrendingEvents(): EventItem[] {
-  const cutoff = Date.now() - TWO_WEEKS_MS;
-  return [...MOCK_EVENTS]
-    .filter((e) => e.sentAt != null && e.sentAt >= cutoff)
-    .sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0))
-    .slice(0, 4);
+  // All hook calls must precede any early returns.
+  // eslint-disable-next-line react-hooks/purity
+  const cutoff = useMemo(() => Date.now() - TWO_WEEKS_MS, []);
+
+  const result = useQuery(api.events.feed, {
+    paginationOpts: { numItems: 20, cursor: null },
+    scope: "all",
+  });
+
+  if (result === undefined) return [];
+
+  return result.page
+    .filter((h) => h.sentAt === undefined || h.sentAt >= cutoff)
+    .slice(0, 4)
+    .map(mapHydratedEventToEventItem);
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────
 
 /**
- * Simple client-side search over all events.
- * Matches against title, orgName, and tags (case-insensitive).
- * Returns sorted newest-first.
- *
- * When Convex search is ready: replace body with
- *   return useQuery(api.search.search, { query }) ?? [];
+ * Full-text search results from api.events.searchEvents.
+ * Returns an empty array when query is < 2 chars or while loading.
  */
 export function useSearchResults(query: string): EventItem[] {
-  if (!query.trim()) return [];
-  const q = query.toLowerCase();
-  return [...MOCK_EVENTS]
-    .filter(
-      (e) =>
-        e.title.toLowerCase().includes(q) ||
-        e.orgName.toLowerCase().includes(q) ||
-        e.tags.some((t) => t.toLowerCase().includes(q)),
-    )
-    .sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0));
+  const result = useQuery(
+    api.events.searchEvents,
+    query.trim().length >= 2 ? { q: query } : "skip",
+  );
+
+  if (result === undefined) return [];
+  return result.map(mapHydratedEventToEventItem);
 }
 
-// ── All events (for bookmark view) ────────────────────────────────────────
+// ── Bookmarks ──────────────────────────────────────────────────────────────
+
+type HydratedBookmark = {
+  bookmark: Doc<"bookmarks">;
+  event: Doc<"events">;
+  orgs: Doc<"orgs">[];
+};
+
+function mapBookmark(b: HydratedBookmark): EventItem {
+  return mapHydratedEventToEventItem({
+    event: b.event,
+    orgs: b.orgs,
+    isBookmarked: true,
+  });
+}
 
 /**
- * Returns all events sorted newest-first.
- * BookmarkView filters this to the set of bookmarked IDs.
+ * Returns { ids, events } derived from the user's Convex bookmark list.
+ * ids  — Set<string> for fast lookup in feed/search rows.
+ * events — full EventItem list for BookmarkView.
+ * Falls back to empty while loading or unauthenticated.
  */
-export function useAllEvents(): EventItem[] {
-  return [...MOCK_EVENTS].sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0));
+export function useBookmarks(): { ids: Set<string>; events: EventItem[] } {
+  const result = useQuery(api.bookmarks.myBookmarks, {
+    paginationOpts: { numItems: 100, cursor: null },
+  });
+
+  if (result === undefined) return { ids: new Set(), events: [] };
+
+  const events = result.page.map(mapBookmark);
+  const ids = new Set(result.page.map((b) => b.event._id as string));
+  return { ids, events };
+}
+
+// ── Email content ──────────────────────────────────────────────────────────
+
+/**
+ * Fetches raw email content for OriginalEmailView.
+ * Returns undefined while loading, null when no content is found.
+ */
+export function useEmailContent(
+  eventId: string | undefined,
+): { subject: string; paragraphs: string[] } | null | undefined {
+  const typedId =
+    eventId !== undefined && isEventId(eventId) ? eventId : undefined;
+  return useQuery(
+    api.events.getEmailContent,
+    typedId !== undefined ? { eventId: typedId } : "skip",
+  );
 }

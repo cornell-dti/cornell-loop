@@ -4,9 +4,10 @@
  * Empty state (no query):
  *   • Clicking a popular search row calls onSearchSelect(term) → populates the
  *     search bar in App.tsx via handleSearchSelect.
+ *   • POPULAR_SEARCHES is a manually curated static list for beta.
  *
  * Results state (query present):
- *   • Filters MOCK_EVENTS using useSearchResults(query).
+ *   • Calls useSearchResults(query) → api.events.searchEvents (Convex full-text search).
  *   • "Sort by" tag strip filters results further (OR match).
  *   • Tag strip supports +, pencil edit mode, and × delete via SortByTags.
  *   • Each BookmarkCard wires RSVP / Add to Calendar / bookmark actions.
@@ -78,6 +79,7 @@ function SearchEmptyState({ onSelect }: SearchEmptyStateProps) {
           <button
             key={rank}
             type="button"
+            data-testid="popular-search-row"
             onClick={() => onSelect(term)}
             className={
               "flex w-full items-center gap-[var(--space-3)] " +
@@ -151,7 +153,10 @@ function SearchResultsState({
       </section>
 
       {/* Result cards */}
-      <div className="flex flex-col gap-[var(--space-4)]">
+      <div
+        data-testid="search-results"
+        className="flex flex-col gap-[var(--space-4)]"
+      >
         {filtered.length === 0 && (
           <p className="text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
             No results found.
