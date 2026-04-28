@@ -11,6 +11,8 @@ type HydratedEvent = {
   orgs: Doc<"orgs">[];
   isBookmarked: boolean;
   source: FeedSource;
+  /** Epoch-ms of the parent email. Used by the extension for 14-day windowing. */
+  sentAt?: number;
 };
 
 type FeedPage = {
@@ -67,6 +69,31 @@ async function isEventBookmarked(
   return row !== null;
 }
 
+/**
+ * Resolves the epoch-ms timestamp of the parent listserv email for an event.
+ * Primary: sourceMessageId → listservMessages.receivedAt (ingestion pipeline).
+ * Fallback: listservEmailId → listservEmails.sentAt (legacy path).
+ */
+async function loadSentAt(
+  ctx: QueryCtx,
+  event: Doc<"events">,
+): Promise<number | undefined> {
+  if (event.sourceMessageId !== undefined) {
+    const msg = await ctx.db.get(event.sourceMessageId);
+    if (msg !== null) return msg.receivedAt;
+  }
+  if (event.listservEmailId !== undefined) {
+    const email = await ctx.db.get(event.listservEmailId);
+    if (email !== null) return email.sentAt;
+  }
+  return undefined;
+}
+
+/** Returns true for events that should be visible to students. */
+function isPublished(event: Doc<"events">): boolean {
+  return event.visibility !== "draft" && event.visibility !== "hidden";
+}
+
 async function hydrateEvent(
   ctx: QueryCtx,
   event: Doc<"events">,
@@ -75,7 +102,8 @@ async function hydrateEvent(
 ): Promise<HydratedEvent> {
   const orgs = await loadOrgsForEvent(ctx, event._id);
   const isBookmarked = await isEventBookmarked(ctx, userId, event._id);
-  return { event, orgs, isBookmarked, source };
+  const sentAt = await loadSentAt(ctx, event);
+  return { event, orgs, isBookmarked, source, sentAt };
 }
 
 export const feed = query({
@@ -96,15 +124,20 @@ export const feed = query({
     // that never feels empty on the home page.
     const targetItems = Math.max(numItems, FEED_MIN_ITEMS);
 
-    // Helper: recency-ordered pool, used as a fallback when we have no signal
-    // to personalise recommendations (signed-out, no profile, no matching
-    // interests). Bounded by RECOMMENDED_POOL_SIZE.
+    // Helper: recency-ordered pool of published events, used as a fallback
+    // when we have no signal to personalise recommendations.
     const fetchRecencyPool = async (
       excluded: ReadonlySet<Id<"events">>,
       limit: number,
     ): Promise<Doc<"events">[]> => {
       const pool = await ctx.db
         .query("events")
+        .filter((q) =>
+          q.and(
+            q.neq(q.field("visibility"), "draft"),
+            q.neq(q.field("visibility"), "hidden"),
+          ),
+        )
         .order("desc")
         .take(RECOMMENDED_POOL_SIZE);
       const out: Doc<"events">[] = [];
@@ -116,10 +149,6 @@ export const feed = query({
       return out;
     };
 
-    // Pull the user's profile so we can rank recommendations by interest
-    // overlap with org and event tags. Major / gradYear are not used as ranking
-    // signals yet — the production algo lives on a separate branch and will
-    // factor in major + cohort + collaborative filtering.
     const loadInterests = async (
       uid: Id<"users"> | null,
     ): Promise<ReadonlySet<string>> => {
@@ -132,9 +161,6 @@ export const feed = query({
       return new Set<string>(profile.interests);
     };
 
-    // Helper: build a pool of recommended events ranked by interest tag overlap
-    // with the user's profile. Falls back to recency when the profile is empty
-    // or no orgs match.
     const fetchRecommendedPool = async (
       excluded: ReadonlySet<Id<"events">>,
       limit: number,
@@ -144,7 +170,6 @@ export const feed = query({
         return await fetchRecencyPool(excluded, limit);
       }
 
-      // Bounded scan of orgs; score each by tag overlap with interests.
       const orgs = await ctx.db.query("orgs").take(RECOMMENDED_ORG_SCAN);
       const scoredOrgs: { org: Doc<"orgs">; score: number }[] = [];
       for (const org of orgs) {
@@ -159,8 +184,6 @@ export const feed = query({
       }
       scoredOrgs.sort((a, b) => b.score - a.score);
 
-      // Pull recent events for each scoring org and combine scores
-      // (org-tag overlap + event-tag overlap with interests).
       const candidateById = new Map<
         Id<"events">,
         { event: Doc<"events">; score: number }
@@ -175,6 +198,7 @@ export const feed = query({
           if (excluded.has(join.eventId)) continue;
           const event = await ctx.db.get(join.eventId);
           if (event === null) continue;
+          if (!isPublished(event)) continue;
           let eventTagScore = 0;
           for (const tag of event.tags) {
             if (interests.has(tag)) eventTagScore += 1;
@@ -193,7 +217,6 @@ export const feed = query({
       });
       const personalised = ranked.slice(0, limit).map((r) => r.event);
 
-      // Backfill with recency if we still came up short.
       if (personalised.length >= limit) return personalised;
       const seen = new Set<Id<"events">>(excluded);
       for (const e of personalised) seen.add(e._id);
@@ -202,13 +225,15 @@ export const feed = query({
       return [...personalised, ...recent];
     };
 
-    // "all" scope or signed-out: paginate over all events with creation-time
-    // ordering, then opportunistically backfill the first page with
-    // recommended events if the page comes up short. We tag every event with
-    // source = "recommended" because the user has no follow context.
     if (scope === "all" || userId === null) {
       const result = await ctx.db
         .query("events")
+        .filter((q) =>
+          q.and(
+            q.neq(q.field("visibility"), "draft"),
+            q.neq(q.field("visibility"), "hidden"),
+          ),
+        )
         .order("desc")
         .paginate(args.paginationOpts);
 
@@ -223,8 +248,7 @@ export const feed = query({
       };
     }
 
-    // scope === "followed": gather events from followed orgs first, then
-    // backfill with recommended events so the home feed is never empty.
+    // scope === "followed"
     const follows = await ctx.db
       .query("follows")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -244,19 +268,15 @@ export const feed = query({
         if (seenEventIds.has(join.eventId)) continue;
         seenEventIds.add(join.eventId);
         const event = await ctx.db.get(join.eventId);
-        if (event !== null) {
-          subscribedEvents.push(event);
-        }
+        if (event === null) continue;
+        if (!isPublished(event)) continue;
+        subscribedEvents.push(event);
       }
     }
 
-    // Recency-rank subscribed events and trim to the page target.
     subscribedEvents.sort((a, b) => b._creationTime - a._creationTime);
     const subscribedSlice = subscribedEvents.slice(0, targetItems);
 
-    // Backfill: if the subscribed slice is below the floor, pull recommended
-    // events from the global recency pool, dedupe against subscribed ids, and
-    // pad up to targetItems. Subscribed events render first.
     const remaining = targetItems - subscribedSlice.length;
     const recommendedSlice =
       remaining > 0 ? await fetchRecommendedPool(seenEventIds, remaining) : [];
@@ -269,9 +289,6 @@ export const feed = query({
       hydrated.push(await hydrateEvent(ctx, event, userId, "recommended"));
     }
 
-    // Followed-scope is a single-page snapshot: ranking + cursor pagination
-    // for the subscribed/recommended union lands with the recommendation algo
-    // branch. Mark the page as done so the client doesn't try to advance.
     return {
       page: hydrated,
       isDone: true,
@@ -315,6 +332,7 @@ export const searchEvents = query({
     const merged: Doc<"events">[] = [];
     for (const event of [...byTitle, ...byDesc]) {
       if (seen.has(event._id)) continue;
+      if (!isPublished(event)) continue;
       seen.add(event._id);
       merged.push(event);
       if (merged.length >= 25) break;
@@ -357,7 +375,7 @@ export const byOrg = query({
     for (const join of joinPage.page) {
       const event = await ctx.db.get(join.eventId);
       if (event === null) continue;
-      // Org page: every event is "subscribed" from the org's perspective.
+      if (!isPublished(event)) continue;
       hydrated.push(await hydrateEvent(ctx, event, userId, "subscribed"));
     }
 
@@ -366,5 +384,51 @@ export const byOrg = query({
       isDone: joinPage.isDone,
       continueCursor: joinPage.continueCursor,
     };
+  },
+});
+
+function splitIntoParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+/**
+ * Returns the raw email content for OriginalEmailView.
+ * Prefers the ingestion pipeline path (listservMessages); falls back to the
+ * legacy listservEmails table. Returns null when no email body is available.
+ */
+export const getEmailContent = query({
+  args: { eventId: v.id("events") },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ subject: string; paragraphs: string[] } | null> => {
+    const event = await ctx.db.get(args.eventId);
+    if (event === null) return null;
+
+    if (event.sourceMessageId !== undefined) {
+      const msg = await ctx.db.get(event.sourceMessageId);
+      if (msg !== null) {
+        return {
+          subject: msg.subject,
+          paragraphs: splitIntoParagraphs(msg.bodyText),
+        };
+      }
+    }
+
+    if (event.listservEmailId !== undefined) {
+      const email = await ctx.db.get(event.listservEmailId);
+      if (email !== null) {
+        const raw = email.rawText ?? email.rawHtml ?? "";
+        return {
+          subject: event.title,
+          paragraphs: splitIntoParagraphs(raw),
+        };
+      }
+    }
+
+    return null;
   },
 });
