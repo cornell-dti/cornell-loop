@@ -19,9 +19,12 @@ export interface AppProps {
   onPreviewSlot?: (event: EventItem | null) => void;
 }
 
-const DASHBOARD_URL =
-  (import.meta.env.VITE_DASHBOARD_URL as string | undefined) ??
-  "https://cornellloop.com";
+const DASHBOARD_URL = (() => {
+  const value = import.meta.env.VITE_DASHBOARD_URL;
+  return typeof value === "string" && value.length > 0
+    ? value
+    : "https://cornellloop.com";
+})();
 
 export default function App({
   onClose,
@@ -59,9 +62,9 @@ export default function App({
   const isSearchMode = view === "search" || view === "email";
 
   const handleTabChange = (tab: string) => {
-    const t = tab as "feed" | "bookmarks";
-    setActiveTab(t);
-    setView(t);
+    if (tab !== "feed" && tab !== "bookmarks") return;
+    setActiveTab(tab);
+    setView(tab);
     setEmailEvent(null);
   };
 
@@ -92,7 +95,7 @@ export default function App({
       style={{ boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.18)" }}
     >
       {/* ── Sticky header ── */}
-      <div className="shrink-0 px-6 pt-7">
+      <div className="shrink-0 px-6 pt-7" data-loop-panel-drag>
         <SearchHeader
           variant={isSearchMode ? "search" : "main"}
           activeTab={activeTab}
@@ -109,7 +112,10 @@ export default function App({
       {/* ── Main content: search uses pinned footer CTA; other views scroll with CTA inline ── */}
       {view === "search" ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+            data-loop-scroll
+          >
             <SearchView
               query={searchQuery}
               onSearchSelect={handleSearchSelect}
@@ -137,7 +143,10 @@ export default function App({
           </div>
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+          data-loop-scroll
+        >
           {view === "feed" && (
             <FeedView
               bookmarkedIds={bookmarkedIds}

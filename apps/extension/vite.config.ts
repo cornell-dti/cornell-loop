@@ -8,12 +8,31 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// PLAYWRIGHT is set by the package script (`PLAYWRIGHT=true vite build`), not .env.
+function isPlaywrightBuild(): boolean {
+  return process.env["PLAYWRIGHT"] === "true";
+}
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
     svgr(),
-    webExtension({ manifest: "./manifest.json" }),
+    webExtension({
+      manifest: "./manifest.json",
+      transformManifest(manifest) {
+        if (!isPlaywrightBuild()) return manifest;
+        const cs = manifest.content_scripts;
+        if (!Array.isArray(cs)) return manifest;
+        for (const entry of cs) {
+          if (!Array.isArray(entry.matches)) continue;
+          if (!entry.matches.includes("http://localhost/*")) {
+            entry.matches.push("http://localhost/*");
+          }
+        }
+        return manifest;
+      },
+    }),
   ],
   build: {
     cssCodeSplit: false,
