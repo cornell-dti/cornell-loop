@@ -3,10 +3,10 @@ import App from "../App";
 import type { AppProps } from "../App";
 import FloatingIcon from "../../public/floating_icon.svg?react";
 
-export interface FloatingPanelProps extends Pick<
+export type FloatingPanelProps = Pick<
   AppProps,
   "pageContext" | "onPreviewSlot"
-> {}
+>;
 
 export default function FloatingPanel({
   pageContext,
@@ -18,6 +18,7 @@ export default function FloatingPanel({
     <>
       {/* Floating tab — fades out when panel opens, fades in when closed */}
       <button
+        data-testid="loop-toggle"
         onClick={() => setIsOpen(true)}
         className={[
           "fixed top-32 right-0 z-[9999] bg-transparent",

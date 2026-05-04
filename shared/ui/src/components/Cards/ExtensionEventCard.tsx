@@ -117,12 +117,18 @@ export function ExtensionEventRow({
   const [internalBookmarked, setInternalBookmarked] = useState(bookmarkedProp);
   const bookmarked = onBookmark ? bookmarkedProp : internalBookmarked;
   const handleBookmark = onBookmark ?? (() => setInternalBookmarked((b) => !b));
+
   return (
     /*
      * Interactive states — Figma property1 "Default" | "hover":
      *   Default  → bg white (surface)
      *   Hover    → bg-surface-subtle (#f8f9fa, Neutral/100)
      * Transition matches the nav-tab and RSVP-row hover pattern.
+     *
+     * When `onRowClick` is set (edge-case / original-email rows), the handler
+     * lives on a wrapper around DateBadge + text only — not the Bookmark
+     * control — so clicks on the save icon never compete with row navigation
+     * and E2E can click the row target without synthesizing coordinates.
      */
     <div
       className={[
@@ -132,39 +138,60 @@ export function ExtensionEventRow({
         "bg-[var(--color-surface)]",
         "hover:bg-[var(--color-surface-subtle)]",
         "transition-colors duration-150",
-        onRowClick ? "cursor-pointer" : "",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
-      onClick={onRowClick}
       {...rest}
     >
-      {/* Thumbnail badge */}
-      <DateBadge variant={thumbnailVariant} day={day} month={month} />
+      <div
+        className={[
+          "flex min-w-0 flex-1 items-center gap-[var(--space-3)]",
+          onRowClick ? "cursor-pointer" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        data-testid={onRowClick ? "email-row" : undefined}
+        onClick={onRowClick}
+        onKeyDown={
+          onRowClick !== undefined
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onRowClick();
+                }
+              }
+            : undefined
+        }
+        role={onRowClick !== undefined ? "button" : undefined}
+        tabIndex={onRowClick !== undefined ? 0 : undefined}
+      >
+        {/* Thumbnail badge */}
+        <DateBadge variant={thumbnailVariant} day={day} month={month} />
 
-      {/* Text content */}
-      <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
-        <p
-          className={
-            BODY2_SEMIBOLD +
-            " w-full truncate text-[color:var(--color-neutral-900)]"
-          }
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          {title}
-        </p>
-
-        {description && (
+        {/* Text content */}
+        <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
           <p
             className={
-              BODY3 + " w-full truncate text-[color:var(--color-neutral-700)]"
+              BODY2_SEMIBOLD +
+              " w-full truncate text-[color:var(--color-neutral-900)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            {description}
+            {title}
           </p>
-        )}
+
+          {description && (
+            <p
+              className={
+                BODY3 + " w-full truncate text-[color:var(--color-neutral-700)]"
+              }
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              {description}
+            </p>
+          )}
+        </div>
       </div>
 
       <Bookmark

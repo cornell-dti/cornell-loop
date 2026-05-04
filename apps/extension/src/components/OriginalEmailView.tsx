@@ -1,5 +1,5 @@
 import { Avatar } from "@app/ui";
-import type { EventItem } from "../data/types";
+import { useEmailContent } from "../data/useEvents";
 
 // Figma: Inter SemiBold 20px, #5f5f5f, tracking -0.22px, leading 1.5
 const SECTION_HEADING =
@@ -19,37 +19,51 @@ const EMAIL_BODY =
   "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)] text-[#5f5f5f]";
 
-// Fallback content shown when no event is selected (shouldn't happen in normal flow)
-const FALLBACK_PARAGRAPHS = [
-  "Hello Eship,",
-  "",
-  "For Cornell builders, aspiring VCs, and startup enthusiasts: Startup Hours is being held from 7:30–9pm Thursday, on the third floor of eHub Collegetown.",
-  "",
-  "Please fill out this form for catering by Wednesday 5pm so we have a proper headcount.",
-  "",
-  "Best,",
-  "Alli",
-];
-
 export interface OriginalEmailViewProps {
   /**
-   * The EventItem whose raw email content should be displayed.
-   * When null/undefined (shouldn't happen in normal flow) fallback placeholder is shown.
+   * Convex event ID string (EventItem.id) — used to fetch email content
+   * from api.events.getEmailContent. When undefined, a loading state is shown.
    */
-  event?: EventItem | null;
+  eventId?: string;
+  /**
+   * Org name shown in the avatar header. Falls back to "Cornell Loop" when absent.
+   */
+  orgName?: string;
 }
 
-export default function OriginalEmailView({ event }: OriginalEmailViewProps) {
-  const orgName = event?.orgName ?? "Cornell DTI";
-  const emailTitle = event?.rawEmailTitle ?? event?.title ?? "Original Email";
-  const paragraphs = event?.rawEmailParagraphs ?? FALLBACK_PARAGRAPHS;
+export default function OriginalEmailView({
+  eventId,
+  orgName,
+}: OriginalEmailViewProps) {
+  const content = useEmailContent(eventId);
+
+  const displayOrgName = orgName ?? "Cornell Loop";
+
+  let emailTitle = "Original Email";
+  let paragraphs: string[] = [];
+
+  if (content === undefined) {
+    // Loading
+    paragraphs = [];
+  } else if (content === null) {
+    // Content not found — show placeholder
+    emailTitle = "Original Email";
+    paragraphs = [
+      "Email content could not be loaded.",
+      "",
+      "This event may not have an associated email in the system.",
+    ];
+  } else {
+    emailTitle = content.subject;
+    paragraphs = content.paragraphs;
+  }
 
   return (
     <div className="flex w-full flex-col gap-[var(--space-1-5)]">
       {/* "Original Email" heading — Inter SemiBold 20px */}
       <p className={SECTION_HEADING}>Original Email</p>
 
-      {/* Email card — Figma: white bg, #ececec 1.5px border, rounded-[12px], p-[16px], gap-[20px] */}
+      {/* Email card */}
       <div
         className={[
           "flex flex-col gap-[var(--space-5)]",
@@ -60,39 +74,52 @@ export default function OriginalEmailView({ event }: OriginalEmailViewProps) {
           "w-full",
         ].join(" ")}
       >
-        {/* Org header — avatar circle + org name */}
-        <Avatar avatars={[{ name: orgName }]} />
+        {/* Org header */}
+        <Avatar avatars={[{ name: displayOrgName }]} />
 
         {/* Email content */}
         <div className="flex w-full flex-col gap-[var(--space-2)] tracking-[var(--letter-spacing-body2)]">
-          {/* Subject / title — DM Sans Bold 18px */}
-          <p
-            className={EMAIL_TITLE}
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {emailTitle}
-          </p>
+          {content === undefined ? (
+            /* Loading skeleton */
+            <div className="flex flex-col gap-[var(--space-2)]">
+              <div className="h-5 w-2/3 animate-pulse rounded bg-[var(--color-neutral-200)]" />
+              <div className="h-4 w-full animate-pulse rounded bg-[var(--color-neutral-200)]" />
+              <div className="h-4 w-5/6 animate-pulse rounded bg-[var(--color-neutral-200)]" />
+              <div className="h-4 w-4/6 animate-pulse rounded bg-[var(--color-neutral-200)]" />
+            </div>
+          ) : (
+            <>
+              {/* Subject / title */}
+              <p
+                data-testid="email-subject"
+                className={EMAIL_TITLE}
+                style={{ fontVariationSettings: "'opsz' 14" }}
+              >
+                {emailTitle}
+              </p>
 
-          {/* Body paragraphs — empty strings become blank-line spacers */}
-          <div className="flex flex-col">
-            {paragraphs.map((line, i) =>
-              line === "" ? (
-                <div
-                  key={i}
-                  className="h-[var(--line-height-body2)]"
-                  aria-hidden="true"
-                />
-              ) : (
-                <p
-                  key={i}
-                  className={EMAIL_BODY}
-                  style={{ fontVariationSettings: "'opsz' 14" }}
-                >
-                  {line}
-                </p>
-              ),
-            )}
-          </div>
+              {/* Body paragraphs — empty strings become blank-line spacers */}
+              <div className="flex flex-col">
+                {paragraphs.map((line, i) =>
+                  line === "" ? (
+                    <div
+                      key={i}
+                      className="h-[var(--line-height-body2)]"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <p
+                      key={i}
+                      className={EMAIL_BODY}
+                      style={{ fontVariationSettings: "'opsz' 14" }}
+                    >
+                      {line}
+                    </p>
+                  ),
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

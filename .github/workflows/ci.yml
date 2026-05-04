@@ -18,3 +18,6 @@ jobs:
         run: bun run lint
       - name: Format check
         run: bun run format:check
+      # NOTE: When adding a production build step for the extension, use
+      # `bun run build` (apps/extension). Never use `build:test` in CI/release —
+      # that variant injects http://localhost/* into the manifest via PLAYWRIGHT=true.

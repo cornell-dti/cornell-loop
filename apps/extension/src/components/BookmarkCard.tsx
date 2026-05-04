@@ -119,6 +119,7 @@ export function BookmarkCard({
 
   return (
     <div
+      data-testid="bookmark-card"
       className={[
         "flex flex-col gap-[var(--space-4)]",
         "border border-[var(--color-border)]",
@@ -219,6 +220,7 @@ export function BookmarkCard({
           {/* Bookmark — always filled (orange) since this card is in the saved list */}
           <button
             type="button"
+            data-testid="unbookmark-button"
             aria-label="Remove bookmark"
             aria-pressed
             onClick={(e) => {

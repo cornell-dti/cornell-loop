@@ -1,4 +1,9 @@
-import { useState } from "react";
+import { useState, useRef, useLayoutEffect } from "react";
+import { useConvexAuth } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useMutation } from "convex/react";
+import { api } from "@app/convex/_generated/api";
+import type { Id } from "@app/convex/_generated/dataModel";
 import { Button } from "@app/ui";
 import SearchHeader from "./components/SearchHeader";
 import FeedView from "./components/FeedView";
@@ -6,6 +11,7 @@ import BookmarkView from "./components/BookmarkView";
 import SearchView from "./components/SearchView";
 import OriginalEmailView from "./components/OriginalEmailView";
 import type { EventItem } from "./data/types";
+import { useBookmarks } from "./data/useEvents";
 import { openExternalUrl } from "./utils/linkUtils";
 
 type View = "feed" | "bookmarks" | "search" | "email";
@@ -15,7 +21,6 @@ export type PageContext = "gmail" | "gcal";
 export interface AppProps {
   onClose?: () => void;
   pageContext?: PageContext;
-  /** Called by BookmarkView when the user hovers a bookmark card on GCal. */
   onPreviewSlot?: (event: EventItem | null) => void;
 }
 
@@ -23,36 +28,95 @@ const DASHBOARD_URL =
   (import.meta.env.VITE_DASHBOARD_URL as string | undefined) ??
   "https://cornellloop.com";
 
+// ── Auth gate sub-components ───────────────────────────────────────────────
+
+function LoadingState() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <p className="font-[family-name:var(--font-body)] text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
+        Loading…
+      </p>
+    </div>
+  );
+}
+
+interface SignInPromptProps {
+  onSignIn: () => void;
+}
+
+function SignInPrompt({ onSignIn }: SignInPromptProps) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-[var(--space-4)] px-6">
+      <div className="flex flex-col items-center gap-[var(--space-2)] text-center">
+        <p
+          className={
+            "font-[family-name:var(--font-brand)] font-bold " +
+            "text-[1.25rem] leading-[1.5] tracking-[-0.22px] " +
+            "text-[var(--color-text-primary)]"
+          }
+        >
+          Cornell Loop
+        </p>
+        <p className="font-[family-name:var(--font-body)] text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
+          Sign in with your Cornell Google account to see events from your
+          clubs.
+        </p>
+      </div>
+      <Button variant="primary" size="md" onClick={onSignIn}>
+        Sign in with Google
+      </Button>
+    </div>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
+
 export default function App({
   onClose,
   pageContext = "gmail",
   onPreviewSlot,
 }: AppProps) {
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const { signIn } = useAuthActions();
+
+  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
+  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
+
+  const { ids: bookmarkedIds, events: bookmarkedEvents } = useBookmarks();
+
   const [view, setView] = useState<View>("feed");
   const [activeTab, setActiveTab] = useState<"feed" | "bookmarks">("feed");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ── Bookmark state ─────────────────────────────────────────────────────
-  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
-
-  const toggleBookmark = (id: string) => {
-    setBookmarkedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    mainScrollRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [view]);
 
   // ── Email view ─────────────────────────────────────────────────────────
-  const [emailEvent, setEmailEvent] = useState<EventItem | null>(null);
+  const [emailEventId, setEmailEventId] = useState<string | undefined>(
+    undefined,
+  );
+  const [emailEventOrgName, setEmailEventOrgName] = useState<
+    string | undefined
+  >(undefined);
 
   const handleEmailView = (event: EventItem) => {
-    setEmailEvent(event);
+    setEmailEventId(event.id);
+    setEmailEventOrgName(event.orgName);
     setView("email");
+  };
+
+  // ── Bookmark actions ───────────────────────────────────────────────────
+  const handleBookmark = (id: string) => {
+    // Type predicate: EventItem.id always originates from event._id in the mapper.
+    if (id.length === 0) return;
+    const eventId = id as Id<"events">;
+    if (bookmarkedIds.has(id)) {
+      void unbookmarkMutation({ eventId });
+    } else {
+      void bookmarkMutation({ eventId });
+    }
   };
 
   // ── Navigation ─────────────────────────────────────────────────────────
@@ -62,7 +126,8 @@ export default function App({
     const t = tab as "feed" | "bookmarks";
     setActiveTab(t);
     setView(t);
-    setEmailEvent(null);
+    setEmailEventId(undefined);
+    setEmailEventOrgName(undefined);
   };
 
   const handleSearchFocus = () => setView("search");
@@ -76,16 +141,53 @@ export default function App({
 
   const handleBack = () => {
     setSearchQuery("");
-    setEmailEvent(null);
+    setEmailEventId(undefined);
+    setEmailEventOrgName(undefined);
     setView(activeTab);
   };
 
-  /** Populate the search bar when the user clicks a popular search term. */
   const handleSearchSelect = (term: string) => {
     setSearchQuery(term);
     setView("search");
   };
 
+  // ── Auth gate ──────────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div
+        className="flex h-full flex-col overflow-hidden rounded-[12px] bg-white"
+        style={{ boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.18)" }}
+      >
+        <LoadingState />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div
+        className="flex h-full flex-col overflow-hidden rounded-[12px] bg-white"
+        style={{ boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.18)" }}
+      >
+        <div className="shrink-0 px-6 pt-7">
+          <SearchHeader
+            variant="main"
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            searchQuery=""
+            onSearchChange={() => {}}
+            onSearchFocus={() => {}}
+            onSearchClear={() => {}}
+            onBack={() => {}}
+            onClose={onClose}
+          />
+        </div>
+        <SignInPrompt onSignIn={() => void signIn("google")} />
+      </div>
+    );
+  }
+
+  // ── Authenticated UI ───────────────────────────────────────────────────
   return (
     <div
       className="flex h-full flex-col overflow-hidden rounded-[12px] bg-white"
@@ -106,19 +208,21 @@ export default function App({
         />
       </div>
 
-      {/* ── Main content: search uses pinned footer CTA; other views scroll with CTA inline ── */}
+      {/* ── Main content ── */}
       {view === "search" ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]">
+          <div
+            ref={mainScrollRef}
+            className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+          >
             <SearchView
               query={searchQuery}
               onSearchSelect={handleSearchSelect}
               bookmarkedIds={bookmarkedIds}
-              onBookmark={toggleBookmark}
+              onBookmark={handleBookmark}
               onEmailView={handleEmailView}
             />
           </div>
-          {/* Pinned to bottom of panel while search content scrolls */}
           <div
             className={[
               "shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]",
@@ -137,28 +241,35 @@ export default function App({
           </div>
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]">
+        <div
+          ref={mainScrollRef}
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+        >
           {view === "feed" && (
             <FeedView
               bookmarkedIds={bookmarkedIds}
-              onBookmark={toggleBookmark}
+              onBookmark={handleBookmark}
               onEmailView={handleEmailView}
             />
           )}
 
           {view === "bookmarks" && (
             <BookmarkView
-              bookmarkedIds={bookmarkedIds}
-              onBookmark={toggleBookmark}
+              events={bookmarkedEvents}
+              onUnbookmark={handleBookmark}
               onEmailView={handleEmailView}
               pageContext={pageContext}
               onPreviewSlot={onPreviewSlot}
             />
           )}
 
-          {view === "email" && <OriginalEmailView event={emailEvent} />}
+          {view === "email" && (
+            <OriginalEmailView
+              eventId={emailEventId}
+              orgName={emailEventOrgName}
+            />
+          )}
 
-          {/* CTA — opens dashboard in a new tab */}
           <div className="pt-[21px]">
             <Button
               variant="primary"

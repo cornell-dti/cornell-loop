@@ -28,6 +28,7 @@ export function Bookmark({
   return (
     <button
       type="button"
+      data-testid="bookmark-button"
       aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
       aria-pressed={bookmarked}
       onClick={onToggle}

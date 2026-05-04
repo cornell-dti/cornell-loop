@@ -32,6 +32,8 @@ export interface EventItem {
   id: string;
   /** Primary host name, e.g. "Cornell DTI". From schema: hosts[0].name. */
   orgName: string;
+  /** Optional org avatar URL; falls back to initial-letter avatar when absent. */
+  orgAvatarUrl?: string;
   /** Controls the DateBadge style in feed/card rows. */
   thumbnailVariant: "date" | "news";
   /** Day-of-month for the "date" thumbnail (e.g. 24). */

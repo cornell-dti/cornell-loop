@@ -8,12 +8,32 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// When PLAYWRIGHT=true the content script is also injected into localhost pages
+// so that Playwright tests can exercise the extension against a local fixture
+// page without needing real Gmail or Google Calendar.
+const isPlaywrightBuild = process.env["PLAYWRIGHT"] === "true";
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
     svgr(),
-    webExtension({ manifest: "./manifest.json" }),
+    webExtension({
+      manifest: "./manifest.json",
+      additionalInputs: [],
+      transformManifest(manifest) {
+        if (!isPlaywrightBuild) return manifest;
+        const cs = manifest.content_scripts;
+        if (Array.isArray(cs)) {
+          for (const entry of cs) {
+            if (Array.isArray(entry.matches)) {
+              entry.matches.push("http://localhost/*");
+            }
+          }
+        }
+        return manifest;
+      },
+    }),
   ],
   build: {
     cssCodeSplit: false,

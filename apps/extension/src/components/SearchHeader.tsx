@@ -132,6 +132,7 @@ export function SearchHeader({
       {variant === "main" ? (
         /* Main variant: search bar spans full width */
         <SearchBar
+          data-testid="search-input"
           value={searchQuery}
           onChange={onSearchChange}
           onClear={onSearchClear}
@@ -159,6 +160,7 @@ export function SearchHeader({
           </button>
 
           <SearchBar
+            data-testid="search-input"
             value={searchQuery}
             onChange={onSearchChange}
             onClear={onSearchClear}

@@ -85,6 +85,11 @@ export const seedAll = internalMutation({
         isSeed: true,
       });
       summary.listservEmails += 1;
+    } else {
+      await ctx.db.patch(listservId, {
+        sentAt: now,
+        rawText: "Seed listserv parent row.",
+      });
     }
 
     // 2. Orgs (skip if a row with this slug already exists).

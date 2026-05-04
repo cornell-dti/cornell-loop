@@ -53,6 +53,10 @@ async function findBookmark(
     .unique();
 }
 
+function isPublished(event: Doc<"events">): boolean {
+  return event.visibility !== "draft" && event.visibility !== "hidden";
+}
+
 export const bookmark = mutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, args) => {
@@ -61,6 +65,14 @@ export const bookmark = mutation({
       throw new ConvexError({
         code: "UNAUTHENTICATED",
         message: "You must be signed in to bookmark an event.",
+      });
+    }
+
+    const event = await ctx.db.get(args.eventId);
+    if (event === null || !isPublished(event)) {
+      throw new ConvexError({
+        code: "EVENT_NOT_FOUND",
+        message: "This event is not available to bookmark.",
       });
     }
 
@@ -132,6 +144,7 @@ export const myBookmarks = query({
     for (const row of result.page) {
       const event = await ctx.db.get(row.eventId);
       if (event === null) continue;
+      if (!isPublished(event)) continue;
       const orgs = await loadOrgsForEvent(ctx, event._id);
       hydrated.push({ bookmark: row, event, orgs });
     }

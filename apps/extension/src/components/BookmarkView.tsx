@@ -1,7 +1,10 @@
 /**
  * BookmarkView — "Your Bookmarks"
  *
- * Shows events the user has saved.  Tag-strip supports:
+ * Shows events the user has saved. Receives pre-fetched bookmarked events
+ * from the parent (App.tsx), which derives them from api.bookmarks.myBookmarks.
+ *
+ * Tag-strip supports:
  *   • Click to toggle filter (OR match across active tags)
  *   • + to add a custom tag
  *   • Pencil → edit mode → × to delete a tag
@@ -15,7 +18,6 @@
 import { useState } from "react";
 import type { EventItem } from "../data/types";
 import type { PageContext } from "../App";
-import { useAllEvents } from "../data/useEvents";
 import {
   getPrimaryLink,
   getLinkLabel,
@@ -57,8 +59,10 @@ const INITIAL_SORT_TAGS = [
 // ── Props ───────────────────────────────────────────────────────────────────
 
 interface BookmarkViewProps {
-  bookmarkedIds: Set<string>;
-  onBookmark: (id: string) => void;
+  /** Pre-fetched bookmarked events from Convex (api.bookmarks.myBookmarks). */
+  events: EventItem[];
+  /** Called when the user removes a bookmark from any card in this view. */
+  onUnbookmark: (id: string) => void;
   onEmailView: (event: EventItem) => void;
   pageContext: PageContext;
   onPreviewSlot?: (event: EventItem | null) => void;
@@ -67,17 +71,12 @@ interface BookmarkViewProps {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function BookmarkView({
-  bookmarkedIds,
-  onBookmark,
+  events,
+  onUnbookmark,
   onEmailView,
   pageContext,
   onPreviewSlot,
 }: BookmarkViewProps) {
-  const allEvents = useAllEvents();
-
-  // Derive bookmarked events from the full list
-  const bookmarkedEvents = allEvents.filter((e) => bookmarkedIds.has(e.id));
-
   // ── Tag filter state ──────────────────────────────────────────────────
   const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
   const [activeTags, setActiveTags] = useState<string[]>([]);
@@ -101,10 +100,8 @@ export default function BookmarkView({
   // Filter: show all when no active tags; OR match otherwise
   const filteredEvents =
     activeTags.length === 0
-      ? bookmarkedEvents
-      : bookmarkedEvents.filter((e) =>
-          activeTags.some((tag) => e.tags.includes(tag)),
-        );
+      ? events
+      : events.filter((e) => activeTags.some((tag) => e.tags.includes(tag)));
 
   return (
     <div className="flex w-full flex-col gap-[var(--space-4)]">
@@ -135,7 +132,7 @@ export default function BookmarkView({
 
         {filteredEvents.length === 0 && (
           <p className="text-[length:var(--font-size-body3)] text-[var(--color-neutral-500)]">
-            {bookmarkedEvents.length === 0
+            {events.length === 0
               ? "Bookmark events from the Feed to save them here."
               : "No bookmarks match the selected filters."}
           </p>
@@ -154,7 +151,6 @@ export default function BookmarkView({
             const onAddToCalendar = event.calendarEvent
               ? () => {
                   removeSlotPreview();
-                  // Full GCal event editor (new tab) — pre-filled via URL template
                   openExternalUrl(buildGCalUrl(event.calendarEvent!));
                 }
               : undefined;
@@ -163,6 +159,7 @@ export default function BookmarkView({
               <BookmarkCard
                 key={event.id}
                 orgName={event.orgName}
+                orgAvatarUrl={event.orgAvatarUrl}
                 thumbnailVariant={event.thumbnailVariant}
                 day={event.day}
                 month={event.month}
@@ -174,7 +171,7 @@ export default function BookmarkView({
                 tags={event.tags}
                 primaryAction={primaryAction}
                 onAddToCalendar={onAddToCalendar}
-                onUnbookmark={() => onBookmark(event.id)}
+                onUnbookmark={() => onUnbookmark(event.id)}
                 onPreviewEnter={
                   pageContext === "gcal" && event.calendarEvent
                     ? () => onPreviewSlot?.(event)
