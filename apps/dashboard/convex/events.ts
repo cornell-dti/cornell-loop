@@ -28,8 +28,7 @@ const FEED_MIN_ITEMS = 20;
 // Bounded pool size when pulling recommended events to dedupe + backfill from.
 const RECOMMENDED_POOL_SIZE = 50;
 // Bounded scan sizes for the interest-personalised recommendation pass. Kept
-// small so the feed query stays cheap; the full ranking model lives on a
-// separate branch and will replace this stub.
+// small so the feed query stays cheap while still providing relevant backfill.
 const RECOMMENDED_ORG_SCAN = 100;
 const RECOMMENDED_EVENTS_PER_ORG = 10;
 
@@ -303,7 +302,7 @@ export const getById = query({
   args: { eventId: v.id("events") },
   handler: async (ctx, args): Promise<HydratedEvent | null> => {
     const event = await ctx.db.get(args.eventId);
-    if (event === null) {
+    if (event === null || !isPublished(event)) {
       return null;
     }
     const userId = await getAuthUserId(ctx);
@@ -407,8 +406,11 @@ export const getEmailContent = query({
     ctx,
     args,
   ): Promise<{ subject: string; paragraphs: string[] } | null> => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return null;
+
     const event = await ctx.db.get(args.eventId);
-    if (event === null) return null;
+    if (event === null || !isPublished(event)) return null;
 
     if (event.sourceMessageId !== undefined) {
       const msg = await ctx.db.get(event.sourceMessageId);

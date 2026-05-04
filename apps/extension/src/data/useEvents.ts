@@ -30,7 +30,7 @@ export interface OrgSection {
  * All EventItem.id values originate from event._id in the mapper, so the
  * narrowing is sound even though the brand cannot be checked at runtime.
  */
-function isEventId(id: string): id is Id<"events"> {
+export function isEventId(id: string): id is Id<"events"> {
   return id.length > 0;
 }
 
@@ -139,7 +139,7 @@ export function useBookmarks(): { ids: Set<string>; events: EventItem[] } {
   if (result === undefined) return { ids: new Set(), events: [] };
 
   const events = result.page.map(mapBookmark);
-  const ids = new Set(result.page.map((b) => b.event._id as string));
+  const ids = new Set<string>(result.page.map((b) => b.event._id));
   return { ids, events };
 }
 
