@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "convex": {
+      "source": "get-convex/agent-skills",
+      "sourceType": "github",
+      "computedHash": "70ecfb9cd4439ccbf6570b6dc23eab53f7ce7dcf70ef63bbfdf8f4f21353dfb4"
+    },
+    "convex-setup-auth": {
+      "source": "get-convex/agent-skills",
+      "sourceType": "github",
+      "computedHash": "f60559165edd5b616fda726ed5726c798e33f905361ed9892ab6013e53ab2588"
+    }
+  }
+}
