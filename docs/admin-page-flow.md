@@ -9,6 +9,25 @@ Use the admin page to turn Cornell listserv emails into reviewed Loop events.
 - Check the Gmail status dot in the top bar.
 - Use `Sign out` when finished.
 
+### Admin Token
+
+The admin page uses one shared secret token.
+
+- The backend reads it from the Convex env var `ADMIN_TOKEN`.
+- Every admin action sends the token to Convex for verification.
+- The browser stores the entered token in `sessionStorage`, so it lasts only for the current browser session.
+- The token is never put in the Gmail OAuth URL; the app creates a short-lived nonce instead.
+
+Set or update the token in the Convex dashboard for the target deployment:
+
+1. Open the Convex dashboard.
+2. Select the Loop project and deployment.
+3. Go to environment variables.
+4. Set `ADMIN_TOKEN` to a long random value.
+5. Share it only with trusted admins.
+
+For local development, set the same env var in the local Convex environment before using `/admin`.
+
 ## Recommended Workflow
 
 1. `Setup`: connect Gmail and find candidate sources.
