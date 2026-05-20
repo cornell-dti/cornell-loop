@@ -17,3 +17,10 @@
     border-style: solid;
   }
 }
+
+[data-loop-panel-drag] {
+  cursor: grab;
+}
+.loop-panel-dragging [data-loop-panel-drag] {
+  cursor: grabbing;
+}
