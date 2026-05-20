@@ -311,9 +311,9 @@ export default function FloatingPanel({
           }}
           onPointerDown={(e) => e.stopPropagation()}
           className={[
-            // Flip to the outer top corner so the X is always on the viewport-edge side.
+            // Inner top corner: upper-left when docked right, upper-right when docked left.
             "absolute top-0 -translate-y-1/2",
-            dockRight ? "right-[3px]" : "left-[3px]",
+            dockRight ? "left-[3px]" : "right-[3px]",
             "flex h-[18px] w-[18px] items-center justify-center",
             "rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.22)]",
             "opacity-0 transition-opacity duration-150",
