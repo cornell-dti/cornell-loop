@@ -19,6 +19,7 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
+import { useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { SideBar } from '../../../../shared/ui/src/components/SideBar';
 import type { SideBarItemId } from '../../../../shared/ui/src/components/SideBar';
@@ -344,6 +345,21 @@ export function Home({
   className,
   ...rest
 }: HomeProps) {
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+
+  const handleTagClick = (label: string) => {
+    setSelectedTag(label);
+    onTagClick?.(label);
+  };
+
+  const filteredPosts = selectedTag
+    ? posts.filter((post) =>
+        post.tags?.some(
+          (tag) => tag.label.toLowerCase() === selectedTag.toLowerCase()
+        )
+      )
+    : posts;
+
   return (
     <div
       className={[
@@ -393,17 +409,24 @@ export function Home({
           <div
             className="flex items-center gap-[var(--space-3)] px-[var(--space-8)] overflow-x-auto"
           >
-            {feedTags.map((tag) => (
-              <Tag
-                key={tag.label}
-                color="neutral"
-                onClick={() => onTagClick?.(tag.label)}
-                className="cursor-pointer shrink-0"
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                {tag.label}
-              </Tag>
-            ))}
+            {feedTags.map((tag) => {
+              const isSelected = tag.label === selectedTag;
+              return (
+                <Tag
+                  key={tag.label}
+                  color="neutral"
+                  onClick={isSelected ? undefined : () => handleTagClick(tag.label)}
+                  onDismiss={isSelected ? () => setSelectedTag(null) : undefined}
+                  className={[
+                    'cursor-pointer shrink-0',
+                    isSelected ? 'bg-[var(--color-neutral-300)]' : '',
+                  ].filter(Boolean).join(' ')}
+                  style={{ fontVariationSettings: "'opsz' 14" }}
+                >
+                  {tag.label}
+                </Tag>
+              );
+            })}
 
             {/* "+" tag — opens tag picker (Figma node 263:3552) */}
             <Tag
@@ -430,7 +453,7 @@ export function Home({
          * Figma (node 263:3558): pb 24px, px 24px, gap 32px between posts.
          */}
         <div className="flex flex-col gap-[var(--space-8)] px-[var(--space-6)] pb-[var(--space-6)]">
-          {posts.map((post, i) => (
+          {filteredPosts.map((post, i) => (
             <DashboardPost key={i} {...post} />
           ))}
         </div>
