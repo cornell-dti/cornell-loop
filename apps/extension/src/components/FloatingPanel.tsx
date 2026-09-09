@@ -60,6 +60,12 @@ function magneticSnapX(x: number): number {
   return center < window.innerWidth / 2 ? snapLeftX() : snapRightX();
 }
 
+/** Keep the panel's `left` within the viewport. Shared by the move and end paths
+ *  so a drop always lands where the last rendered frame put it. */
+function clampPanelLeft(x: number): number {
+  return Math.max(0, Math.min(window.innerWidth - PANEL_WIDTH, x));
+}
+
 /** Panel drag is only allowed from within the designated drag zone ([data-loop-panel-drag]),
  *  and never from interactive elements inside it. */
 function isPanelDragAllowedStart(node: EventTarget | null): boolean {
@@ -103,6 +109,10 @@ export default function FloatingPanel({
     pointerId: number;
     startClientX: number;
     startClientY: number;
+    /** Most recent X the move handler acted on. `pointercancel` and
+     *  lostpointercapture can report a stale coordinate, so the end path reads
+     *  this instead of the event. */
+    lastClientX: number;
     startX: number;
     startY: number;
     moved: boolean;
@@ -110,6 +120,12 @@ export default function FloatingPanel({
 
   // True = panel is anchored to the viewport right (icon on the right half).
   const dockRight = iconPos.x + ICON_W / 2 >= window.innerWidth / 2;
+
+  // Where the panel sits when it is not being dragged. Declared here because
+  // handlePanelPointerDown uses it as the drag origin.
+  const restingPanelLeft = dockRight
+    ? window.innerWidth - PANEL_EDGE - PANEL_WIDTH
+    : PANEL_EDGE;
 
   useEffect(() => {
     const handler = () => {
@@ -132,7 +148,7 @@ export default function FloatingPanel({
     (
       surface: DragSurface,
       e: React.PointerEvent,
-      captureTarget: HTMLElement,
+      captureTarget: Element,
       startX: number,
       startY: number,
     ) => {
@@ -141,6 +157,7 @@ export default function FloatingPanel({
         pointerId: e.pointerId,
         startClientX: e.clientX,
         startClientY: e.clientY,
+        lastClientX: e.clientX,
         startX,
         startY,
         moved: false,
@@ -157,25 +174,22 @@ export default function FloatingPanel({
     const dx = e.clientX - d.startClientX;
     const dy = e.clientY - d.startClientY;
     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
+    d.lastClientX = e.clientX;
 
     if (d.surface === "icon") {
       setIconPos(clampIconPos(d.startX + dx, d.startY + dy));
     } else {
       // Panel drag: move the panel left/right only; iconPos stays stable so
       // dockRight doesn't flicker mid-drag.
-      const raw = d.startX + dx;
-      const clamped = Math.max(
-        0,
-        Math.min(window.innerWidth - PANEL_WIDTH, raw),
-      );
-      setPanelDragLeft(clamped);
+      setPanelDragLeft(clampPanelLeft(d.startX + dx));
     }
   }, []);
 
   /** Shared finalisation for both pointer-up and lost-capture events. */
-  const finishDrag = useCallback((pointerId: number, finalClientX: number) => {
+  const finishDrag = useCallback((pointerId: number) => {
     if (!dragRef.current || pointerId !== dragRef.current.pointerId) return;
-    const { surface, moved, startX, startClientX } = dragRef.current;
+    const { surface, moved, startX, startClientX, lastClientX } =
+      dragRef.current;
     dragRef.current = null;
     setIsDragging(false);
 
@@ -187,8 +201,10 @@ export default function FloatingPanel({
       setIconPos((prev) => clampIconPos(magneticSnapX(prev.x), prev.y));
     } else {
       // Panel drag: snap to whichever side the panel center is closer to.
+      // Clamped the same way as the move path so the snap decision matches the
+      // last frame the user actually saw.
       setPanelDragLeft(null);
-      const finalLeft = startX + (finalClientX - startClientX);
+      const finalLeft = clampPanelLeft(startX + (lastClientX - startClientX));
       const panelCenter = finalLeft + PANEL_WIDTH / 2;
       const snapRight = panelCenter > window.innerWidth / 2;
       setIconPos((prev) => ({
@@ -200,14 +216,14 @@ export default function FloatingPanel({
 
   const endDrag = useCallback(
     (e: React.PointerEvent) => {
-      finishDrag(e.pointerId, e.clientX);
+      finishDrag(e.pointerId);
     },
     [finishDrag],
   );
 
   const handleLostPointerCapture = useCallback(
     (e: React.PointerEvent) => {
-      finishDrag(e.pointerId, e.clientX);
+      finishDrag(e.pointerId);
     },
     [finishDrag],
   );
@@ -217,13 +233,7 @@ export default function FloatingPanel({
       if (e.target instanceof Element && e.target.closest("[data-dismiss-btn]"))
         return;
       if (e.button !== 0) return;
-      beginDrag(
-        "icon",
-        e,
-        e.currentTarget as HTMLElement,
-        iconPos.x,
-        iconPos.y,
-      );
+      beginDrag("icon", e, e.currentTarget, iconPos.x, iconPos.y);
     },
     [beginDrag, iconPos.x, iconPos.y],
   );
@@ -235,18 +245,27 @@ export default function FloatingPanel({
       if (!isPanelDragAllowedStart(e.target)) return;
       const el = panelRootRef.current;
       if (el === null) return;
-      const startLeft = dockRight
-        ? window.innerWidth - PANEL_EDGE - PANEL_WIDTH
-        : PANEL_EDGE;
-      setPanelDragLeft(startLeft);
-      beginDrag("panel", e, el, startLeft, 0);
+      setPanelDragLeft(restingPanelLeft);
+      beginDrag("panel", e, el, restingPanelLeft, 0);
     },
-    [isOpen, beginDrag, dockRight],
+    [isOpen, beginDrag, restingPanelLeft],
   );
 
   // Panel is always full viewport height; launcher Y is independent.
   const panelTop = EDGE_GAP;
   const panelHeight = `calc(100vh - ${EDGE_GAP * 2}px)`;
+
+  // The panel is positioned by `left` in every state. Anchoring the resting
+  // state with `right` instead would make the drop untweenable, since CSS
+  // cannot interpolate between a length and `auto`.
+  const isPanelDragging = panelDragLeft !== null;
+  const panelLeft = panelDragLeft ?? restingPanelLeft;
+
+  // Suppressed mid-drag so the panel tracks the cursor without lag, then
+  // re-enabled so the release animates to the docked edge.
+  const panelTransition = isPanelDragging
+    ? "none"
+    : "left 0.3s ease-in-out, transform 0.3s ease-in-out";
 
   const iconTransition = isDragging
     ? "opacity 0.3s, filter 0.3s"
@@ -266,42 +285,50 @@ export default function FloatingPanel({
   return (
     <>
       {/* ── Floating tab ───────────────────────────────────────────────────── */}
+      {/* The launcher and the dismiss button are siblings: the `button` role has
+          presentational children, so nesting the dismiss button inside the
+          launcher would hide it from assistive tech. `inert` takes both out of
+          the tab order while the panel is open. */}
       <div
-        role="button"
-        aria-label="Open Cornell Loop"
-        tabIndex={0}
         className={[
           "group fixed z-[9999] select-none",
-          isOpen
-            ? "pointer-events-none opacity-0"
-            : "cursor-grab opacity-100 active:cursor-grabbing",
+          isOpen ? "pointer-events-none opacity-0" : "opacity-100",
         ].join(" ")}
         style={{ left: iconPos.x, top: iconPos.y, transition: iconTransition }}
-        onPointerDown={handleIconPointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={handleLostPointerCapture}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            if (e.key === " ") e.preventDefault();
-            setIsOpen(true);
-          }
-        }}
+        inert={isOpen}
       >
-        {dockRight ? (
-          <FloatingIcon style={{ width: ICON_W, height: ICON_H }} />
-        ) : (
-          <div
-            style={{
-              transform: "scaleX(-1)",
-              width: ICON_W,
-              height: ICON_H,
-            }}
-          >
+        <div
+          role="button"
+          aria-label="Open Cornell Loop"
+          tabIndex={0}
+          data-testid="loop-toggle"
+          className="cursor-grab active:cursor-grabbing"
+          onPointerDown={handleIconPointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onLostPointerCapture={handleLostPointerCapture}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              if (e.key === " ") e.preventDefault();
+              setIsOpen(true);
+            }
+          }}
+        >
+          {dockRight ? (
             <FloatingIcon style={{ width: ICON_W, height: ICON_H }} />
-          </div>
-        )}
+          ) : (
+            <div
+              style={{
+                transform: "scaleX(-1)",
+                width: ICON_W,
+                height: ICON_H,
+              }}
+            >
+              <FloatingIcon style={{ width: ICON_W, height: ICON_H }} />
+            </div>
+          )}
+        </div>
 
         <button
           data-dismiss-btn
@@ -338,34 +365,16 @@ export default function FloatingPanel({
         ref={panelRootRef}
         className={[
           "fixed z-[9998] w-[380px] overflow-hidden",
-          // Suppress transition while the user is actively dragging so the
-          // panel tracks the cursor without lag; re-enable for slide-in/out.
-          panelDragLeft === null
-            ? "transition-transform duration-300 ease-in-out"
-            : "",
           // Drives the grabbing cursor override in content.css.
-          panelDragLeft !== null ? "loop-panel-dragging" : "",
+          isPanelDragging ? "loop-panel-dragging" : "",
         ].join(" ")}
-        style={
-          panelDragLeft !== null
-            ? // During drag: position by absolute left px, no transform needed.
-              {
-                top: panelTop,
-                height: panelHeight,
-                left: panelDragLeft,
-                right: "auto",
-                transform: "translateX(0)",
-              }
-            : // Resting: snap to the appropriate edge with slide-in/out transform.
-              {
-                top: panelTop,
-                height: panelHeight,
-                ...(dockRight
-                  ? { right: PANEL_EDGE, left: "auto" }
-                  : { left: PANEL_EDGE, right: "auto" }),
-                transform: isOpen ? "translateX(0)" : panelClosedTransform,
-              }
-        }
+        style={{
+          top: panelTop,
+          height: panelHeight,
+          left: panelLeft,
+          transform: isOpen ? "translateX(0)" : panelClosedTransform,
+          transition: panelTransition,
+        }}
         onPointerDown={handlePanelPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}
