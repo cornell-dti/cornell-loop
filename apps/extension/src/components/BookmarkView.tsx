@@ -16,7 +16,7 @@
  */
 
 import { useState } from "react";
-import type { EventItem } from "../data/types";
+import type { EventId, EventItem } from "../data/types";
 import type { PageContext } from "../App";
 import {
   getPrimaryLink,
@@ -62,7 +62,7 @@ interface BookmarkViewProps {
   /** Pre-fetched bookmarked events from Convex (api.bookmarks.myBookmarks). */
   events: EventItem[];
   /** Called when the user removes a bookmark from any card in this view. */
-  onUnbookmark: (id: string) => void;
+  onUnbookmark: (id: EventId) => void;
   onEmailView: (event: EventItem) => void;
   pageContext: PageContext;
   onPreviewSlot?: (event: EventItem | null) => void;

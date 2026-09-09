@@ -14,7 +14,7 @@
  */
 
 import { useState } from "react";
-import type { EventItem } from "../data/types";
+import type { EventId, EventItem } from "../data/types";
 import { useSearchResults } from "../data/useEvents";
 import {
   getPrimaryLink,
@@ -103,7 +103,7 @@ function SearchEmptyState({ onSelect }: SearchEmptyStateProps) {
 interface SearchResultsStateProps {
   query: string;
   bookmarkedIds: Set<string>;
-  onBookmark: (id: string) => void;
+  onBookmark: (id: EventId) => void;
   onEmailView: (event: EventItem) => void;
 }
 
@@ -210,7 +210,7 @@ export interface SearchViewProps {
   query?: string;
   onSearchSelect?: (term: string) => void;
   bookmarkedIds?: Set<string>;
-  onBookmark?: (id: string) => void;
+  onBookmark?: (id: EventId) => void;
   onEmailView?: (event: EventItem) => void;
 }
 

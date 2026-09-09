@@ -8,10 +8,10 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// When PLAYWRIGHT=true the content script is also injected into localhost pages
-// so that Playwright tests can exercise the extension against a local fixture
-// page without needing real Gmail or Google Calendar.
-const isPlaywrightBuild = process.env["PLAYWRIGHT"] === "true";
+// PLAYWRIGHT is set by the package script (`PLAYWRIGHT=true vite build`), not .env.
+function isPlaywrightBuild(): boolean {
+  return process.env["PLAYWRIGHT"] === "true";
+}
 
 export default defineConfig({
   plugins: [
@@ -20,15 +20,14 @@ export default defineConfig({
     svgr(),
     webExtension({
       manifest: "./manifest.json",
-      additionalInputs: [],
       transformManifest(manifest) {
-        if (!isPlaywrightBuild) return manifest;
+        if (!isPlaywrightBuild()) return manifest;
         const cs = manifest.content_scripts;
-        if (Array.isArray(cs)) {
-          for (const entry of cs) {
-            if (Array.isArray(entry.matches)) {
-              entry.matches.push("http://localhost/*");
-            }
+        if (!Array.isArray(cs)) return manifest;
+        for (const entry of cs) {
+          if (!Array.isArray(entry.matches)) continue;
+          if (!entry.matches.includes("http://localhost/*")) {
+            entry.matches.push("http://localhost/*");
           }
         }
         return manifest;

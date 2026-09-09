@@ -5,10 +5,14 @@ import { ConvexReactClient } from "convex/react";
 import FloatingPanel from "./components/FloatingPanel.tsx";
 import contentStyles from "./content.css?inline";
 import { showSlotPreview, removeSlotPreview } from "./gcalHighlight";
+import { panelEvents } from "./panelBridge";
 import type { EventItem } from "./data/types";
 import type { PageContext } from "./App";
 
-const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
+const convexUrl = (() => {
+  const value = import.meta.env.VITE_CONVEX_URL;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+})();
 
 function loadFonts() {
   if (document.getElementById("cornell-loop-fonts")) return;
@@ -90,3 +94,20 @@ function mount() {
 }
 
 mount();
+
+// Re-show the floating panel when the user clicks the toolbar icon
+// (handled in background.ts via chrome.action.onClicked).
+function readMessageType(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === "type" && typeof v === "string") return v;
+  }
+  return null;
+}
+
+chrome.runtime.onMessage.addListener((rawMessage) => {
+  if (readMessageType(rawMessage) === "LOOP_SHOW_PANEL") {
+    panelEvents.dispatchEvent(new Event("show"));
+  }
+  return false;
+});

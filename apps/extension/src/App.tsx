@@ -1,16 +1,14 @@
 import { useState, useRef, useLayoutEffect } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useMutation } from "convex/react";
 import { api } from "@app/convex/_generated/api";
-import type { Id } from "@app/convex/_generated/dataModel";
 import { Button } from "@app/ui";
 import SearchHeader from "./components/SearchHeader";
 import FeedView from "./components/FeedView";
 import BookmarkView from "./components/BookmarkView";
 import SearchView from "./components/SearchView";
 import OriginalEmailView from "./components/OriginalEmailView";
-import type { EventItem } from "./data/types";
+import type { EventId, EventItem } from "./data/types";
 import { useBookmarks } from "./data/useEvents";
 import { openExternalUrl } from "./utils/linkUtils";
 
@@ -24,9 +22,12 @@ export interface AppProps {
   onPreviewSlot?: (event: EventItem | null) => void;
 }
 
-const DASHBOARD_URL =
-  (import.meta.env.VITE_DASHBOARD_URL as string | undefined) ??
-  "https://cornellloop.com";
+const DASHBOARD_URL = (() => {
+  const value = import.meta.env.VITE_DASHBOARD_URL;
+  return typeof value === "string" && value.length > 0
+    ? value
+    : "https://cornellloop.com";
+})();
 
 // ── Auth gate sub-components ───────────────────────────────────────────────
 
@@ -108,11 +109,8 @@ export default function App({
   };
 
   // ── Bookmark actions ───────────────────────────────────────────────────
-  const handleBookmark = (id: string) => {
-    // Type predicate: EventItem.id always originates from event._id in the mapper.
-    if (id.length === 0) return;
-    const eventId = id as Id<"events">;
-    if (bookmarkedIds.has(id)) {
+  const handleBookmark = (eventId: EventId) => {
+    if (bookmarkedIds.has(eventId)) {
       void unbookmarkMutation({ eventId });
     } else {
       void bookmarkMutation({ eventId });
@@ -123,9 +121,9 @@ export default function App({
   const isSearchMode = view === "search" || view === "email";
 
   const handleTabChange = (tab: string) => {
-    const t = tab as "feed" | "bookmarks";
-    setActiveTab(t);
-    setView(t);
+    if (tab !== "feed" && tab !== "bookmarks") return;
+    setActiveTab(tab);
+    setView(tab);
     setEmailEventId(undefined);
     setEmailEventOrgName(undefined);
   };
@@ -169,7 +167,7 @@ export default function App({
         className="flex h-full flex-col overflow-hidden rounded-[12px] bg-white"
         style={{ boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.18)" }}
       >
-        <div className="shrink-0 px-6 pt-7">
+        <div className="shrink-0 px-6 pt-7" data-loop-panel-drag>
           <SearchHeader
             variant="main"
             activeTab={activeTab}
@@ -194,7 +192,7 @@ export default function App({
       style={{ boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.18)" }}
     >
       {/* ── Sticky header ── */}
-      <div className="shrink-0 px-6 pt-7">
+      <div className="shrink-0 px-6 pt-7" data-loop-panel-drag>
         <SearchHeader
           variant={isSearchMode ? "search" : "main"}
           activeTab={activeTab}
@@ -214,6 +212,7 @@ export default function App({
           <div
             ref={mainScrollRef}
             className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+            data-loop-scroll
           >
             <SearchView
               query={searchQuery}
@@ -244,6 +243,7 @@ export default function App({
         <div
           ref={mainScrollRef}
           className="min-h-0 flex-1 overflow-y-auto px-6 py-[21px]"
+          data-loop-scroll
         >
           {view === "feed" && (
             <FeedView

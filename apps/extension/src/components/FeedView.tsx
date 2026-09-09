@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { ExtensionEventCard } from "@app/ui";
-import type { EventItem } from "../data/types";
+import type { EventId, EventItem } from "../data/types";
 import { useFeedSections, useTrendingEvents } from "../data/useEvents";
 
 // ── Typography ─────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ function toRowDescription(event: EventItem): string {
 
 interface FeedViewProps {
   bookmarkedIds: Set<string>;
-  onBookmark: (id: string) => void;
+  onBookmark: (id: EventId) => void;
   onEmailView: (event: EventItem) => void;
 }
 

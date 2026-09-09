@@ -3,8 +3,15 @@
  *
  * These mirror the Convex schema (apps/dashboard/convex/schema.ts) but are
  * deliberately decoupled — only useEvents.ts maps raw DB rows to EventItem.
- * UI components never import Convex schema types directly.
+ * UI components never import Convex schema types directly; the one exception
+ * is re-exported below as EventId, so bookmark callbacks can reach the Convex
+ * mutations without an unchecked cast.
  */
+
+import type { Id } from "@app/convex/_generated/dataModel";
+
+/** Identifier for an event, carried unchanged from events._id by mapper.ts. */
+export type EventId = Id<"events">;
 
 export type LinkType =
   | "registration"
@@ -29,7 +36,7 @@ export interface CalendarEvent {
 }
 
 export interface EventItem {
-  id: string;
+  id: EventId;
   /** Primary host name, e.g. "Cornell DTI". From schema: hosts[0].name. */
   orgName: string;
   /** Optional org avatar URL; falls back to initial-letter avatar when absent. */
