@@ -4,10 +4,10 @@ import type { AppProps } from "../App";
 import FloatingIcon from "../../public/floating_icon.svg?react";
 import { panelEvents } from "../panelBridge";
 
-export interface FloatingPanelProps extends Pick<
+export type FloatingPanelProps = Pick<
   AppProps,
   "pageContext" | "onPreviewSlot"
-> {}
+>;
 
 // ── Layout constants ─────────────────────────────────────────────────────────
 // Icon is rendered at 80 % of the original 82×90 SVG.
