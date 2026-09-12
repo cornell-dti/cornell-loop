@@ -1,5 +1,6 @@
 import { Avatar } from "@app/ui";
 import { useEmailContent } from "../data/useEvents";
+import type { EventId } from "../data/types";
 
 // Figma: Inter SemiBold 20px, #5f5f5f, tracking -0.22px, leading 1.5
 const SECTION_HEADING =
@@ -21,10 +22,10 @@ const EMAIL_BODY =
 
 export interface OriginalEmailViewProps {
   /**
-   * Convex event ID string (EventItem.id) — used to fetch email content
-   * from api.events.getEmailContent. When undefined, a loading state is shown.
+   * Convex event ID (EventItem.id) — used to fetch email content from
+   * api.events.getEmailContent. When undefined, a loading state is shown.
    */
-  eventId?: string;
+  eventId?: EventId;
   /**
    * Org name shown in the avatar header. Falls back to "Cornell Loop" when absent.
    */
@@ -42,20 +43,24 @@ export default function OriginalEmailView({
   let emailTitle = "Original Email";
   let paragraphs: string[] = [];
 
-  if (content === undefined) {
-    // Loading
-    paragraphs = [];
-  } else if (content === null) {
-    // Content not found — show placeholder
-    emailTitle = "Original Email";
-    paragraphs = [
-      "Email content could not be loaded.",
-      "",
-      "This event may not have an associated email in the system.",
-    ];
-  } else {
-    emailTitle = content.subject;
-    paragraphs = content.paragraphs;
+  if (content !== undefined) {
+    switch (content.status) {
+      case "ok":
+        emailTitle = content.subject;
+        paragraphs = content.paragraphs;
+        break;
+      case "noEmail":
+        // Expected: plenty of events are not sourced from a listserv email.
+        emailTitle = "No original email";
+        paragraphs = ["This event wasn't created from a listserv email."];
+        break;
+      case "unavailable":
+        emailTitle = "Email unavailable";
+        paragraphs = [
+          "This email may have been removed, or the event is no longer published.",
+        ];
+        break;
+    }
   }
 
   return (

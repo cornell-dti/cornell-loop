@@ -396,26 +396,53 @@ function splitIntoParagraphs(text: string): string[] {
 }
 
 /**
+ * Outcome of a getEmailContent lookup. The three cases are distinct on purpose:
+ * an event with no email at all is normal, whereas a broken email reference or
+ * an unpublished event is not, and the UI words them differently.
+ */
+type EmailContent =
+  | { status: "ok"; subject: string; paragraphs: string[] }
+  | { status: "noEmail" }
+  | { status: "unavailable" };
+
+/**
  * Returns the raw email content for OriginalEmailView.
  * Prefers the ingestion pipeline path (listservMessages); falls back to the
- * legacy listservEmails table. Returns null when no email body is available.
+ * legacy listservEmails table.
+ *
+ * Returns "noEmail" when the event was never linked to an email, and
+ * "unavailable" when the event is missing/unpublished or its email row has
+ * since been deleted. Signed-out callers also get "unavailable", matching the
+ * benign-value convention the other queries here follow.
  */
 export const getEmailContent = query({
   args: { eventId: v.id("events") },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ subject: string; paragraphs: string[] } | null> => {
+  returns: v.union(
+    v.object({
+      status: v.literal("ok"),
+      subject: v.string(),
+      paragraphs: v.array(v.string()),
+    }),
+    v.object({ status: v.literal("noEmail") }),
+    v.object({ status: v.literal("unavailable") }),
+  ),
+  handler: async (ctx, args): Promise<EmailContent> => {
     const userId = await getAuthUserId(ctx);
-    if (userId === null) return null;
+    if (userId === null) return { status: "unavailable" };
 
     const event = await ctx.db.get(args.eventId);
-    if (event === null || !isPublished(event)) return null;
+    if (event === null || !isPublished(event)) return { status: "unavailable" };
+
+    // Tracks whether the event pointed at an email at all, so a dangling
+    // reference is reported as "unavailable" rather than "noEmail".
+    let hadEmailRef = false;
 
     if (event.sourceMessageId !== undefined) {
+      hadEmailRef = true;
       const msg = await ctx.db.get(event.sourceMessageId);
       if (msg !== null) {
         return {
+          status: "ok",
           subject: msg.subject,
           paragraphs: splitIntoParagraphs(msg.bodyText),
         };
@@ -423,16 +450,18 @@ export const getEmailContent = query({
     }
 
     if (event.listservEmailId !== undefined) {
+      hadEmailRef = true;
       const email = await ctx.db.get(event.listservEmailId);
       if (email !== null) {
         const raw = email.rawText ?? email.rawHtml ?? "";
         return {
+          status: "ok",
           subject: event.title,
           paragraphs: splitIntoParagraphs(raw),
         };
       }
     }
 
-    return null;
+    return hadEmailRef ? { status: "unavailable" } : { status: "noEmail" };
   },
 });

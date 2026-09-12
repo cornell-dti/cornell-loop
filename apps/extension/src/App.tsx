@@ -95,7 +95,7 @@ export default function App({
   }, [view]);
 
   // ── Email view ─────────────────────────────────────────────────────────
-  const [emailEventId, setEmailEventId] = useState<string | undefined>(
+  const [emailEventId, setEmailEventId] = useState<EventId | undefined>(
     undefined,
   );
   const [emailEventOrgName, setEmailEventOrgName] = useState<

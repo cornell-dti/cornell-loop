@@ -8,11 +8,11 @@
 
 import { useMemo } from "react";
 import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "@app/convex/_generated/api";
-import type { Id } from "@app/convex/_generated/dataModel";
 import type { Doc } from "@app/convex/_generated/dataModel";
 import { mapHydratedEventToEventItem } from "./mapper";
-import type { EventItem } from "./types";
+import type { EventId, EventItem } from "./types";
 
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -25,14 +25,10 @@ export interface OrgSection {
   events: EventItem[];
 }
 
-/**
- * Type predicate that narrows a string to Id<"events">.
- * All EventItem.id values originate from event._id in the mapper, so the
- * narrowing is sound even though the brand cannot be checked at runtime.
- */
-export function isEventId(id: string): id is Id<"events"> {
-  return id.length > 0;
-}
+/** Outcome of an email-content lookup, mirroring api.events.getEmailContent. */
+export type EmailContent = FunctionReturnType<
+  typeof api.events.getEmailContent
+>;
 
 // ── Feed ───────────────────────────────────────────────────────────────────
 
@@ -147,15 +143,14 @@ export function useBookmarks(): { ids: Set<string>; events: EventItem[] } {
 
 /**
  * Fetches raw email content for OriginalEmailView.
- * Returns undefined while loading, null when no content is found.
+ * Returns undefined while loading; otherwise a tagged EmailContent whose
+ * status distinguishes a successful load from "noEmail" and "unavailable".
  */
 export function useEmailContent(
-  eventId: string | undefined,
-): { subject: string; paragraphs: string[] } | null | undefined {
-  const typedId =
-    eventId !== undefined && isEventId(eventId) ? eventId : undefined;
+  eventId: EventId | undefined,
+): EmailContent | undefined {
   return useQuery(
     api.events.getEmailContent,
-    typedId !== undefined ? { eventId: typedId } : "skip",
+    eventId !== undefined ? { eventId } : "skip",
   );
 }
