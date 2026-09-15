@@ -3,13 +3,12 @@
  * Verify /home shows real feed content end-to-end.
  *
  * Runs three scenarios:
- *   1. fresh           — wipe localStorage, let DevAutoSignIn drive seed +
- *                        sign-in, then count posts.
- *   2. no-follows      — sign in but reset user state so the user follows
- *                        nothing, confirm recommended pool fills the feed.
- *   3. empty-deployment-sim — counts feed posts when user is unauth (dev
- *                        bypass route) — should still render feed via "all"
- *                        scope path.
+ *   1. fresh           — wipe localStorage and reload /home; without a
+ *                        session, ProtectedRoute redirects to the landing page.
+ *   2. after-onboarding — clear storage, visit /onboarding then /home without
+ *                        signing in; both routes gate on auth, so this captures
+ *                        the unauthenticated redirect posture.
+ *   3. design-system   — dev-only gallery screenshot for visual regression.
  *
  * Outputs screenshots + a small JSON summary to specs/iterations/.
  */
@@ -60,17 +59,16 @@ try {
       }
     });
     await page.goto(homeUrl, { waitUntil: "domcontentloaded" });
-    // wipe storage, reload — DevAutoSignIn should kick in.
+    // Clear any planted session tokens, reload — expect redirect to landing.
     await page.evaluate(() => window.localStorage.clear());
     await page.reload({ waitUntil: "networkidle" });
-    // Auto-login reloads page once after planting tokens; give it time.
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(1500);
     await page.waitForLoadState("networkidle");
     summary.fresh = await takeShotAndCount(page, "fresh");
     await ctx.close();
   }
 
-  // ── 2. no-follows state ──────────────────────────────────────────
+  // ── 2. after-onboarding (unauth) ─────────────────────────────────
   {
     const ctx = await browser.newContext({
       viewport: { width: 1440, height: 900 },
@@ -78,11 +76,7 @@ try {
     });
     const page = await ctx.newPage();
     await page.goto(homeUrl, { waitUntil: "domcontentloaded" });
-    // Use Convex HTTP client direct to call resetUserState before sign-in
-    // we'll just clear storage so DevAutoSignIn re-runs; resetUserState
-    // is wired through the dev API in tests. Cheaper here: navigate, then
-    // unfollow every org via a Convex mutation. Skip — only require
-    // visual verification of the recommended fallback path.
+    // Clear storage, then probe protected routes without signing in.
     await page.evaluate(() => window.localStorage.clear());
     await page.goto(`${baseUrl}/onboarding`, { waitUntil: "networkidle" });
     await page.waitForTimeout(1500);

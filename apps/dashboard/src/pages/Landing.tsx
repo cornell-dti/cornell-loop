@@ -394,11 +394,10 @@ export default function Landing() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // CTA click handler: navigate straight to /home when already signed in
-  // (or in dev, where ProtectedRoute bypasses auth), otherwise kick off
-  // Google OAuth. After the OAuth round-trip resolves we always land on
-  // /home; ProtectedRoute will bounce to /onboarding if the user hasn't
-  // finished setup yet.
+  // CTA click handler: navigate straight to /home when already signed in,
+  // otherwise kick off Google OAuth. After the OAuth round-trip resolves we
+  // always land on /home; ProtectedRoute will bounce to /onboarding if the
+  // user hasn't finished setup yet.
   //
   // If the auth callback rejects with a Cornell-only error, surface the
   // toast by routing back to "?error=non-cornell" and stay on the page.
@@ -408,7 +407,7 @@ export default function Landing() {
       setShowNonCornellError(false);
     }
 
-    if (import.meta.env.DEV || isAuthenticated) {
+    if (isAuthenticated) {
       navigate("/home");
       return;
     }
