@@ -39,7 +39,7 @@ import type {
   Organization,
 } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
@@ -77,7 +77,7 @@ const BODY3 =
 // ─── Org result card ─────────────────────────────────────────────────────────
 
 interface OrgCardProps {
-  org: Doc<"orgs">;
+  org: PublicOrg;
   onClick: () => void;
 }
 
