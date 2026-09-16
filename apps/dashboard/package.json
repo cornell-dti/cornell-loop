@@ -16,9 +16,10 @@
   },
   "dependencies": {
     "@app/ui": "workspace:*",
-    "@auth/core": "0.37.0",
-    "@convex-dev/auth": "^0.0.91",
+    "@auth/core": "^0.41.3",
+    "@convex-dev/auth": "^0.0.95",
     "convex": "^1.32.0",
+    "convex-helpers": "^0.1.124",
     "lucide-react": "^0.544.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

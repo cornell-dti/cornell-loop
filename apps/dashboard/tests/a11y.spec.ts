@@ -50,7 +50,7 @@ test.describe("Accessibility — axe scans on key routes", () => {
     await client.mutation(api.users.completeOnboarding, {});
     // Follow a couple of orgs so /home + /subscriptions have real content.
     for (const slug of ["wicc", "acsu"]) {
-      const orgId = await orgIdForSlug(slug);
+      const orgId = await orgIdForSlug(token, slug);
       if (orgId !== null) await client.mutation(api.follows.follow, { orgId });
     }
   });

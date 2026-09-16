@@ -11,7 +11,7 @@ async function followOrgs(token: string, slugs: string[]) {
   const client = new ConvexHttpClient(getConvexUrl());
   client.setAuth(token);
   for (const slug of slugs) {
-    const orgId = await orgIdForSlug(slug);
+    const orgId = await orgIdForSlug(token, slug);
     if (orgId !== null) await client.mutation(api.follows.follow, { orgId });
   }
   await client.mutation(api.users.completeOnboarding, {});
