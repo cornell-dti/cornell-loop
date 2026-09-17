@@ -31,11 +31,45 @@ function pathForNavItem(id: SideBarItemId): string {
 }
 
 /**
- * OnboardingGate — renders children when the current user has completed
- * onboarding, otherwise redirects to /onboarding. Read by ProtectedRoute below.
+ * RejectedDomainGate — shared guard behind both ProtectedRoute (via
+ * OnboardingGate below) and AuthOnlyRoute. Renders a bare loading state
+ * instead of `children` while `useCurrentProfile` is still resolving *or*
+ * has signed a non-Cornell session out and is redirecting to
+ * `/?error=non-cornell`.
  *
- * The gate only fires for resolved users. While the `currentUser` query is
- * loading we render children (the page can show its own loading state).
+ * Gating on `loading` too (not just the confirmed `rejectedDomain`) closes a
+ * race: `useCurrentProfile` reports `rejectedDomain: false` while its
+ * `currentUser` query is in flight, so a gate that only checked
+ * `rejectedDomain` would still let the real page underneath mount and fire
+ * its own `authedQuery`-backed queries — e.g. `Home`'s feed/follows/rsvp
+ * queries, or `Onboarding`'s `orgs.getSuggestedForOnboarding` — during that
+ * window. Those throw `NON_CORNELL_EMAIL` for a rejected user before we've
+ * had a chance to redirect, landing on `FeedErrorBoundary`'s dead-end
+ * "Something went wrong" screen (or a hard crash on pages with no boundary)
+ * instead of the graceful banner. Withholding `children` until we know the
+ * answer costs every signed-in user one extra `currentUser` round trip
+ * behind this spinner, but guarantees no authed query fires before the
+ * domain check has resolved.
+ */
+function RejectedDomainGate({ children }: { children: ReactNode }) {
+  const { loading, rejectedDomain } = useCurrentProfile();
+  if (loading || rejectedDomain) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center">
+        <p>Loading…</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * OnboardingGate — renders children when the current user has completed
+ * onboarding, otherwise redirects to /onboarding. Read by ProtectedRoute
+ * below, nested inside `RejectedDomainGate` — by the time this runs,
+ * `useCurrentProfile` has already resolved (`loading: false`) and the
+ * session isn't rejected, so the `loading` check below is just defence in
+ * depth for a call site that somehow skips `RejectedDomainGate`.
  */
 function OnboardingGate({ children }: { children: ReactNode }) {
   const { user, loading, isOnboarded } = useCurrentProfile();
@@ -63,7 +97,9 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
         </div>
       </AuthLoading>
       <Authenticated>
-        <OnboardingGate>{children}</OnboardingGate>
+        <RejectedDomainGate>
+          <OnboardingGate>{children}</OnboardingGate>
+        </RejectedDomainGate>
       </Authenticated>
       <Unauthenticated>
         <Navigate to="/" replace />
@@ -76,6 +112,11 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
  * AuthOnlyRoute — gates on auth without applying the onboarding redirect.
  * Used for /onboarding so an unfinished user can stay on the page instead of
  * being bounced into a redirect loop.
+ *
+ * Also gates on `rejectedDomain` (see `RejectedDomainGate`) so a non-Cornell
+ * session that lands here directly can't mount `Onboarding`'s authed
+ * queries (`orgs.getSuggestedForOnboarding`, `follows.myFollows`) before
+ * `useCurrentProfile` finishes signing it out.
  */
 function AuthOnlyRoute({ children }: { children: ReactNode }) {
   return (
@@ -85,7 +126,9 @@ function AuthOnlyRoute({ children }: { children: ReactNode }) {
           <p>Loading…</p>
         </div>
       </AuthLoading>
-      <Authenticated>{children}</Authenticated>
+      <Authenticated>
+        <RejectedDomainGate>{children}</RejectedDomainGate>
+      </Authenticated>
       <Unauthenticated>
         <Navigate to="/" replace />
       </Unauthenticated>

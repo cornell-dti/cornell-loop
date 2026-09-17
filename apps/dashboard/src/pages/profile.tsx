@@ -24,7 +24,9 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { Button } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import {
@@ -74,6 +76,8 @@ export interface ProfileProps extends ComponentPropsWithoutRef<"div"> {
   onSave?: () => void;
   /** Called when × is clicked. */
   onClose?: () => void;
+  /** Called when "Sign out" is clicked. Omit to hide the sign-out action. */
+  onSignOut?: () => void;
 }
 
 // ─── SavedState — "Recalibrating your feed…" variant (Figma 633:4779) ────────
@@ -138,6 +142,7 @@ export function Profile({
   error = null,
   onSave,
   onClose,
+  onSignOut,
   className,
   ...rest
 }: ProfileProps) {
@@ -226,6 +231,25 @@ export function Profile({
           >
             Save changes
           </Button>
+
+          {onSignOut !== undefined && (
+            <button
+              type="button"
+              onClick={onSignOut}
+              className={[
+                "font-[family-name:var(--font-body)] font-medium",
+                "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+                "tracking-[var(--letter-spacing-body2)]",
+                "text-[color:var(--color-neutral-600)]",
+                "cursor-pointer underline decoration-dotted underline-offset-4",
+                "transition-colors duration-150",
+                "hover:text-[color:var(--color-neutral-900)]",
+              ].join(" ")}
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              Sign out
+            </button>
+          )}
         </>
       )}
     </div>
@@ -245,6 +269,7 @@ interface ProfileModalInnerProps {
   initialValue: ProfileFieldsValue;
   userName: string;
   onDismiss: () => void;
+  onSignOut: () => void;
 }
 
 /**
@@ -256,6 +281,7 @@ function ProfileModalInner({
   initialValue,
   userName,
   onDismiss,
+  onSignOut,
 }: ProfileModalInnerProps) {
   const updateProfile = useMutation(api.users.updateProfile);
   const [value, setValue] = useState<ProfileFieldsValue>(initialValue);
@@ -315,6 +341,7 @@ function ProfileModalInner({
         void handleSave();
       }}
       onClose={handleClose}
+      onSignOut={onSignOut}
     />
   );
 }
@@ -326,6 +353,17 @@ export function ProfileModalRoute({
   onDismiss: () => void;
 }) {
   const { user, profile, loading } = useCurrentProfile();
+  const { signOut } = useAuthActions();
+  const navigate = useNavigate();
+
+  // Session delete does not immediately invalidate the JWT (up to ~1h), but
+  // it clears local storage and Convex's client auth state, which is enough
+  // for a normal "log this browser out" action.
+  const handleSignOut = () => {
+    void signOut().finally(() => {
+      navigate("/", { replace: true });
+    });
+  };
 
   const initialValue = useMemo<ProfileFieldsValue>(
     () => ({
@@ -355,6 +393,7 @@ export function ProfileModalRoute({
       initialValue={initialValue}
       userName={userName}
       onDismiss={onDismiss}
+      onSignOut={handleSignOut}
     />
   );
 }

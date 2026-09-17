@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { ConvexError } from "convex/values";
 import { LoopLogo } from "@app/ui";
 
 // ─── Image assets ────────────────────────────────────────────────────────────
@@ -356,51 +355,63 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
 // LANDING PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Type guard for the NON_CORNELL_EMAIL ConvexError surfaced by the auth
- * callback. Narrows the unknown error without an `as` cast so the calling
- * site stays strictly typed.
- */
-function isNonCornellError(
-  err: unknown,
-): err is ConvexError<{ code: "NON_CORNELL_EMAIL" }> {
-  if (!(err instanceof ConvexError)) return false;
-  const data: unknown = err.data;
-  if (typeof data !== "object" || data === null) return false;
-  if (!("code" in data)) return false;
-  return data.code === "NON_CORNELL_EMAIL";
-}
-
 export default function Landing() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isAuthenticated } = useConvexAuth();
   const { signIn } = useAuthActions();
 
-  // Capture any ?error param into local state synchronously on mount so a
-  // refresh doesn't re-show the banner. The cleanup-effect below strips the
-  // param from the URL so subsequent reloads don't re-trigger this. The
-  // banner stays visible from local state until the user takes another
-  // action (handleCTA clears it).
-  const [showNonCornellError, setShowNonCornellError] = useState<boolean>(
-    () => searchParams.get("error") === "non-cornell",
-  );
+  // Show the banner whenever "?error=non-cornell" shows up, not just on the
+  // first mount. Landing can receive this redirect while it's *already*
+  // mounted — e.g. the user lands on "/" once, the rejection round-trip
+  // fires a second time (another sign-in attempt) and client-side-navigates
+  // back to "/?error=non-cornell" without unmounting Landing — so a
+  // mount-only useState initializer would silently miss every attempt after
+  // the first.
+  //
+  // `showNonCornellError` is intentionally its own piece of state, set to
+  // `true` only when the param *value changes* to "non-cornell" (comparing
+  // against `lastErrorParam`, following React's "adjusting state when a prop
+  // changes" pattern —
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+  // and cleared only by explicit dismissal. It must NOT be derived directly
+  // from `errorParam` (e.g. `errorParam === "non-cornell"`) — the effect
+  // below strips the param from the URL on mount, which would immediately
+  // re-render `errorParam` back to `null` and collapse a derived boolean to
+  // `false` before the banner is ever visible on screen. Keeping it as
+  // separate state means the URL cleanup can't un-show a banner that's
+  // already been shown.
+  const errorParam = searchParams.get("error");
+  const [lastErrorParam, setLastErrorParam] = useState<string | null>(null);
+  const [showNonCornellError, setShowNonCornellError] = useState(false);
+  if (errorParam !== lastErrorParam) {
+    setLastErrorParam(errorParam);
+    if (errorParam === "non-cornell") {
+      setShowNonCornellError(true);
+    }
+  }
+
   useEffect(() => {
-    if (searchParams.get("error") !== "non-cornell") return;
+    if (errorParam !== "non-cornell") return;
     const next = new URLSearchParams(searchParams);
     next.delete("error");
     setSearchParams(next, { replace: true });
-    // Only run on mount — subsequent ?error toggles are driven by handleCTA.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [errorParam, searchParams, setSearchParams]);
 
   // CTA click handler: navigate straight to /home when already signed in,
-  // otherwise kick off Google OAuth. After the OAuth round-trip resolves we
-  // always land on /home; ProtectedRoute will bounce to /onboarding if the
-  // user hasn't finished setup yet.
-  //
-  // If the auth callback rejects with a Cornell-only error, surface the
-  // toast by routing back to "?error=non-cornell" and stay on the page.
+  // otherwise kick off Google OAuth with `redirectTo: "/home"`. Google's
+  // sign-in is a full-page reload (browser leaves the SPA entirely for the
+  // Google → convex.site → SITE_URL round trip), so a `.then()` continuation
+  // on the `signIn()` promise here would be orphaned by the reload and never
+  // run. `redirectTo` sidesteps that: @convex-dev/auth threads it through the
+  // whole OAuth handshake and uses it as the final redirect target, so the
+  // reload lands the browser directly on `/home?code=...` instead of `/`.
+  // `/home` is wrapped in `ProtectedRoute` → `RejectedDomainGate`, so the
+  // existing domain check runs immediately:
+  //   - Cornell email → lands straight on the dashboard.
+  //   - non-Cornell email → `useCurrentProfile` signs the user back out and
+  //     navigates to "/?error=non-cornell", which is what drives
+  //     `showNonCornellError` above, not this handler.
   function handleCTA() {
     // Clear any pre-existing error toast on a fresh attempt.
     if (showNonCornellError) {
@@ -412,16 +423,7 @@ export default function Landing() {
       return;
     }
 
-    void signIn("google").then(
-      () => {
-        navigate("/home");
-      },
-      (err: unknown) => {
-        if (isNonCornellError(err)) {
-          setShowNonCornellError(true);
-        }
-      },
-    );
+    void signIn("google", { redirectTo: "/home" });
   }
 
   // Trigger "highlights" word highlight when banner scrolls into view.
@@ -457,6 +459,42 @@ export default function Landing() {
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[var(--color-secondary-500)]">
+      {/* ── Non-Cornell rejection banner ──────────────────────────────
+          Dismissible, full-width bar at the very top of the page (above the
+          sticky nav) so a rejected sign-in attempt is impossible to miss —
+          it scrolls away normally rather than staying pinned. */}
+      {showNonCornellError && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className={[
+            "relative z-[60] flex items-center justify-center gap-3",
+            "bg-[var(--color-surface)]",
+            "px-[var(--space-4)] py-[var(--space-2)]",
+            "text-center",
+            "font-[family-name:var(--font-body)] font-medium",
+            "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+            "tracking-[var(--letter-spacing-body2)]",
+            "text-[var(--color-neutral-900)]",
+            "shadow-[var(--shadow-1)]",
+          ].join(" ")}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          <span>
+            Loop is open to Cornell students only. Sign in with your
+            @cornell.edu account.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowNonCornellError(false)}
+            aria-label="Dismiss"
+            className="shrink-0 rounded-full p-1 text-[var(--color-neutral-900)] opacity-60 transition-opacity hover:opacity-100"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* ── Background ─────────────────────────────────────────────── */}
       {/* Texture image tiled full-page height */}
       <img
@@ -625,31 +663,6 @@ export default function Landing() {
                 events to free food.
               </p>
             </div>
-
-            {/* Inline error banner — shown when sign-in is rejected because
-                the user's email is not @cornell.edu. */}
-            {showNonCornellError && (
-              <div
-                role="alert"
-                aria-live="polite"
-                className={[
-                  "max-w-[420px] rounded-[var(--radius-card)]",
-                  "border border-[var(--color-border)]",
-                  "bg-[var(--color-surface)]",
-                  "px-[var(--space-4)] py-[var(--space-3)]",
-                  "text-center",
-                  "font-[family-name:var(--font-body)] font-medium",
-                  "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
-                  "tracking-[var(--letter-spacing-body2)]",
-                  "text-[var(--color-neutral-900)]",
-                  "shadow-[var(--shadow-1)]",
-                ].join(" ")}
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                Loop is open to Cornell students only. Sign in with your
-                @cornell.edu account.
-              </div>
-            )}
 
             {/* CTA */}
             <CTAButton onClick={handleCTA} />
