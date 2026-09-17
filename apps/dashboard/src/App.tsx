@@ -14,7 +14,6 @@ import { Bookmarks } from "./pages/Bookmarks";
 import { Subscriptions } from "./pages/Subscriptions";
 import { Org } from "./pages/Org";
 import { ProfileModalRoute } from "./pages/profile";
-import { DevAutoSignIn } from "./components/DevAutoSignIn";
 import { Search } from "./pages/Search";
 import Admin from "./pages/Admin";
 import Onboarding from "./pages/Onboarding";
@@ -36,8 +35,7 @@ function pathForNavItem(id: SideBarItemId): string {
  * onboarding, otherwise redirects to /onboarding. Read by ProtectedRoute below.
  *
  * The gate only fires for resolved users. While the `currentUser` query is
- * loading we render children (the page can show its own loading state); the
- * dev-bypass flow without a real user row also passes through unchanged.
+ * loading we render children (the page can show its own loading state).
  */
 function OnboardingGate({ children }: { children: ReactNode }) {
   const { user, loading, isOnboarded } = useCurrentProfile();
@@ -54,21 +52,9 @@ function OnboardingGate({ children }: { children: ReactNode }) {
 /**
  * Route gate: shows a loading state while auth resolves, renders children when
  * authenticated, and redirects unauthenticated users back to the Landing page.
- *
- * Onboarding redirect:
- *   • In PROD, gate on Convex `<Authenticated>` and additionally check that
- *     the user has finished onboarding (via OnboardingGate). Unfinished users
- *     bounce to /onboarding.
- *   • In DEV, keep the existing bypass so engineers can navigate freely
- *     without signing in. The OnboardingGate only redirects when a real user
- *     row resolves with `!isOnboarded` — so unauthenticated DEV navigation
- *     continues to render normally.
+ * Unfinished users bounce to /onboarding via OnboardingGate.
  */
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  if (import.meta.env.DEV) {
-    return <OnboardingGate>{children}</OnboardingGate>;
-  }
-
   return (
     <>
       <AuthLoading>
@@ -92,8 +78,6 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
  * being bounced into a redirect loop.
  */
 function AuthOnlyRoute({ children }: { children: ReactNode }) {
-  if (import.meta.env.DEV) return <>{children}</>;
-
   return (
     <>
       <AuthLoading>
@@ -232,12 +216,7 @@ function RoutedProfile() {
 }
 
 function App() {
-  return (
-    <>
-      <DevAutoSignIn />
-      <AppRoutes />
-    </>
-  );
+  return <AppRoutes />;
 }
 
 function AppRoutes() {
