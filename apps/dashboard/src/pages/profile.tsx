@@ -222,34 +222,26 @@ export function Profile({
             </p>
           )}
 
-          {/* Save changes */}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => onSave?.()}
-            disabled={saving}
-          >
-            Save changes
-          </Button>
-
-          {onSignOut !== undefined && (
-            <button
-              type="button"
-              onClick={onSignOut}
-              className={[
-                "font-[family-name:var(--font-body)] font-medium",
-                "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
-                "tracking-[var(--letter-spacing-body2)]",
-                "text-[color:var(--color-neutral-600)]",
-                "cursor-pointer underline decoration-dotted underline-offset-4",
-                "transition-colors duration-150",
-                "hover:text-[color:var(--color-neutral-900)]",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
+          <div className="flex items-center gap-[var(--space-3)]">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onSave?.()}
+              disabled={saving}
             >
-              Sign out
-            </button>
-          )}
+              Save changes
+            </Button>
+            {onSignOut !== undefined && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onSignOut}
+                disabled={saving}
+              >
+                Sign out
+              </Button>
+            )}
+          </div>
         </>
       )}
     </div>

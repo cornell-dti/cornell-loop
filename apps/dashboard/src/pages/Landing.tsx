@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { LoopLogo } from "@app/ui";
+import { X } from "lucide-react";
 
 // ─── Image assets ────────────────────────────────────────────────────────────
 import bgTexture from "../assets/landing/bg-texture.png";
@@ -468,15 +469,17 @@ export default function Landing() {
           role="alert"
           aria-live="polite"
           className={[
-            "relative z-[60] flex items-center justify-center gap-3",
-            "bg-[var(--color-surface)]",
+            "relative z-[60] flex items-center justify-center",
+            "gap-[var(--space-3)]",
+            "bg-[var(--color-primary-500)]",
             "px-[var(--space-4)] py-[var(--space-2)]",
+            "border-b border-[var(--color-border)]",
+            "shadow-[var(--shadow-1)]",
             "text-center",
             "font-[family-name:var(--font-body)] font-medium",
-            "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
             "tracking-[var(--letter-spacing-body2)]",
-            "text-[var(--color-neutral-900)]",
-            "shadow-[var(--shadow-1)]",
+            "text-[color:var(--color-neutral-900)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
@@ -484,13 +487,29 @@ export default function Landing() {
             Loop is open to Cornell students only. Sign in with your
             @cornell.edu account.
           </span>
+          {/* Dismiss control matches Tag's Focus-state × (shared/ui Tags.tsx). */}
           <button
             type="button"
             onClick={() => setShowNonCornellError(false)}
             aria-label="Dismiss"
-            className="shrink-0 rounded-full p-1 text-[var(--color-neutral-900)] opacity-60 transition-opacity hover:opacity-100"
+            className={
+              "group inline-flex shrink-0 items-center justify-center " +
+              "size-[var(--space-6)] " +
+              "rounded-[var(--radius-input)] " +
+              "cursor-pointer " +
+              "focus-visible:outline-2 focus-visible:outline-offset-1 " +
+              "focus-visible:outline-[var(--color-neutral-700)]"
+            }
           >
-            ×
+            <X
+              aria-hidden="true"
+              size={12}
+              className={
+                "text-[color:var(--color-neutral-700)] " +
+                "group-hover:text-[color:var(--color-black)] " +
+                "transition-colors duration-150"
+              }
+            />
           </button>
         </div>
       )}
