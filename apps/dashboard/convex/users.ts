@@ -1,14 +1,8 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
-} from "./_generated/server";
-
-const ALLOWED_EMAIL_DOMAIN = "@cornell.edu";
+import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { authedMutation, isCornellEmail } from "./lib/auth";
 
 type CurrentUserResult = {
   user: Doc<"users"> | null;
@@ -25,13 +19,6 @@ async function loadProfile(
     .query("userProfiles")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
-}
-
-function isCornellEmail(email: string | undefined): boolean {
-  return (
-    typeof email === "string" &&
-    email.toLowerCase().endsWith(ALLOWED_EMAIL_DOMAIN)
-  );
 }
 
 export const currentUser = query({
@@ -79,7 +66,7 @@ export const currentUser = query({
   },
 });
 
-export const updateProfile = mutation({
+export const updateProfile = authedMutation({
   args: {
     major: v.optional(v.string()),
     gradYear: v.optional(v.string()),
@@ -87,23 +74,7 @@ export const updateProfile = mutation({
     interests: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to update your profile.",
-      });
-    }
-
-    const user = await ctx.db.get(userId);
-    if (user === null || !isCornellEmail(user.email)) {
-      throw new ConvexError({
-        code: "NON_CORNELL_EMAIL",
-        message: "Loop is open to Cornell students only.",
-      });
-    }
-
-    const existing = await loadProfile(ctx, userId);
+    const existing = await loadProfile(ctx, ctx.user._id);
 
     const nextMajor = args.major !== undefined ? args.major : existing?.major;
     const nextInterests =
@@ -119,7 +90,7 @@ export const updateProfile = mutation({
 
     if (existing === null) {
       await ctx.db.insert("userProfiles", {
-        userId,
+        userId: ctx.user._id,
         major: args.major,
         gradYear: args.gradYear,
         minor: args.minor,
@@ -143,31 +114,15 @@ export const updateProfile = mutation({
   },
 });
 
-export const completeOnboarding = mutation({
+export const completeOnboarding = authedMutation({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to complete onboarding.",
-      });
-    }
-
-    const user = await ctx.db.get(userId);
-    if (user === null || !isCornellEmail(user.email)) {
-      throw new ConvexError({
-        code: "NON_CORNELL_EMAIL",
-        message: "Loop is open to Cornell students only.",
-      });
-    }
-
-    const existing = await loadProfile(ctx, userId);
+    const existing = await loadProfile(ctx, ctx.user._id);
     const now = Date.now();
 
     if (existing === null) {
       await ctx.db.insert("userProfiles", {
-        userId,
+        userId: ctx.user._id,
         interests: [],
         onboardingCompletedAt: now,
       });

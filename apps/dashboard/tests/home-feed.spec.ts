@@ -1,6 +1,6 @@
 import { test, expect } from "./helpers/fixtures";
 import { signInAs } from "./helpers/auth";
-import { resetUserState, seedDb } from "./helpers/seed";
+import { orgIdForSlug, resetUserState, seedDb } from "./helpers/seed";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import { getConvexUrl } from "./helpers/env";
@@ -11,7 +11,7 @@ async function followAndOnboard(token: string, slugs: string[]) {
   const client = new ConvexHttpClient(getConvexUrl());
   client.setAuth(token);
   for (const slug of slugs) {
-    const orgId = await client.query(api.dev.triggerOrgIdForSlug, { slug });
+    const orgId = await orgIdForSlug(token, slug);
     if (orgId !== null) {
       await client.mutation(api.follows.follow, { orgId });
     }
