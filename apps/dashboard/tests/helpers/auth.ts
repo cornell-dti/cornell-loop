@@ -1,33 +1,17 @@
 /**
  * Playwright auth helper.
  *
- * Strategy
- * --------
  * Driving Google OAuth from a headless browser is impractical, so we mint a
- * real Convex Auth session server-side via a DEV-gated action and inject the
- * resulting JWT + refresh token into `localStorage` under the keys the
- * `@convex-dev/auth/react` provider expects.
- *
- *   1. `signInAs(page, email)` calls `api.dev.testSignIn` over the Convex HTTP
- *      client. This server-side action upserts a `users` row, invokes the
- *      `auth:store` internal mutation with `type: "signIn", generateTokens:
- *      true`, and returns a real RS256 JWT signed with the deployment's
- *      `JWT_PRIVATE_KEY` plus a refresh token.
- *   2. We use `page.addInitScript` so the next document load (and every
- *      subsequent one) sees the tokens already present in localStorage.
- *   3. The first navigation after `signInAs` triggers Convex's WebSocket
- *      handshake; the auth provider reads the token and `useQuery(api.users
- *      .currentUser)` resolves with the freshly-signed-in identity.
- *
- * Cleanup is handled by the test fixtures — `clearAuth(page)` wipes both
- * JWT and refresh-token keys so the next spec starts unauthenticated.
+ * real Convex Auth session server-side via `internal.dev.signInForTest` and
+ * inject the JWT + refresh token into `localStorage`. That function is
+ * internal and fail-closed behind TEST_AUTH_ENABLED; the CLI deploy key is
+ * what makes it reachable from this helper.
  */
 
 import type { Page } from "@playwright/test";
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { authStorageNamespace, getConvexUrl } from "./env";
+import { convexRun } from "./convexRun";
+import { authStorageNamespace } from "./env";
 
 const JWT_KEY = "__convexAuthJWT";
 const REFRESH_KEY = "__convexAuthRefreshToken";
@@ -38,13 +22,25 @@ export interface SignInResult {
   refreshToken: string;
 }
 
+function isSignInResult(value: unknown): value is SignInResult {
+  if (typeof value !== "object" || value === null) return false;
+  if (
+    !("token" in value) ||
+    !("refreshToken" in value) ||
+    !("userId" in value)
+  ) {
+    return false;
+  }
+  return (
+    typeof value.token === "string" &&
+    typeof value.refreshToken === "string" &&
+    typeof value.userId === "string"
+  );
+}
+
 /**
  * Signs the test user in by minting a Convex Auth session server-side and
  * planting the resulting tokens in `localStorage` for the next navigation.
- *
- * @param page  Playwright page that subsequent navigations will run on.
- * @param email Cornell-domain email; the helper asserts this matches the
- *              auth gate so a malformed email surfaces as a quick failure.
  */
 export async function signInAs(
   page: Page,
@@ -57,11 +53,12 @@ export async function signInAs(
         "callback would reject it.",
     );
   }
-  const client = new ConvexHttpClient(getConvexUrl());
-  const result = await client.action(api.dev.triggerTestSignIn, {
-    email,
-    name,
-  });
+  const args: Record<string, unknown> = { email };
+  if (name !== undefined) args.name = name;
+  const result = await convexRun("internal.dev.signInForTest", args);
+  if (!isSignInResult(result)) {
+    throw new Error("internal.dev.signInForTest returned an unexpected value");
+  }
 
   const namespace = authStorageNamespace();
   const tokenKey = `${JWT_KEY}_${namespace}`;

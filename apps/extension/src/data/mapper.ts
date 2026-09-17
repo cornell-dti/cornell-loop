@@ -5,12 +5,13 @@
  * work with EventItem exclusively.
  */
 
-import type { Doc } from "@app/convex/_generated/dataModel";
+import type { PublicEvent } from "@app/convex/events";
+import type { PublicOrg } from "@app/convex/orgs";
 import type { EventItem } from "./types";
 
 export type HydratedEventInput = {
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
   isBookmarked: boolean;
   sentAt?: number;
 };

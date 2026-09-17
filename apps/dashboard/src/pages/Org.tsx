@@ -45,7 +45,7 @@ import type {
   Organization,
 } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
@@ -309,7 +309,7 @@ export function Org() {
     return <NotFoundState slug={slug} />;
   }
 
-  const org: Doc<"orgs"> = orgQuery.org;
+  const org: PublicOrg = orgQuery.org;
   const serverIsFollowing = orgQuery.isFollowing;
   const isFollowing = optimisticFollowing ?? serverIsFollowing;
 
