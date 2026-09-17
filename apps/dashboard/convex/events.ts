@@ -1,13 +1,51 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { query, type QueryCtx } from "./_generated/server";
+import { type QueryCtx } from "./_generated/server";
+import { authedQuery } from "./lib/auth";
 
 type FeedSource = "subscribed" | "recommended";
 
+/**
+ * Public projection of an `events` doc. Drops internal pipeline/admin-only
+ * fields (listserv linkage ids, org linkage, moderation/parse metadata) that
+ * the UI never reads.
+ */
+export type PublicEvent = Pick<
+  Doc<"events">,
+  | "_id"
+  | "_creationTime"
+  | "title"
+  | "description"
+  | "aiDescription"
+  | "eventType"
+  | "hosts"
+  | "listserv"
+  | "dates"
+  | "location"
+  | "links"
+  | "tags"
+>;
+
+export function projectEvent(event: Doc<"events">): PublicEvent {
+  return {
+    _id: event._id,
+    _creationTime: event._creationTime,
+    title: event.title,
+    description: event.description,
+    aiDescription: event.aiDescription,
+    eventType: event.eventType,
+    hosts: event.hosts,
+    listserv: event.listserv,
+    dates: event.dates,
+    location: event.location,
+    links: event.links,
+    tags: event.tags,
+  };
+}
+
 type HydratedEvent = {
-  event: Doc<"events">;
+  event: PublicEvent;
   orgs: Doc<"orgs">[];
   isBookmarked: boolean;
   source: FeedSource;
@@ -96,16 +134,16 @@ function isPublished(event: Doc<"events">): boolean {
 async function hydrateEvent(
   ctx: QueryCtx,
   event: Doc<"events">,
-  userId: Id<"users"> | null,
+  userId: Id<"users">,
   source: FeedSource,
 ): Promise<HydratedEvent> {
   const orgs = await loadOrgsForEvent(ctx, event._id);
   const isBookmarked = await isEventBookmarked(ctx, userId, event._id);
   const sentAt = await loadSentAt(ctx, event);
-  return { event, orgs, isBookmarked, source, sentAt };
+  return { event: projectEvent(event), orgs, isBookmarked, source, sentAt };
 }
 
-export const feed = query({
+export const feed = authedQuery({
   args: {
     paginationOpts: paginationOptsValidator,
     scope: v.optional(v.union(v.literal("all"), v.literal("followed"))),
@@ -116,7 +154,7 @@ export const feed = query({
     ),
   },
   handler: async (ctx, args): Promise<FeedPage> => {
-    const userId = await getAuthUserId(ctx);
+    const userId = ctx.user._id;
     const scope = args.scope ?? "all";
     const numItems = args.paginationOpts.numItems;
     // Floor the requested page size so a small numItems still yields a feed
@@ -149,9 +187,8 @@ export const feed = query({
     };
 
     const loadInterests = async (
-      uid: Id<"users"> | null,
+      uid: Id<"users">,
     ): Promise<ReadonlySet<string>> => {
-      if (uid === null) return new Set<string>();
       const profile = await ctx.db
         .query("userProfiles")
         .withIndex("by_user", (q) => q.eq("userId", uid))
@@ -226,7 +263,7 @@ export const feed = query({
       return [...personalised, ...recent];
     };
 
-    if (scope === "all" || userId === null) {
+    if (scope === "all") {
       const result = await ctx.db
         .query("events")
         .filter((q) =>
@@ -298,19 +335,19 @@ export const feed = query({
   },
 });
 
-export const getById = query({
+export const getById = authedQuery({
   args: { eventId: v.id("events") },
   handler: async (ctx, args): Promise<HydratedEvent | null> => {
     const event = await ctx.db.get(args.eventId);
     if (event === null || !isPublished(event)) {
       return null;
     }
-    const userId = await getAuthUserId(ctx);
+    const userId = ctx.user._id;
     return await hydrateEvent(ctx, event, userId, "recommended");
   },
 });
 
-export const searchEvents = query({
+export const searchEvents = authedQuery({
   args: { q: v.string() },
   handler: async (ctx, args): Promise<HydratedEvent[]> => {
     if (args.q.length < 2) {
@@ -339,7 +376,7 @@ export const searchEvents = query({
       if (merged.length >= 25) break;
     }
 
-    const userId = await getAuthUserId(ctx);
+    const userId = ctx.user._id;
     const hydrated: HydratedEvent[] = [];
     for (const event of merged) {
       hydrated.push(await hydrateEvent(ctx, event, userId, "recommended"));
@@ -348,7 +385,7 @@ export const searchEvents = query({
   },
 });
 
-export const byOrg = query({
+export const byOrg = authedQuery({
   args: { slug: v.string(), paginationOpts: paginationOptsValidator },
   handler: async (ctx, args): Promise<FeedPage> => {
     const org = await ctx.db
@@ -364,7 +401,7 @@ export const byOrg = query({
       };
     }
 
-    const userId = await getAuthUserId(ctx);
+    const userId = ctx.user._id;
 
     const joinPage = await ctx.db
       .query("eventOrgs")
@@ -415,7 +452,7 @@ type EmailContent =
  * since been deleted. Signed-out callers also get "unavailable", matching the
  * benign-value convention the other queries here follow.
  */
-export const getEmailContent = query({
+export const getEmailContent = authedQuery({
   args: { eventId: v.id("events") },
   returns: v.union(
     v.object({
@@ -427,9 +464,6 @@ export const getEmailContent = query({
     v.object({ status: v.literal("unavailable") }),
   ),
   handler: async (ctx, args): Promise<EmailContent> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) return { status: "unavailable" };
-
     const event = await ctx.db.get(args.eventId);
     if (event === null || !isPublished(event)) return { status: "unavailable" };
 
