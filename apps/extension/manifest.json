@@ -6,17 +6,17 @@
   "action": {
     "default_title": "Cornell Loop",
     "default_icon": {
-      "16": "loop_logo.png",
-      "32": "loop_logo.png",
-      "48": "loop_logo.png",
-      "128": "loop_logo.png"
+      "16": "loop_logo_16.png",
+      "32": "loop_logo_32.png",
+      "48": "loop_logo_48.png",
+      "128": "loop_logo_128.png"
     }
   },
   "icons": {
-    "16": "loop_logo.png",
-    "32": "loop_logo.png",
-    "48": "loop_logo.png",
-    "128": "loop_logo.png"
+    "16": "loop_logo_16.png",
+    "32": "loop_logo_32.png",
+    "48": "loop_logo_48.png",
+    "128": "loop_logo_128.png"
   },
   "background": {
     "service_worker": "src/background.ts",
