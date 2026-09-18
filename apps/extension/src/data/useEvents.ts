@@ -76,7 +76,8 @@ export function useFeedSections(): OrgSection[] {
 }
 
 /**
- * Up to 4 trending events from the last 14 days, recency-ordered.
+ * Up to 4 recent events from the last 14 days, recency-ordered.
+ * Shown in the "New This Week" section of FeedView.
  * Falls back to an empty array while loading.
  */
 export function useTrendingEvents(): EventItem[] {
