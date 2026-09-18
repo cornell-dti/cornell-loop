@@ -1,6 +1,6 @@
 import { test, expect } from "./helpers/fixtures";
 import { signInAs } from "./helpers/auth";
-import { resetUserState, seedDb } from "./helpers/seed";
+import { firstSeedEventId, resetUserState, seedDb } from "./helpers/seed";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import { getConvexUrl } from "./helpers/env";
@@ -11,7 +11,7 @@ const BOOKMARKS_EMAIL = "loop-bookmarks@cornell.edu";
 async function bookmarkFirstEvent(token: string): Promise<Id<"events">> {
   const client = new ConvexHttpClient(getConvexUrl());
   client.setAuth(token);
-  const eventId = await client.query(api.dev.triggerFirstEventId, {});
+  const eventId = await firstSeedEventId(token);
   if (eventId === null) throw new Error("No seed events found");
   await client.mutation(api.bookmarks.bookmark, { eventId });
   await client.mutation(api.users.completeOnboarding, {});

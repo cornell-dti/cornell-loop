@@ -7,10 +7,12 @@
  */
 
 import { useMemo } from "react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@app/convex/_generated/api";
 import type { Doc } from "@app/convex/_generated/dataModel";
+import type { PublicEvent } from "@app/convex/events";
+import type { PublicOrg } from "@app/convex/orgs";
 import { mapHydratedEventToEventItem } from "./mapper";
 import type { EventId, EventItem } from "./types";
 
@@ -37,14 +39,20 @@ export type EmailContent = FunctionReturnType<
  * Falls back to an empty array while loading.
  */
 export function useFeedSections(): OrgSection[] {
+  const { isAuthenticated } = useConvexAuth();
   // All hook calls must precede any early returns.
   // eslint-disable-next-line react-hooks/purity
   const cutoff = useMemo(() => Date.now() - TWO_WEEKS_MS, []);
 
-  const result = useQuery(api.events.feed, {
-    paginationOpts: { numItems: 50, cursor: null },
-    scope: "followed",
-  });
+  const result = useQuery(
+    api.events.feed,
+    isAuthenticated
+      ? {
+          paginationOpts: { numItems: 50, cursor: null },
+          scope: "followed",
+        }
+      : "skip",
+  );
 
   if (result === undefined) return [];
 
@@ -68,18 +76,25 @@ export function useFeedSections(): OrgSection[] {
 }
 
 /**
- * Up to 4 trending events from the last 14 days, recency-ordered.
+ * Up to 4 recent events from the last 14 days, recency-ordered.
+ * Shown in the "New This Week" section of FeedView.
  * Falls back to an empty array while loading.
  */
 export function useTrendingEvents(): EventItem[] {
+  const { isAuthenticated } = useConvexAuth();
   // All hook calls must precede any early returns.
   // eslint-disable-next-line react-hooks/purity
   const cutoff = useMemo(() => Date.now() - TWO_WEEKS_MS, []);
 
-  const result = useQuery(api.events.feed, {
-    paginationOpts: { numItems: 20, cursor: null },
-    scope: "all",
-  });
+  const result = useQuery(
+    api.events.feed,
+    isAuthenticated
+      ? {
+          paginationOpts: { numItems: 20, cursor: null },
+          scope: "all",
+        }
+      : "skip",
+  );
 
   if (result === undefined) return [];
 
@@ -96,9 +111,10 @@ export function useTrendingEvents(): EventItem[] {
  * Returns an empty array when query is < 2 chars or while loading.
  */
 export function useSearchResults(query: string): EventItem[] {
+  const { isAuthenticated } = useConvexAuth();
   const result = useQuery(
     api.events.searchEvents,
-    query.trim().length >= 2 ? { q: query } : "skip",
+    isAuthenticated && query.trim().length >= 2 ? { q: query } : "skip",
   );
 
   if (result === undefined) return [];
@@ -109,8 +125,8 @@ export function useSearchResults(query: string): EventItem[] {
 
 type HydratedBookmark = {
   bookmark: Doc<"bookmarks">;
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
 };
 
 function mapBookmark(b: HydratedBookmark): EventItem {
@@ -128,9 +144,13 @@ function mapBookmark(b: HydratedBookmark): EventItem {
  * Falls back to empty while loading or unauthenticated.
  */
 export function useBookmarks(): { ids: Set<string>; events: EventItem[] } {
-  const result = useQuery(api.bookmarks.myBookmarks, {
-    paginationOpts: { numItems: 100, cursor: null },
-  });
+  const { isAuthenticated } = useConvexAuth();
+  const result = useQuery(
+    api.bookmarks.myBookmarks,
+    isAuthenticated
+      ? { paginationOpts: { numItems: 100, cursor: null } }
+      : "skip",
+  );
 
   if (result === undefined) return { ids: new Set(), events: [] };
 
@@ -149,8 +169,9 @@ export function useBookmarks(): { ids: Set<string>; events: EventItem[] } {
 export function useEmailContent(
   eventId: EventId | undefined,
 ): EmailContent | undefined {
+  const { isAuthenticated } = useConvexAuth();
   return useQuery(
     api.events.getEmailContent,
-    eventId !== undefined ? { eventId } : "skip",
+    isAuthenticated && eventId !== undefined ? { eventId } : "skip",
   );
 }

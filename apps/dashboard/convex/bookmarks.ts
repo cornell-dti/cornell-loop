@@ -1,18 +1,15 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
-} from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { type PublicEvent, projectEvent } from "./events";
+import { authedMutation, authedQuery } from "./lib/auth";
+import { type PublicOrg, projectOrg } from "./orgs";
 
 type HydratedBookmark = {
   bookmark: Doc<"bookmarks">;
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
 };
 
 type BookmarkPage = {
@@ -57,17 +54,9 @@ function isPublished(event: Doc<"events">): boolean {
   return event.visibility !== "draft" && event.visibility !== "hidden";
 }
 
-export const bookmark = mutation({
+export const bookmark = authedMutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to bookmark an event.",
-      });
-    }
-
     const event = await ctx.db.get(args.eventId);
     if (event === null || !isPublished(event)) {
       throw new ConvexError({
@@ -76,14 +65,14 @@ export const bookmark = mutation({
       });
     }
 
-    const existing = await findBookmark(ctx, userId, args.eventId);
+    const existing = await findBookmark(ctx, ctx.user._id, args.eventId);
     if (existing !== null) {
       // Idempotent: already bookmarked.
       return null;
     }
 
     await ctx.db.insert("bookmarks", {
-      userId,
+      userId: ctx.user._id,
       eventId: args.eventId,
       createdAt: Date.now(),
     });
@@ -91,18 +80,10 @@ export const bookmark = mutation({
   },
 });
 
-export const unbookmark = mutation({
+export const unbookmark = authedMutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to remove a bookmark.",
-      });
-    }
-
-    const existing = await findBookmark(ctx, userId, args.eventId);
+    const existing = await findBookmark(ctx, ctx.user._id, args.eventId);
     if (existing !== null) {
       await ctx.db.delete(existing._id);
     }
@@ -110,33 +91,20 @@ export const unbookmark = mutation({
   },
 });
 
-export const isBookmarked = query({
+export const isBookmarked = authedQuery({
   args: { eventId: v.id("events") },
   handler: async (ctx, args): Promise<boolean> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return false;
-    }
-    const existing = await findBookmark(ctx, userId, args.eventId);
+    const existing = await findBookmark(ctx, ctx.user._id, args.eventId);
     return existing !== null;
   },
 });
 
-export const myBookmarks = query({
+export const myBookmarks = authedQuery({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args): Promise<BookmarkPage> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return {
-        page: [],
-        isDone: true,
-        continueCursor: "",
-      };
-    }
-
     const result = await ctx.db
       .query("bookmarks")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q) => q.eq("userId", ctx.user._id))
       .order("desc")
       .paginate(args.paginationOpts);
 
@@ -146,7 +114,11 @@ export const myBookmarks = query({
       if (event === null) continue;
       if (!isPublished(event)) continue;
       const orgs = await loadOrgsForEvent(ctx, event._id);
-      hydrated.push({ bookmark: row, event, orgs });
+      hydrated.push({
+        bookmark: row,
+        event: projectEvent(event),
+        orgs: orgs.map(projectOrg),
+      });
     }
 
     return {

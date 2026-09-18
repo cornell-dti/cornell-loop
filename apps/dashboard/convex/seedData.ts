@@ -2,8 +2,7 @@
  * Dev-only seed data. Every row written from here is tagged isSeed: true.
  * Production deploys must NEVER run convex/seed.ts seedAll. The seed
  * mutation is `internalMutation` so it's only callable via
- * `bunx convex run seed:seedAll` against the dev deployment, or via
- * the DEV-gated `dev.triggerSeed` mutation. See `convex/dev.ts`.
+ * `bunx convex run seed:seedAll` against the dev deployment.
  */
 
 // Schema-aligned types (without Convex Id values, since seed source data

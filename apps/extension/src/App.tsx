@@ -1,5 +1,5 @@
 import { useState, useRef, useLayoutEffect } from "react";
-import { useConvexAuth, useMutation } from "convex/react";
+import { useConvex, useConvexAuth, useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "@app/convex/_generated/api";
 import { Button } from "@app/ui";
@@ -11,6 +11,7 @@ import OriginalEmailView from "./components/OriginalEmailView";
 import type { EventId, EventItem } from "./data/types";
 import { useBookmarks } from "./data/useEvents";
 import { openExternalUrl } from "./utils/linkUtils";
+import { signInWithGoogle } from "./extensionOAuth";
 
 type View = "feed" | "bookmarks" | "search" | "email";
 
@@ -26,7 +27,7 @@ const DASHBOARD_URL = (() => {
   const value = import.meta.env.VITE_DASHBOARD_URL;
   return typeof value === "string" && value.length > 0
     ? value
-    : "https://cornellloop.com";
+    : "https://cornell-loop.com";
 })();
 
 // ── Auth gate sub-components ───────────────────────────────────────────────
@@ -43,9 +44,10 @@ function LoadingState() {
 
 interface SignInPromptProps {
   onSignIn: () => void;
+  signInError: string | null;
 }
 
-function SignInPrompt({ onSignIn }: SignInPromptProps) {
+function SignInPrompt({ onSignIn, signInError }: SignInPromptProps) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-[var(--space-4)] px-6">
       <div className="flex flex-col items-center gap-[var(--space-2)] text-center">
@@ -66,6 +68,11 @@ function SignInPrompt({ onSignIn }: SignInPromptProps) {
       <Button variant="primary" size="md" onClick={onSignIn}>
         Sign in with Google
       </Button>
+      {signInError !== null && (
+        <p className="font-[family-name:var(--font-body)] text-[length:var(--font-size-body3)] text-[var(--color-red-600)]">
+          {signInError}
+        </p>
+      )}
     </div>
   );
 }
@@ -77,8 +84,9 @@ export default function App({
   pageContext = "gmail",
   onPreviewSlot,
 }: AppProps) {
+  const convex = useConvex();
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { signIn } = useAuthActions();
+  const { signIn, signOut } = useAuthActions();
 
   const bookmarkMutation = useMutation(api.bookmarks.bookmark);
   const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
@@ -88,6 +96,7 @@ export default function App({
   const [view, setView] = useState<View>("feed");
   const [activeTab, setActiveTab] = useState<"feed" | "bookmarks">("feed");
   const [searchQuery, setSearchQuery] = useState("");
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   const mainScrollRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -180,7 +189,19 @@ export default function App({
             onClose={onClose}
           />
         </div>
-        <SignInPrompt onSignIn={() => void signIn("google")} />
+        <SignInPrompt
+          onSignIn={() => {
+            setSignInError(null);
+            signInWithGoogle({ convex, signIn }).catch((err: unknown) => {
+              const message =
+                err instanceof Error
+                  ? err.message
+                  : "Sign-in failed. Please try again.";
+              setSignInError(message);
+            });
+          }}
+          signInError={signInError}
+        />
       </div>
     );
   }
@@ -229,14 +250,26 @@ export default function App({
               "shadow-[0_-4px_16px_rgba(0,0,0,0.06)]",
             ].join(" ")}
           >
-            <Button
-              variant="primary"
-              size="cta"
-              className="w-full"
-              onClick={() => openExternalUrl(DASHBOARD_URL)}
-            >
-              See more in dashboard
-            </Button>
+            <div className="flex w-full flex-col gap-[var(--space-3)]">
+              <Button
+                variant="primary"
+                size="cta"
+                className="w-full"
+                onClick={() => openExternalUrl(DASHBOARD_URL)}
+              >
+                See more in dashboard
+              </Button>
+              <Button
+                variant="secondary"
+                size="cta"
+                className="w-full"
+                onClick={() => {
+                  void signOut();
+                }}
+              >
+                Sign out
+              </Button>
+            </div>
           </div>
         </div>
       ) : (
@@ -270,13 +303,24 @@ export default function App({
             />
           )}
 
-          <div className="pt-[21px]">
+          <div className="flex w-full flex-col items-center gap-[var(--space-3)] pt-[21px]">
             <Button
               variant="primary"
               size="cta"
+              className="w-full"
               onClick={() => openExternalUrl(DASHBOARD_URL)}
             >
               See more in dashboard
+            </Button>
+            <Button
+              variant="secondary"
+              size="cta"
+              className="w-full"
+              onClick={() => {
+                void signOut();
+              }}
+            >
+              Sign out
             </Button>
           </div>
         </div>

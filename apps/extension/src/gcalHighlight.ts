@@ -7,8 +7,8 @@
  * in-page quick create.
  *
  * DOM selectors are inherently brittle as GCal updates its markup periodically.
- * Four strategies are tried for the day column; the overlay falls back to a
- * visible position at the right edge of the viewport if all fail.
+ * Four strategies are tried for the day column; if all fail the overlay is
+ * skipped and a console.warn is emitted so DOM changes are visible in devtools.
  */
 
 import type { CalendarEvent } from "./data/types";
@@ -41,11 +41,16 @@ export function showSlotPreview(event: CalendarEvent): void {
   const height = (durationMinutes / 60) * hourPx;
 
   const dayRect = findDayColumn(start);
+  if (dayRect === null) {
+    console.warn(
+      "[Cornell Loop] GCal day column not found — overlay skipped. GCal may have updated its DOM.",
+    );
+    return;
+  }
 
-  // Position: use real day column if found; fallback to right-side visible strip
-  const left = dayRect ? dayRect.left + 2 : window.innerWidth - 180;
-  const width = dayRect ? Math.max(dayRect.width - 4, 20) : 160;
-  const top = dayRect ? gridTop + topFromDayStart : gridTop + topFromDayStart;
+  const left = dayRect.left + 2;
+  const width = Math.max(dayRect.width - 4, 20);
+  const top = gridTop + topFromDayStart;
 
   const overlay = document.createElement("div");
   overlay.id = OVERLAY_ID;

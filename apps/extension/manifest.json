@@ -1,21 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Cornell Loop",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "Top Cornell club events and newsletters surfaced in Gmail and Calendar. Follow orgs, RSVP, and discover what's happening on campus.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm+wr5AWFcSTVQCfXVoAviFRrvZj1VG7AcoRIEjaOc0dvvufbHcX0dg2YHr3iOeE7fx0xD0zajI6tJ0HcoxmnUmdNKySaztDfp3UizlrcWYpuFlwDgp0hdkgjZam1QwBQ+Yzn8L/V4ucBicOpCX3r3SidqycSFDFVNmOhDVmodsj9ua2KjZ0c6ZRgYhjNjZPEhT5DZRb0fO7/dY7ISmYlba3djv3xPU70zjape+Wvw/kKi/d5fmZkMRpcVOMNysSqkYstLsJdflgXhn5z94//17aDvFu9cIpp3UsjVqGvBdg4fcXRMI0b0CX7KLXnn7/0/HI9ipcGM8EtBJopAj5NdwIDAQAB",
   "action": {
     "default_title": "Cornell Loop",
     "default_icon": {
-      "16": "loop_logo.png",
-      "32": "loop_logo.png",
-      "48": "loop_logo.png",
-      "128": "loop_logo.png"
+      "16": "loop_logo_16.png",
+      "32": "loop_logo_32.png",
+      "48": "loop_logo_48.png",
+      "128": "loop_logo_128.png"
     }
   },
   "icons": {
-    "16": "loop_logo.png",
-    "32": "loop_logo.png",
-    "48": "loop_logo.png",
-    "128": "loop_logo.png"
+    "16": "loop_logo_16.png",
+    "32": "loop_logo_32.png",
+    "48": "loop_logo_48.png",
+    "128": "loop_logo_128.png"
   },
   "background": {
     "service_worker": "src/background.ts",
@@ -28,5 +30,6 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "identity", "tabs"]
+  "permissions": ["storage", "identity", "tabs"],
+  "host_permissions": ["https://*.convex.cloud/*", "https://*.convex.site/*"]
 }
