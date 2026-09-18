@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.tests.json",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "pack": "node pack.mjs"
   },
   "dependencies": {
     "@app/ui": "workspace:*",

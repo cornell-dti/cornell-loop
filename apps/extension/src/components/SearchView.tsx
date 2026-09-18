@@ -1,10 +1,11 @@
 /**
- * SearchView — empty state (popular searches) + results state.
+ * SearchView — empty state + results state.
  *
  * Empty state (no query):
+ *   • SHOW_POPULAR_SEARCHES gates the ranked list (off for store; keep the
+ *     data for a later live ranking). When off, show a type-to-search prompt.
  *   • Clicking a popular search row calls onSearchSelect(term) → populates the
  *     search bar in App.tsx via handleSearchSelect.
- *   • POPULAR_SEARCHES is a manually curated static list for beta.
  *
  * Results state (query present):
  *   • Calls useSearchResults(query) → api.events.searchEvents (Convex full-text search).
@@ -36,6 +37,8 @@ const SORT_LABEL = UI_BODY + " whitespace-nowrap";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
+const SHOW_POPULAR_SEARCHES = false;
+
 const POPULAR_SEARCHES = [
   { rank: "#1", term: "Recruitment" },
   { rank: "#2", term: "Sports" },
@@ -59,6 +62,22 @@ interface SearchEmptyStateProps {
 }
 
 function SearchEmptyState({ onSelect }: SearchEmptyStateProps) {
+  if (!SHOW_POPULAR_SEARCHES) {
+    return (
+      <p
+        data-testid="search-empty-prompt"
+        className={
+          "font-[family-name:var(--font-body)] font-medium " +
+          "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
+          "tracking-[var(--letter-spacing-body1)] text-[var(--color-neutral-500)]"
+        }
+        style={{ fontVariationSettings: "'opsz' 14" }}
+      >
+        Type to search events
+      </p>
+    );
+  }
+
   return (
     <div className="flex w-full flex-col gap-[var(--space-3)]">
       {/* Heading — Figma: DM Sans Medium 18px, #5f5f5f, lh 28px, tracking -0.5px */}

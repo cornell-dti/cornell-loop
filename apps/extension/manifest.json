@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Cornell Loop",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "Surfaces top campus events & club newsletters from your Cornell inbox, checks calendar conflicts, and helps you discover clubs.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm+wr5AWFcSTVQCfXVoAviFRrvZj1VG7AcoRIEjaOc0dvvufbHcX0dg2YHr3iOeE7fx0xD0zajI6tJ0HcoxmnUmdNKySaztDfp3UizlrcWYpuFlwDgp0hdkgjZam1QwBQ+Yzn8L/V4ucBicOpCX3r3SidqycSFDFVNmOhDVmodsj9ua2KjZ0c6ZRgYhjNjZPEhT5DZRb0fO7/dY7ISmYlba3djv3xPU70zjape+Wvw/kKi/d5fmZkMRpcVOMNysSqkYstLsJdflgXhn5z94//17aDvFu9cIpp3UsjVqGvBdg4fcXRMI0b0CX7KLXnn7/0/HI9ipcGM8EtBJopAj5NdwIDAQAB",
   "action": {
     "default_title": "Cornell Loop",
