@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect } from "./helpers/fixtures";
 import { signInAs } from "./helpers/auth";
-import { resetUserState, seedDb } from "./helpers/seed";
+import { orgIdForSlug, resetUserState, seedDb } from "./helpers/seed";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import { getConvexUrl } from "./helpers/env";
@@ -50,7 +50,7 @@ test.describe("Accessibility — axe scans on key routes", () => {
     await client.mutation(api.users.completeOnboarding, {});
     // Follow a couple of orgs so /home + /subscriptions have real content.
     for (const slug of ["wicc", "acsu"]) {
-      const orgId = await client.query(api.dev.triggerOrgIdForSlug, { slug });
+      const orgId = await orgIdForSlug(slug);
       if (orgId !== null) await client.mutation(api.follows.follow, { orgId });
     }
   });
