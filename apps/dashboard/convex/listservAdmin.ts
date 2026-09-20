@@ -733,9 +733,9 @@ async function discoverCandidatesFromInitialDataset() {
     FROM emails e
     LEFT JOIN email_submissions es ON es.email_id = e.id
     WHERE
-      lower(e.email) LIKE '%@list.cornell.edu'
-      OR lower(e.email) LIKE '%@mm.list.cornell.edu'
-      OR lower(e.email) LIKE '%@list.cs.cornell.edu'
+      lower(e.email) LIKE '%@lists.cornell.edu'
+      OR lower(e.email) LIKE '%@mm.lists.cornell.edu'
+      OR lower(e.email) LIKE '%@lists.cs.cornell.edu'
       OR lower(substr(e.email, 1, instr(e.email, '@') - 1)) LIKE '%-l'
       OR lower(substr(e.email, 1, instr(e.email, '@') - 1)) LIKE '%announce%'
       OR lower(e.email) LIKE '%newsletter%'
@@ -793,9 +793,11 @@ function scoreCandidate(
   let score = 0;
 
   if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
+    [
+      "lists.cornell.edu",
+      "mm.lists.cornell.edu",
+      "list.cs.cornell.edu",
+    ].includes(domain)
   ) {
     score += 55;
     reasons.push("list domain");
@@ -1008,17 +1010,19 @@ function isCornellLyrisAddress(email: string) {
   const [local = "", domain = ""] = normalizeEmail(email).split("@");
   return (
     local.endsWith("-l") &&
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
+    [
+      "lists.cornell.edu",
+      "mm.lists.cornell.edu",
+      "list.cs.cornell.edu",
+    ].includes(domain)
   );
 }
 
 function isCornellListDomainAddress(email: string) {
   const [, domain = ""] = normalizeEmail(email).split("@");
   return [
-    "list.cornell.edu",
-    "mm.list.cornell.edu",
+    "lists.cornell.edu",
+    "mm.lists.cornell.edu",
     "list.cs.cornell.edu",
   ].includes(domain);
 }
