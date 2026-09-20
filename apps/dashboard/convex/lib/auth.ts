@@ -4,7 +4,9 @@
  * `authedQuery` / `authedMutation` wrap the stock `query` / `mutation`
  * builders and enforce, on every use (not just at account-creation time):
  *   1. The caller has a valid Convex Auth session (`getAuthUserId`).
- *   2. The signed-in user's email is a `@cornell.edu` address.
+ *   2. The signed-in user's email is a `@cornell.edu` address, or an
+ *      exact extra address in `EXTRA_ALLOWED_EMAILS` (Chrome Web Store
+ *      review). Remove that set to close the exception.
  *
  * Both checks throw a `ConvexError` with a stable `code` the frontend can
  * branch on. Handlers built on these wrappers receive `ctx.user` (the full
@@ -32,10 +34,17 @@ import {
 
 const ALLOWED_EMAIL_DOMAIN = "@cornell.edu";
 
+/** Exact extras that skip the Cornell domain check. Empty this to revoke. */
+const EXTRA_ALLOWED_EMAILS = new Set(["looptest.webstore@gmail.com"]);
+
 export function isCornellEmail(email: string | undefined): boolean {
+  if (typeof email !== "string") {
+    return false;
+  }
+  const normalized = email.toLowerCase();
   return (
-    typeof email === "string" &&
-    email.toLowerCase().endsWith(ALLOWED_EMAIL_DOMAIN)
+    normalized.endsWith(ALLOWED_EMAIL_DOMAIN) ||
+    EXTRA_ALLOWED_EMAILS.has(normalized)
   );
 }
 

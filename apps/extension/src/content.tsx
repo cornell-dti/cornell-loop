@@ -1,6 +1,6 @@
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { ConvexReactClient } from "convex/react";
 import FloatingPanel from "./components/FloatingPanel.tsx";
 import contentStyles from "./content.css?inline";
@@ -8,11 +8,18 @@ import { showSlotPreview, removeSlotPreview } from "./gcalHighlight";
 import { panelEvents } from "./panelBridge";
 import type { EventItem } from "./data/types";
 import type { PageContext } from "./App";
+import {
+  extensionStorage,
+  jwtPresenceFlipped,
+  wasRecentLocalStorageWrite,
+} from "./extensionStorage";
 
 const convexUrl = (() => {
   const value = import.meta.env.VITE_CONVEX_URL;
   return typeof value === "string" && value.length > 0 ? value : undefined;
 })();
+
+let activeRoot: Root | null = null;
 
 function loadFonts() {
   if (document.getElementById("cornell-loop-fonts")) return;
@@ -33,11 +40,10 @@ function mount() {
     return;
   }
 
-  if (document.getElementById("cornell-loop-host")) return;
+  if (document.getElementById("cornell-loop-host") !== null) return;
 
   const convex = new ConvexReactClient(convexUrl);
 
-  // Detect which Google product the content script is running in.
   const pageContext: PageContext = window.location.hostname.includes(
     "calendar.google.com",
   )
@@ -48,18 +54,12 @@ function mount() {
 
   const host = document.createElement("div");
   host.id = "cornell-loop-host";
-  // Explicit styles prevent Gmail/Calendar from accidentally hiding or
-  // reflowing the host. Fixed + zero-size keeps it out of the page layout
-  // while still allowing the shadow DOM children to use fixed positioning.
   host.style.cssText =
     "position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;overflow:visible;pointer-events:none;";
   document.body.appendChild(host);
 
   const shadow = host.attachShadow({ mode: "open" });
 
-  // Use a <style> node instead of adoptedStyleSheets + replaceSync: constructable
-  // stylesheets disallow @import (Tailwind may emit them) and can mishandle
-  // @property compared to a document stylesheet.
   const styleEl = document.createElement("style");
   styleEl.textContent = contentStyles;
   shadow.appendChild(styleEl);
@@ -68,11 +68,6 @@ function mount() {
   mountPoint.style.pointerEvents = "auto";
   shadow.appendChild(mountPoint);
 
-  /**
-   * Bridge: called by BookmarkView (inside shadow DOM) when a card is hovered.
-   * This function runs in the content-script context and has access to
-   * document.body, so it can inject the GCal grid overlay.
-   */
   const handlePreviewSlot = (event: EventItem | null) => {
     if (event?.calendarEvent) {
       showSlotPreview(event.calendarEvent);
@@ -81,9 +76,15 @@ function mount() {
     }
   };
 
-  createRoot(mountPoint).render(
+  activeRoot = createRoot(mountPoint);
+  activeRoot.render(
     <StrictMode>
-      <ConvexAuthProvider client={convex}>
+      <ConvexAuthProvider
+        client={convex}
+        storage={extensionStorage}
+        storageNamespace={convexUrl}
+        shouldHandleCode={false}
+      >
         <FloatingPanel
           pageContext={pageContext}
           onPreviewSlot={handlePreviewSlot}
@@ -93,10 +94,35 @@ function mount() {
   );
 }
 
+function unmount(): void {
+  const host = document.getElementById("cornell-loop-host");
+  if (activeRoot !== null) {
+    activeRoot.unmount();
+    activeRoot = null;
+  }
+  host?.remove();
+}
+
+function remountIfSessionPresenceChanged(
+  changes: { [key: string]: chrome.storage.StorageChange },
+  areaName: string,
+): void {
+  try {
+    if (typeof chrome.runtime?.id !== "string") return;
+  } catch {
+    return;
+  }
+  if (areaName !== "local") return;
+  if (wasRecentLocalStorageWrite()) return;
+  if (!jwtPresenceFlipped(changes)) return;
+  unmount();
+  mount();
+}
+
 mount();
 
-// Re-show the floating panel when the user clicks the toolbar icon
-// (handled in background.ts via chrome.action.onClicked).
+chrome.storage.onChanged.addListener(remountIfSessionPresenceChanged);
+
 function readMessageType(raw: unknown): string | null {
   if (typeof raw !== "object" || raw === null) return null;
   for (const [k, v] of Object.entries(raw)) {
@@ -106,6 +132,11 @@ function readMessageType(raw: unknown): string | null {
 }
 
 chrome.runtime.onMessage.addListener((rawMessage) => {
+  try {
+    if (typeof chrome.runtime?.id !== "string") return false;
+  } catch {
+    return false;
+  }
   if (readMessageType(rawMessage) === "LOOP_SHOW_PANEL") {
     panelEvents.dispatchEvent(new Event("show"));
   }
