@@ -11,6 +11,8 @@ import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@app/convex/_generated/api";
 import type { Doc } from "@app/convex/_generated/dataModel";
+import type { PublicEvent } from "@app/convex/events";
+import type { PublicOrg } from "@app/convex/orgs";
 import { mapHydratedEventToEventItem } from "./mapper";
 import type { EventId, EventItem } from "./types";
 
@@ -109,8 +111,8 @@ export function useSearchResults(query: string): EventItem[] {
 
 type HydratedBookmark = {
   bookmark: Doc<"bookmarks">;
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
 };
 
 function mapBookmark(b: HydratedBookmark): EventItem {

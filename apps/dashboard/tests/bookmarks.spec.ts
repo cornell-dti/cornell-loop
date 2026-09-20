@@ -11,7 +11,7 @@ const BOOKMARKS_EMAIL = "loop-bookmarks@cornell.edu";
 async function bookmarkFirstEvent(token: string): Promise<Id<"events">> {
   const client = new ConvexHttpClient(getConvexUrl());
   client.setAuth(token);
-  const eventId = await firstSeedEventId();
+  const eventId = await firstSeedEventId(token);
   if (eventId === null) throw new Error("No seed events found");
   await client.mutation(api.bookmarks.bookmark, { eventId });
   await client.mutation(api.users.completeOnboarding, {});

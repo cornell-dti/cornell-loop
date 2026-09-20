@@ -11,10 +11,15 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { convexRun } from "./convexRun";
 import { getConvexUrl } from "./env";
 
-let _client: ConvexHttpClient | null = null;
-function client(): ConvexHttpClient {
-  if (_client === null) _client = new ConvexHttpClient(getConvexUrl());
-  return _client;
+/**
+ * `orgs.getBySlug` / `events.byOrg` are `authedQuery` (anonymous reads are
+ * locked), so these lookup helpers need a signed-in caller's token — pass the
+ * `token` returned by `signInAs`.
+ */
+function authedClient(token: string): ConvexHttpClient {
+  const c = new ConvexHttpClient(getConvexUrl());
+  c.setAuth(token);
+  return c;
 }
 
 function isClearSeedResult(
@@ -54,14 +59,21 @@ export async function resetUserState(email: string): Promise<void> {
   await convexRun("internal.dev.resetUserState", { email });
 }
 
-export async function orgIdForSlug(slug: string): Promise<Id<"orgs"> | null> {
-  const result = await client().query(api.orgs.getBySlug, { slug });
+export async function orgIdForSlug(
+  token: string,
+  slug: string,
+): Promise<Id<"orgs"> | null> {
+  const result = await authedClient(token).query(api.orgs.getBySlug, {
+    slug,
+  });
   if (result.org === null) return null;
   return result.org._id;
 }
 
-export async function firstSeedEventId(): Promise<Id<"events"> | null> {
-  const page = await client().query(api.events.byOrg, {
+export async function firstSeedEventId(
+  token: string,
+): Promise<Id<"events"> | null> {
+  const page = await authedClient(token).query(api.events.byOrg, {
     slug: "wicc",
     paginationOpts: { numItems: 1, cursor: null },
   });

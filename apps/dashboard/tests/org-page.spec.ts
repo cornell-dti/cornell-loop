@@ -56,7 +56,7 @@ test.describe("Org page", () => {
     await expect
       .poll(
         async () => {
-          const orgId = await orgIdForSlug("wicc");
+          const orgId = await orgIdForSlug(token, "wicc");
           if (orgId === null) return false;
           return await verifyClient.query(api.follows.isFollowing, { orgId });
         },
