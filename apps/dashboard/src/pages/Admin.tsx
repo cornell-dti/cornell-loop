@@ -2752,9 +2752,11 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
   const email = listserv.listEmail.toLowerCase();
   const [local = "", domain = ""] = email.split("@");
   if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
+    [
+      "lists.cornell.edu",
+      "mm.lists.cornell.edu",
+      "list.cs.cornell.edu",
+    ].includes(domain)
   ) {
     const listName = local.replace(/^owner-/, "");
     return {

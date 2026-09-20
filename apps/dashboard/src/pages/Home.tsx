@@ -129,6 +129,11 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
 
 // ─── Default data ─────────────────────────────────────────────────────────────
 
+// Stable empty-array reference so `posts` doesn't change identity on every
+// render when neither `postsOverride` nor `queriedPosts` is set — otherwise
+// the `filteredPosts` useMemo below would recompute unnecessarily.
+const EMPTY_POSTS: DashboardPostProps[] = [];
+
 const DEFAULT_FEED_TAGS: FeedTagItem[] = [
   { label: "Recruitment" },
   { label: "Early Career" },
@@ -311,7 +316,8 @@ function HomeInner({
   const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
 
   // Caller overrides take priority (used by /search and any tests).
-  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  const posts: DashboardPostProps[] =
+    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -338,6 +344,17 @@ function HomeInner({
   );
   const isControlled = searchValue !== undefined;
   const query = isControlled ? searchValue : internalQuery;
+
+  // Selected filter tag — clicking a tag filters the feed to posts carrying
+  // that tag; clicking the active tag again clears the filter.
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const handleTagClick = useCallback(
+    (label: string) => {
+      setSelectedTag((prev) => (prev === label ? null : label));
+      onTagClick?.(label);
+    },
+    [onTagClick],
+  );
 
   const [focused, setFocused] = useState<boolean>(false);
   // "results" mode is committed via Enter or selecting a suggestion. It
@@ -456,8 +473,15 @@ function HomeInner({
   );
 
   // Which posts to render in the feed: results posts when committed, else
-  // the everyday SAMPLE_POSTS supplied via the `posts` prop.
-  const feedPosts = showResults ? resultPosts : posts;
+  // the everyday SAMPLE_POSTS supplied via the `posts` prop — narrowed to the
+  // selected filter tag, when one is active.
+  const filteredPosts = useMemo(() => {
+    if (!selectedTag) return posts;
+    return posts.filter((post) =>
+      post.tags?.some((tag) => tag.label === selectedTag),
+    );
+  }, [posts, selectedTag]);
+  const feedPosts = showResults ? resultPosts : filteredPosts;
   // Org result card visibility — only when scope shows orgs (Top/Orgs).
   const showOrgCards = showResults && scope !== "events";
   // Event filter — Events scope hides org card; Orgs scope hides post list.
@@ -553,8 +577,9 @@ function HomeInner({
               {feedTags.map((tag) => (
                 <Tag
                   key={tag.label}
-                  color="neutral"
-                  onClick={() => onTagClick?.(tag.label)}
+                  color={selectedTag === tag.label ? "blue" : "neutral"}
+                  onClick={() => handleTagClick(tag.label)}
+                  aria-pressed={selectedTag === tag.label}
                   className="shrink-0 cursor-pointer"
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
