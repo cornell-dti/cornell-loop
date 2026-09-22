@@ -5,12 +5,18 @@ test.describe("Landing + auth gates", () => {
     page,
   }) => {
     await page.goto("/");
+    const storeUrl =
+      "https://chromewebstore.google.com/detail/pambdlajcngmfmgkiaknpnigdhiogbfg";
     await expect(
       page.getByRole("heading", { name: /Less inbox/i }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /Add to your inbox/i }).first(),
-    ).toBeVisible();
+    const inboxLinks = page.getByRole("link", { name: /Add to your inbox/i });
+    await expect(inboxLinks.first()).toHaveAttribute("href", storeUrl);
+    await expect(inboxLinks).toHaveCount(2);
+    await expect(page.getByRole("link", { name: /^Install$/ })).toHaveAttribute(
+      "href",
+      storeUrl,
+    );
     // Scroll cue copy is "Stay in the loop"
     await expect(page.getByText("Stay in the loop").first()).toBeVisible();
   });

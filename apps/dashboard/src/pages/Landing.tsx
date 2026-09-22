@@ -87,25 +87,24 @@ function ChevronDownIcon({ className }: { className?: string }) {
   );
 }
 
+const CHROME_WEB_STORE_URL =
+  "https://chromewebstore.google.com/detail/pambdlajcngmfmgkiaknpnigdhiogbfg";
+
 // ─── Reusable CTA button ─────────────────────────────────────────────────────
 
-function CTAButton({
-  className,
-  onClick,
-}: {
-  className?: string;
-  onClick?: () => void;
-}) {
+function CTAButton({ className }: { className?: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <a
+      href={CHROME_WEB_STORE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
       className={[
         "inline-flex items-center gap-3",
         "bg-[var(--color-black)] text-[var(--color-white)]",
         "font-[family-name:var(--font-body)] font-semibold",
         "text-lg leading-[30px] tracking-[-0.75px] md:text-[21px]",
         "rounded-full px-6 py-2.5",
+        "no-underline",
         "transition-opacity hover:opacity-90",
         className,
       ]
@@ -115,7 +114,7 @@ function CTAButton({
     >
       Add to your inbox
       <DownloadIcon className="size-4" />
-    </button>
+    </a>
   );
 }
 
@@ -535,14 +534,15 @@ export default function Landing() {
           >
             Go to dashboard
           </button>
-          <button
-            type="button"
-            onClick={handleCTA}
-            className="inline-flex items-center justify-center rounded-[var(--radius-button)] bg-[var(--color-primary-800)] px-4 py-1.5 text-sm font-medium tracking-[-0.5px] text-white transition-colors hover:bg-[var(--color-primary-900)]"
+          <a
+            href={CHROME_WEB_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center rounded-[var(--radius-button)] bg-[var(--color-primary-800)] px-4 py-1.5 text-sm font-medium tracking-[-0.5px] text-white no-underline transition-colors hover:bg-[var(--color-primary-900)]"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
             Install
-          </button>
+          </a>
         </div>
       </nav>
 
@@ -684,7 +684,7 @@ export default function Landing() {
             </div>
 
             {/* CTA */}
-            <CTAButton onClick={handleCTA} />
+            <CTAButton />
           </div>
         </div>
       </section>
@@ -914,7 +914,7 @@ export default function Landing() {
               <span className="text-[var(--color-primary-700)]">Loop</span> at
               Cornell.
             </h2>
-            <CTAButton onClick={handleCTA} />
+            <CTAButton />
           </div>
         </div>
       </section>

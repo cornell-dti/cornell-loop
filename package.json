@@ -13,6 +13,7 @@
     "type-check": "bun run --cwd apps/dashboard type-check",
     "dev:extension": "bun run --cwd apps/extension dev",
     "build:extension": "bun run --cwd apps/extension build",
+    "pack:extension": "bun run --cwd apps/extension pack",
     "dev:convex": "bun --cwd apps/dashboard convex dev",
     "convex": "bun --cwd apps/dashboard convex",
     "format": "prettier --write .",
