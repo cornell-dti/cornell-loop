@@ -3,13 +3,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { LoopLogo } from "@app/ui";
-import { X } from "lucide-react";
+import { X, Mail } from "lucide-react";
 
 // ─── Image assets ────────────────────────────────────────────────────────────
 import bgTexture from "../assets/landing/bg-texture.png";
 import heroStamp from "../assets/landing/hero-stamp.svg";
 import heroWaveEmoji from "../assets/landing/hero-wave-emoji.svg";
 import heroDtiBadge from "../assets/landing/hero-dti-badge.svg";
+import dtiLogo from "../assets/landing/dti-logo.svg";
 import heroSpeechFun from "../assets/landing/hero-speech-fun.svg";
 import heroTagEvents from "../assets/landing/hero-tag-events.svg";
 import heroGmailCluster from "../assets/landing/hero-gmail-cluster.png";
@@ -348,6 +349,63 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
         );
       })}
     </div>
+  );
+}
+
+// ─── Footer ──────────────────────────────────────────────────────────────────
+
+const PRIVACY_POLICY_URL =
+  "https://numerous-name-b50.notion.site/Loop-Privacy-Policy-3de0ad723ce1800faf4bdc308a4ed893";
+
+const FOOTER_EMAIL_HREF = "mailto:hello@cornelldti.org";
+
+function Footer() {
+  return (
+    <footer className="relative bg-[var(--color-primary-700)]">
+      <div className="mx-auto flex max-w-[1280px] flex-col gap-6 px-6 py-8 md:px-12">
+        {/* Top row — DTI logo + privacy policy + contact */}
+        <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
+          <a
+            href="https://www.new.cornelldti.org"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <img
+              src={dtiLogo}
+              alt="Cornell DTI"
+              className="h-6 w-auto md:h-7"
+            />
+          </a>
+
+          <div className="flex items-center gap-6">
+            <a
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-[family-name:var(--font-body)] text-[length:var(--font-size-body2)] text-white underline-offset-2 transition-colors hover:underline"
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              Privacy Policy
+            </a>
+            <a
+              href={FOOTER_EMAIL_HREF}
+              aria-label="Email"
+              className="text-white/70 transition-colors hover:text-white"
+            >
+              <Mail aria-hidden="true" className="size-5" />
+            </a>
+          </div>
+        </div>
+
+        {/* Bottom row — copyright */}
+        <p
+          className="text-center font-[family-name:var(--font-body)] text-[length:var(--font-size-body2)] text-white/50 md:text-right"
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          © {new Date().getFullYear()} Cornell DTI
+        </p>
+      </div>
+    </footer>
   );
 }
 
@@ -918,6 +976,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* ── Footer ────────────────────────────────────────────────── */}
+      <Footer />
     </div>
   );
 }
