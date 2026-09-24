@@ -21,6 +21,7 @@
     "convex": "^1.32.0",
     "convex-helpers": "^0.1.124",
     "lucide-react": "^0.544.0",
+    "posthog-js": "^1.434.12",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.14.2",
