@@ -161,6 +161,36 @@ const JOIN_STRATEGIES: JoinStrategy[] = [
   "unknown",
 ];
 
+type EventTypeValue = EventDoc["eventType"];
+const EVENT_TYPES: EventTypeValue[] = [
+  "event",
+  "opportunity",
+  "hackathon",
+  "courses",
+  "fundraiser",
+  "info",
+];
+
+type LinkTypeValue = EventDoc["links"][number]["type"];
+const LINK_TYPES: LinkTypeValue[] = [
+  "registration",
+  "application",
+  "rsvp",
+  "info",
+  "social",
+];
+
+type DraftEditPatch = {
+  title: string;
+  description: string;
+  aiDescription: string;
+  eventType: EventTypeValue;
+  dates: EventDoc["dates"];
+  location: EventDoc["location"];
+  links: EventDoc["links"];
+  tags: string[];
+};
+
 // ─── Root ────────────────────────────────────────────────────────────────────
 
 export default function Admin() {
@@ -234,6 +264,7 @@ export default function Admin() {
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
   const hideEvent = useMutation(api.parser.hideEvent);
+  const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
 
   async function act(label: string, fn: () => Promise<unknown>) {
     try {
@@ -527,6 +558,11 @@ export default function Admin() {
             }
             onHide={(id) =>
               act("Hidden.", () => hideEvent({ token, eventId: id }))
+            }
+            onEdit={(id, patch) =>
+              act("Event updated.", () =>
+                updateDraftEvent({ token, eventId: id, ...patch }),
+              )
             }
             onReparse={(id) =>
               act("Reparsed.", () => runParseNow({ token, messageId: id }))
@@ -2263,6 +2299,7 @@ function PublishTab({
   onRunParse,
   onPublish,
   onHide,
+  onEdit,
   onReparse,
   onGoToSources,
 }: {
@@ -2274,6 +2311,7 @@ function PublishTab({
   onRunParse: () => void;
   onPublish: (id: Id<"events">) => void;
   onHide: (id: Id<"events">) => void;
+  onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
   onReparse: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
 }) {
@@ -2391,6 +2429,7 @@ function PublishTab({
                 event={event}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
                 onReparse={
                   event.sourceMessageId
                     ? () => onReparse(event.sourceMessageId!)
@@ -2437,52 +2476,335 @@ function DraftCard({
   event,
   onPublish,
   onHide,
+  onEdit,
   onReparse,
 }: {
   event: EventDoc;
   onPublish: () => void;
   onHide: () => void;
+  onEdit: (patch: DraftEditPatch) => void;
   onReparse?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const hasWarnings = (event.parseWarnings ?? []).length > 0;
+
+  // Edit-mode draft state — populated fresh from `event` each time editing starts,
+  // so a stale in-progress edit never survives past a Cancel or a Reparse.
+  const [title, setTitle] = useState(event.title);
+  const [description, setDescription] = useState(event.description);
+  const [aiDescription, setAiDescription] = useState(event.aiDescription);
+  const [eventType, setEventType] = useState<EventTypeValue>(event.eventType);
+  const [dates, setDates] = useState<EventDoc["dates"]>(event.dates);
+  const [locDisplayText, setLocDisplayText] = useState(
+    event.location?.displayText ?? "",
+  );
+  const [locAddress, setLocAddress] = useState(event.location?.address ?? "");
+  const [locIsVirtual, setLocIsVirtual] = useState(
+    event.location?.isVirtual ?? false,
+  );
+  const [links, setLinks] = useState<EventDoc["links"]>(event.links);
+  const [tagsRaw, setTagsRaw] = useState(event.tags.join(", "));
+
+  function startEdit() {
+    setTitle(event.title);
+    setDescription(event.description);
+    setAiDescription(event.aiDescription);
+    setEventType(event.eventType);
+    setDates(event.dates);
+    setLocDisplayText(event.location?.displayText ?? "");
+    setLocAddress(event.location?.address ?? "");
+    setLocIsVirtual(event.location?.isVirtual ?? false);
+    setLinks(event.links);
+    setTagsRaw(event.tags.join(", "));
+    setEditing(true);
+  }
+
+  function save() {
+    const tags = tagsRaw
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const location = locDisplayText.trim()
+      ? {
+          displayText: locDisplayText.trim(),
+          address: locAddress.trim() || undefined,
+          isVirtual: locIsVirtual,
+          buildingCode: event.location?.buildingCode,
+        }
+      : undefined;
+    onEdit({
+      title: title.trim() || event.title,
+      description,
+      aiDescription,
+      eventType,
+      dates,
+      location,
+      links,
+      tags,
+    });
+    setEditing(false);
+  }
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{event.title}</span>
-            <Tag>{event.eventType}</Tag>
-            <ConfidenceBadge value={event.parseConfidence ?? 0} />
-          </div>
-          <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
-            {event.aiDescription || event.description}
-          </p>
-          <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            {event.listserv}
-            {event.dates &&
-              event.dates.length > 0 &&
-              ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
-            {hasWarnings && (
-              <span className="ml-2 text-amber-700">
-                ⚠ {(event.parseWarnings ?? []).join("; ")}
-              </span>
-            )}
-          </div>
+          {editing ? (
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={input()}
+              autoFocus
+            />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{event.title}</span>
+                <Tag>{event.eventType}</Tag>
+                <ConfidenceBadge value={event.parseConfidence ?? 0} />
+              </div>
+              <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
+                {event.aiDescription || event.description}
+              </p>
+              <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {event.listserv}
+                {event.dates &&
+                  event.dates.length > 0 &&
+                  ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
+                {hasWarnings && (
+                  <span className="ml-2 text-amber-700">
+                    ⚠ {(event.parseWarnings ?? []).join("; ")}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Btn primary onClick={onPublish}>
-            Publish
-          </Btn>
-          <Btn onClick={onHide}>Hide</Btn>
-          {onReparse && <Btn onClick={onReparse}>Reparse</Btn>}
-          <Btn onClick={() => setExpanded(!expanded)}>
-            {expanded ? "Less" : "More"}
-          </Btn>
+          {editing ? (
+            <>
+              <Btn primary onClick={save}>
+                Save
+              </Btn>
+              <Btn onClick={() => setEditing(false)}>Cancel</Btn>
+            </>
+          ) : (
+            <>
+              <Btn primary onClick={onPublish}>
+                Publish
+              </Btn>
+              <Btn onClick={onHide}>Hide</Btn>
+              {onReparse && <Btn onClick={onReparse}>Reparse</Btn>}
+              <Btn onClick={startEdit}>Edit</Btn>
+              <Btn onClick={() => setExpanded(!expanded)}>
+                {expanded ? "Less" : "More"}
+              </Btn>
+            </>
+          )}
         </div>
       </div>
-      {expanded && (
+
+      {editing && (
+        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+          {/* Description + AI summary */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Description
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className={`${input()} resize-y`}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                AI summary{" "}
+                <span className="font-normal normal-case">(shown in feed)</span>
+              </label>
+              <textarea
+                value={aiDescription}
+                onChange={(e) => setAiDescription(e.target.value)}
+                rows={3}
+                className={`${input()} resize-y`}
+              />
+            </div>
+          </div>
+
+          {/* Event type */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              Event type
+            </label>
+            <div className="w-44">
+              <select
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as EventTypeValue)}
+                className={input()}
+              >
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Dates — edit existing timestamps only; adding/removing dates isn't
+              supported here since the dominant parser error is a wrong
+              timestamp, not a missing date. */}
+          {dates.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Dates
+              </label>
+              <div className="grid gap-2">
+                {dates.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Tag>{d.type}</Tag>
+                    <input
+                      type="datetime-local"
+                      value={toDatetimeLocalValue(d.timestamp)}
+                      onChange={(e) => {
+                        const timestamp = fromDatetimeLocalValue(
+                          e.target.value,
+                        );
+                        if (timestamp === null) return;
+                        setDates((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i ? { ...entry, timestamp } : entry,
+                          ),
+                        );
+                      }}
+                      className={input()}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Location */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Location"
+              value={locDisplayText}
+              onChange={setLocDisplayText}
+            />
+            <Field
+              label="Address"
+              value={locAddress}
+              onChange={setLocAddress}
+            />
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-[length:var(--font-size-body2)] select-none">
+            <input
+              type="checkbox"
+              checked={locIsVirtual}
+              onChange={(e) => setLocIsVirtual(e.target.checked)}
+              className="size-4 accent-[var(--color-primary-700)]"
+            />
+            Virtual event
+          </label>
+
+          {/* Links */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              Links
+            </label>
+            <div className="grid gap-2">
+              {links.map((link, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_auto_1fr_auto] sm:items-end"
+                >
+                  <input
+                    value={link.url}
+                    placeholder="https://…"
+                    onChange={(e) =>
+                      setLinks((prev) =>
+                        prev.map((entry, idx) =>
+                          idx === i ? { ...entry, url: e.target.value } : entry,
+                        ),
+                      )
+                    }
+                    className={input()}
+                  />
+                  <select
+                    value={link.type}
+                    onChange={(e) =>
+                      setLinks((prev) =>
+                        prev.map((entry, idx) =>
+                          idx === i
+                            ? {
+                                ...entry,
+                                type: e.target.value as LinkTypeValue,
+                              }
+                            : entry,
+                        ),
+                      )
+                    }
+                    className={input()}
+                  >
+                    {LINK_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={link.label ?? ""}
+                    placeholder="Label (optional)"
+                    onChange={(e) =>
+                      setLinks((prev) =>
+                        prev.map((entry, idx) =>
+                          idx === i
+                            ? { ...entry, label: e.target.value || undefined }
+                            : entry,
+                        ),
+                      )
+                    }
+                    className={input()}
+                  />
+                  <Btn
+                    danger
+                    onClick={() =>
+                      setLinks((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                  >
+                    Remove
+                  </Btn>
+                </div>
+              ))}
+            </div>
+            <div>
+              <Btn
+                onClick={() =>
+                  setLinks((prev) => [
+                    ...prev,
+                    { url: "", type: "info" as LinkTypeValue },
+                  ])
+                }
+              >
+                Add link
+              </Btn>
+            </div>
+          </div>
+
+          {/* Tags */}
+          <Field
+            label="Tags (comma-separated)"
+            value={tagsRaw}
+            onChange={setTagsRaw}
+          />
+        </div>
+      )}
+
+      {!editing && expanded && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 text-[length:var(--font-size-body2)]">
           <p className="text-[color:var(--color-neutral-700)]">
             {event.description}
@@ -2686,6 +3008,20 @@ function fmtDate(timestamp: number | undefined) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(timestamp));
+}
+
+/** Format a timestamp for an `<input type="datetime-local">` value, in local time. */
+function toDatetimeLocalValue(timestamp: number) {
+  const d = new Date(timestamp);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Parse an `<input type="datetime-local">` value back into a timestamp, in local time. */
+function fromDatetimeLocalValue(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
 }
 
 function getConvexSiteUrl() {

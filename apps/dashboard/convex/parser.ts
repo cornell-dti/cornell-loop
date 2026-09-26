@@ -239,6 +239,78 @@ export const hideEvent = mutation({
   },
 });
 
+export const updateDraftEvent = mutation({
+  args: {
+    token: v.string(),
+    eventId: v.id("events"),
+    title: v.string(),
+    description: v.string(),
+    aiDescription: v.string(),
+    eventType: v.union(
+      v.literal("event"),
+      v.literal("opportunity"),
+      v.literal("hackathon"),
+      v.literal("courses"),
+      v.literal("fundraiser"),
+      v.literal("info"),
+    ),
+    dates: v.array(
+      v.object({
+        timestamp: v.number(),
+        type: v.union(
+          v.literal("start"),
+          v.literal("end"),
+          v.literal("deadline"),
+          v.literal("single"),
+        ),
+      }),
+    ),
+    location: v.optional(
+      v.object({
+        displayText: v.string(),
+        address: v.optional(v.string()),
+        isVirtual: v.boolean(),
+        buildingCode: v.optional(v.string()),
+      }),
+    ),
+    links: v.array(
+      v.object({
+        url: v.string(),
+        type: v.union(
+          v.literal("registration"),
+          v.literal("application"),
+          v.literal("rsvp"),
+          v.literal("info"),
+          v.literal("social"),
+        ),
+        label: v.optional(v.string()),
+      }),
+    ),
+    tags: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const event = await ctx.db.get(args.eventId);
+    if (!event) throw new Error("Event not found.");
+    if (event.visibility !== "draft") {
+      throw new Error("Only draft events can be edited.");
+    }
+    await ctx.db.patch(args.eventId, {
+      title: args.title.trim(),
+      description: args.description.trim(),
+      aiDescription: args.aiDescription.trim(),
+      eventType: args.eventType,
+      dates: args.dates,
+      location: args.location,
+      links: args.links,
+      tags: args.tags,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 export const overview = query({
   args: { token: v.string() },
   handler: async (ctx, args) => {
