@@ -2500,11 +2500,15 @@ function DraftCard({
     event.location?.displayText ?? "",
   );
   const [locAddress, setLocAddress] = useState(event.location?.address ?? "");
+  const [locBuildingCode, setLocBuildingCode] = useState(
+    event.location?.buildingCode ?? "",
+  );
   const [locIsVirtual, setLocIsVirtual] = useState(
     event.location?.isVirtual ?? false,
   );
   const [links, setLinks] = useState<EventDoc["links"]>(event.links);
   const [tagsRaw, setTagsRaw] = useState(event.tags.join(", "));
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   function startEdit() {
     setTitle(event.title);
@@ -2514,9 +2518,11 @@ function DraftCard({
     setDates(event.dates);
     setLocDisplayText(event.location?.displayText ?? "");
     setLocAddress(event.location?.address ?? "");
+    setLocBuildingCode(event.location?.buildingCode ?? "");
     setLocIsVirtual(event.location?.isVirtual ?? false);
     setLinks(event.links);
     setTagsRaw(event.tags.join(", "));
+    setSaveError(null);
     setEditing(true);
   }
 
@@ -2525,14 +2531,32 @@ function DraftCard({
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
+
+    // Drop blank rows (e.g. an unfilled "Add link") and reject anything left
+    // that isn't a well-formed http(s) URL. The mutation re-validates this
+    // server-side too — this is just for immediate feedback.
+    const cleanedLinks = links
+      .map((link) => ({
+        ...link,
+        url: link.url.trim(),
+        label: link.label?.trim() || undefined,
+      }))
+      .filter((link) => link.url.length > 0);
+    const invalidLink = cleanedLinks.find((link) => !isValidHttpUrl(link.url));
+    if (invalidLink) {
+      setSaveError(`"${invalidLink.url}" isn't a valid http(s) URL.`);
+      return;
+    }
+
     const location = locDisplayText.trim()
       ? {
           displayText: locDisplayText.trim(),
           address: locAddress.trim() || undefined,
           isVirtual: locIsVirtual,
-          buildingCode: event.location?.buildingCode,
+          buildingCode: locBuildingCode.trim() || undefined,
         }
       : undefined;
+    setSaveError(null);
     onEdit({
       title: title.trim() || event.title,
       description,
@@ -2540,7 +2564,7 @@ function DraftCard({
       eventType,
       dates,
       location,
-      links,
+      links: cleanedLinks,
       tags,
     });
     setEditing(false);
@@ -2581,16 +2605,23 @@ function DraftCard({
             </>
           )}
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex shrink-0 flex-col items-end gap-2">
           {editing ? (
             <>
-              <Btn primary onClick={save}>
-                Save
-              </Btn>
-              <Btn onClick={() => setEditing(false)}>Cancel</Btn>
+              <div className="flex flex-wrap gap-2">
+                <Btn primary onClick={save}>
+                  Save
+                </Btn>
+                <Btn onClick={() => setEditing(false)}>Cancel</Btn>
+              </div>
+              {saveError && (
+                <span className="text-[length:var(--font-size-body3)] text-red-600">
+                  {saveError}
+                </span>
+              )}
             </>
           ) : (
-            <>
+            <div className="flex flex-wrap gap-2">
               <Btn primary onClick={onPublish}>
                 Publish
               </Btn>
@@ -2600,7 +2631,7 @@ function DraftCard({
               <Btn onClick={() => setExpanded(!expanded)}>
                 {expanded ? "Less" : "More"}
               </Btn>
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -2689,7 +2720,7 @@ function DraftCard({
           )}
 
           {/* Location */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field
               label="Location"
               value={locDisplayText}
@@ -2699,6 +2730,11 @@ function DraftCard({
               label="Address"
               value={locAddress}
               onChange={setLocAddress}
+            />
+            <Field
+              label="Building code"
+              value={locBuildingCode}
+              onChange={setLocBuildingCode}
             />
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-[length:var(--font-size-body2)] select-none">
@@ -2717,69 +2753,81 @@ function DraftCard({
               Links
             </label>
             <div className="grid gap-2">
-              {links.map((link, i) => (
-                <div
-                  key={i}
-                  className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_auto_1fr_auto] sm:items-end"
-                >
-                  <input
-                    value={link.url}
-                    placeholder="https://…"
-                    onChange={(e) =>
-                      setLinks((prev) =>
-                        prev.map((entry, idx) =>
-                          idx === i ? { ...entry, url: e.target.value } : entry,
-                        ),
-                      )
-                    }
-                    className={input()}
-                  />
-                  <select
-                    value={link.type}
-                    onChange={(e) =>
-                      setLinks((prev) =>
-                        prev.map((entry, idx) =>
-                          idx === i
-                            ? {
-                                ...entry,
-                                type: e.target.value as LinkTypeValue,
-                              }
-                            : entry,
-                        ),
-                      )
-                    }
-                    className={input()}
+              {links.map((link, i) => {
+                const trimmedUrl = link.url.trim();
+                const urlInvalid =
+                  trimmedUrl.length > 0 && !isValidHttpUrl(trimmedUrl);
+                return (
+                  <div
+                    key={i}
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_auto_1fr_auto] sm:items-end"
                   >
-                    {LINK_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    value={link.label ?? ""}
-                    placeholder="Label (optional)"
-                    onChange={(e) =>
-                      setLinks((prev) =>
-                        prev.map((entry, idx) =>
-                          idx === i
-                            ? { ...entry, label: e.target.value || undefined }
-                            : entry,
-                        ),
-                      )
-                    }
-                    className={input()}
-                  />
-                  <Btn
-                    danger
-                    onClick={() =>
-                      setLinks((prev) => prev.filter((_, idx) => idx !== i))
-                    }
-                  >
-                    Remove
-                  </Btn>
-                </div>
-              ))}
+                    <input
+                      value={link.url}
+                      placeholder="https://…"
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? { ...entry, url: e.target.value }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={`${input()} ${urlInvalid ? "border-red-400 focus:border-red-500" : ""}`}
+                    />
+                    <select
+                      value={link.type}
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? {
+                                  ...entry,
+                                  type: e.target.value as LinkTypeValue,
+                                }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={input()}
+                    >
+                      {LINK_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={link.label ?? ""}
+                      placeholder="Label (optional)"
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? { ...entry, label: e.target.value || undefined }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={input()}
+                    />
+                    <Btn
+                      danger
+                      onClick={() =>
+                        setLinks((prev) => prev.filter((_, idx) => idx !== i))
+                      }
+                    >
+                      Remove
+                    </Btn>
+                    {urlInvalid && (
+                      <p className="text-[length:var(--font-size-body3)] text-red-600 sm:col-span-4">
+                        Not a valid http(s) URL.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div>
               <Btn
@@ -3022,6 +3070,18 @@ function fromDatetimeLocalValue(value: string): number | null {
   if (!value) return null;
   const ms = new Date(value).getTime();
   return Number.isNaN(ms) ? null : ms;
+}
+
+/** True if `value` is a well-formed http(s) URL. Mirrors the server-side check
+ * in `convex/parser.ts`'s `updateDraftEvent` — this copy is just for
+ * immediate UI feedback; the mutation re-validates regardless. */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function getConvexSiteUrl() {

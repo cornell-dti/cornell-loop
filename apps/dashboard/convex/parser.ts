@@ -239,6 +239,16 @@ export const hideEvent = mutation({
   },
 });
 
+/** True if `value` is a well-formed http(s) URL. */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export const updateDraftEvent = mutation({
   args: {
     token: v.string(),
@@ -296,6 +306,24 @@ export const updateDraftEvent = mutation({
     if (event.visibility !== "draft") {
       throw new Error("Only draft events can be edited.");
     }
+
+    // Drop blank rows (e.g. an "Add link" row left empty) and reject anything
+    // left over that isn't a well-formed http(s) URL — never trust the client
+    // for this even though the admin UI validates the same thing.
+    const links = args.links
+      .map((link) => ({
+        url: link.url.trim(),
+        type: link.type,
+        label: link.label?.trim() || undefined,
+      }))
+      .filter((link) => link.url.length > 0);
+    const invalidLink = links.find((link) => !isValidHttpUrl(link.url));
+    if (invalidLink) {
+      throw new Error(
+        `"${invalidLink.url}" is not a valid http(s) URL. Fix or remove it before saving.`,
+      );
+    }
+
     await ctx.db.patch(args.eventId, {
       title: args.title.trim(),
       description: args.description.trim(),
@@ -303,7 +331,7 @@ export const updateDraftEvent = mutation({
       eventType: args.eventType,
       dates: args.dates,
       location: args.location,
-      links: args.links,
+      links,
       tags: args.tags,
       updatedAt: Date.now(),
     });
