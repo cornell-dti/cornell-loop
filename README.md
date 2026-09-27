@@ -1,73 +1,29 @@
-# React + TypeScript + Vite
+# Cornell Loop
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Last Updated: 09/27/2026
 
-Currently, two official plugins are available:
+## About:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Loop is a personalized campus discovery platform that turns the information in Cornell listservs into one easy-to-browse feed of events, opportunities, club updates, and more. Instead of digging through crowded listservs and endless emails, Loop helps you find what matters to you and stay connected to the Cornell communities you care about.
 
-## React Compiler
+[Notion Hub](https://app.notion.com/p/Loop-3c70ad723ce1803b8eece91714ae8661) [Convex](https://dashboard.convex.dev/t/loop) [Cloudflare](https://dash.cloudflare.com/b287c94b13bd9617c8a7d2498ffcf8c2/workers/services/view/cornell-loop/production)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Project Setup:
 
-## Expanding the ESLint configuration
+Visit [onboarding docs](https://github.com/cornell-dti/cornell-loop/blob/main/docs/onboarding.md) for detailed setup instructions.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Contributors:
 
-```js
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
+### FA26:
+- Ashley Paik - Product Manager
+- Annie Chen - Technical Product Manager
+- Grace Huang - Product Marketing Manager
+- Winnie Chan - Designer
+- Nikhill Andrew - Developer
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from "eslint-plugin-react-x";
-import reactDom from "eslint-plugin-react-dom";
-
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs["recommended-typescript"],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
-```
+### SP26:
+- Megan Yap - Product Manager
+- Annie Chen - Technical Product Manager
+- May Wu - Designer
+- Ben Koppe - Developer
+- Nikhill Andrew - Developer
