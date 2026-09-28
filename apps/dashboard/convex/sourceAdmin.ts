@@ -372,11 +372,9 @@ function suggestSource(senderEmail: string) {
   const organizationName = inferName(cleanedLocal || domain);
 
   if (
-    [
-      "lists.cornell.edu",
-      "mm.lists.cornell.edu",
-      "list.cs.cornell.edu",
-    ].includes(domain)
+    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
+      domain,
+    )
   ) {
     return {
       organizationName,
