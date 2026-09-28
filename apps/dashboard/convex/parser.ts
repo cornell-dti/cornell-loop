@@ -8,6 +8,7 @@ import {
   query,
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
+import { isListAdminNoise } from "./lib/cornellLists";
 import type { Doc, Id } from "./_generated/dataModel";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -822,11 +823,7 @@ function normalizeItem(item: ParsedItem, warnings: string[]): ParsedItem[] {
 }
 
 function shouldIgnoreMessage(message: SourceMessage) {
-  const text =
-    `${message.senderEmail}\n${message.subject}\n${message.bodyText}`.toLowerCase();
-  return /lyris-confirm-|confirm your subscription|unsubscribe request|delivery status notification/.test(
-    text,
-  );
+  return isListAdminNoise(message);
 }
 
 function buildDedupeKey(item: ParsedItem) {

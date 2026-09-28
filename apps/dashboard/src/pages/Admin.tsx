@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import {
+  confirmationLinkFrom,
+  isLegacyLyrisAddress,
+  listNameFromConfirmationSender,
+} from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,7 +31,10 @@ type RecentMessage = Pick<
   | "processingStatus"
 >;
 // Projected shape for confirmation messages (includes body fields needed for link extraction).
-type ConfirmationMessage = Pick<
+type ConfirmationMessage = {
+  /** Computed server-side: DMARC/DKIM passed for a Cornell domain. */
+  senderAuthenticated: boolean;
+} & Pick<
   _ListservMessageFull,
   | "_id"
   | "_creationTime"
@@ -116,6 +124,7 @@ type ConfirmationItem = {
   receivedAt: number;
   clearedAt?: number;
   link?: string;
+  linkTrusted: boolean;
 };
 
 type OrgUpdatePayload = {
@@ -241,6 +250,9 @@ export default function Admin() {
   // ── mutations / actions ──
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
   const runIngestionNow = useAction(api.listservAdmin.runIngestionNow);
+  const rematchUnassigned = useAction(
+    api.listservAdmin.rematchUnassignedMessagesNow,
+  );
   const runParseNow = useAction(api.parser.runParseNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
 
@@ -394,6 +406,19 @@ export default function Admin() {
             onRunDiscovery={() =>
               act("Discovery complete.", () => runDiscovery({ token }))
             }
+            onRematchUnassigned={async () => {
+              try {
+                const result = await rematchUnassigned({ token });
+                showToast(
+                  `Scanned ${result.scanned} · matched ${result.matched} · ${result.candidatesRaised} new candidate(s).`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Re-match failed.",
+                  false,
+                );
+              }
+            }}
             onAddCandidate={(email, name, notes) =>
               act("Candidate added.", () =>
                 addCandidate({
@@ -617,6 +642,7 @@ function SetupTab({
   discoveryRuns,
   onConnectGmail,
   onRunDiscovery,
+  onRematchUnassigned,
   onAddCandidate,
 }: {
   gmailStatus: GmailStatus | undefined;
@@ -624,6 +650,7 @@ function SetupTab({
   discoveryRuns: Doc<"discoveryRuns">[];
   onConnectGmail: () => void;
   onRunDiscovery: () => void;
+  onRematchUnassigned: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -682,7 +709,13 @@ function SetupTab({
           <Btn primary onClick={onRunDiscovery}>
             Run discovery
           </Btn>
+          <Btn onClick={onRematchUnassigned}>Re-match unassigned mail</Btn>
         </div>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Re-matching replays already-stored messages that were never attached
+          to an organization, and raises a candidate for any list confirmation
+          we cannot place.
+        </p>
         {discoveryRuns.length > 0 && (
           <div className="mt-4 grid gap-1">
             {discoveryRuns.slice(0, 5).map((run) => (
@@ -2169,7 +2202,7 @@ function IngestTab({
           <div className="flex items-center justify-between">
             <CardHeader
               title="Confirmation queue"
-              subtitle="Lyris emails asking you to confirm a subscription."
+              subtitle="Emails asking you to confirm a list subscription."
             />
             {pending.length > 0 && (
               <Tag variant="amber">{pending.length} pending</Tag>
@@ -2269,17 +2302,27 @@ function ConfirmationCard({
             ` · cleared ${fmtDate(confirmation.clearedAt)}`}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {confirmation.link && (
-          <a
-            href={confirmation.link}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
-          >
-            Open confirm link
-          </a>
-        )}
+      <div className="flex flex-wrap items-center gap-2">
+        {confirmation.link &&
+          (confirmation.linkTrusted ? (
+            <a
+              href={confirmation.link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              Open confirm link
+            </a>
+          ) : (
+            <div className="min-w-0">
+              <div className="text-[length:var(--font-size-body3)] font-semibold text-red-600">
+                Sender not authenticated — link not clickable
+              </div>
+              <div className="truncate font-mono text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {confirmation.link}
+              </div>
+            </div>
+          ))}
         {!cleared && onClear && (
           <Btn onClick={() => onClear(confirmation.id)}>Clear</Btn>
         )}
@@ -3146,14 +3189,11 @@ function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
 
 function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
   const email = listserv.listEmail.toLowerCase();
-  const [local = "", domain = ""] = email.split("@");
-  if (
-    [
-      "lists.cornell.edu",
-      "mm.lists.cornell.edu",
-      "list.cs.cornell.edu",
-    ].includes(domain)
-  ) {
+  const [local = ""] = email.split("@");
+  // Only the retired Lyris domains get the e-mail-command join flow, matching
+  // the backend exactly. Current Simplelists addresses are joined through the
+  // web form instead, so they must not be offered a dead `-request@` address.
+  if (isLegacyLyrisAddress(email)) {
     const listName = local.replace(/^owner-/, "");
     return {
       joinStrategy: "cornell_lyris",
@@ -3189,9 +3229,6 @@ function toConfirmationItem(
   mail: ConfirmationMessage,
   listservById: Map<Id<"listservs">, Listserv>,
 ): ConfirmationItem | null {
-  const link =
-    extractConfirmationLink(mail.bodyText) ??
-    extractConfirmationLink(mail.bodyHtml);
   return {
     id: mail._id,
     listservName: mail.listservId
@@ -3201,7 +3238,11 @@ function toConfirmationItem(
     sender: mail.senderEmail || mail.sender,
     receivedAt: mail.receivedAt,
     clearedAt: mail.confirmationClearedAt,
-    link,
+    link: confirmationLinkFrom(mail) ?? undefined,
+    // `From` is trivially spoofable and the confirm link is a one-click
+    // account action, so it is only made clickable for a message the mail
+    // server actually authenticated.
+    linkTrusted: mail.senderAuthenticated,
   };
 }
 
@@ -3222,14 +3263,12 @@ function confirmationMatchesListserv(
   );
 }
 
-function extractConfirmationLink(value: string) {
-  const match = value.match(
-    /https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i,
-  );
-  return match?.[0].replace(/&amp;/g, "&");
-}
-
 function inferListNameFromMessage(mail: ConfirmationMessage) {
+  // A Simplelists confirmation names its list in the sender address, so prefer
+  // that over guessing at it from the prose.
+  const fromSender = listNameFromConfirmationSender(mail.senderEmail);
+  if (fromSender) return fromSender.toUpperCase();
+
   const match = `${mail.subject}\n${mail.bodyText}`.match(
     /(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i,
   );

@@ -8,6 +8,15 @@ import {
   query,
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
+import {
+  hasAuthenticatedCornellSender,
+  isCornellListAddress,
+  isJoinConfirmationMail,
+  isLegacyLyrisAddress,
+  isLegacyLyrisListAddress,
+  listNameFromConfirmationSender,
+  simplelistsAddressForList,
+} from "./lib/cornellLists";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 
@@ -46,6 +55,12 @@ type IngestionRunResult = {
   fetched: number;
   unseen: number;
   stored: number;
+};
+
+type RematchResult = {
+  scanned: number;
+  matched: number;
+  candidatesRaised: number;
 };
 
 type GmailConnectionSnapshot = {
@@ -134,22 +149,19 @@ export const dashboard = query({
       confirmationClearedAt: m.confirmationClearedAt,
       bodyText: m.bodyText,
       bodyHtml: m.bodyHtml,
+      // Whether the receiving server recorded a DMARC/DKIM pass for a Cornell
+      // domain. The admin UI only renders the confirmation link as clickable
+      // when this holds, so the (large) raw headers never leave the backend.
+      senderAuthenticated: hasAuthenticatedCornellSender(m.headers),
     });
 
     // Pending confirmations: uncleared messages that look like confirmation requests.
     // These need body content so we keep those fields — but only for this targeted set.
-    const isConfirmation = (m: (typeof recentMessages)[number]) => {
-      const sender = m.senderEmail.toLowerCase();
-      const text = `${m.subject}\n${m.bodyText}`.toLowerCase();
-      return (
-        sender.startsWith("lyris-confirm-") ||
-        /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(
-          text,
-        )
-      );
-    };
     const pendingConfirmations = recentMessages
-      .filter((m) => m.confirmationClearedAt === undefined && isConfirmation(m))
+      .filter(
+        (m) =>
+          m.confirmationClearedAt === undefined && isJoinConfirmationMail(m),
+      )
       .map(confirmationFields);
 
     // Project only the fields the admin UI actually needs for the general message
@@ -457,6 +469,16 @@ export const runIngestionNow = action({
   },
 });
 
+export const rematchUnassignedMessagesNow = action({
+  args: { token: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args): Promise<RematchResult> => {
+    requireAdminToken(args.token);
+    return await ctx.runMutation(internal.ingestion.rematchUnassignedMessages, {
+      limit: args.limit,
+    });
+  },
+});
+
 export const updateListservStatus = mutation({
   args: {
     token: v.string(),
@@ -557,6 +579,21 @@ async function resolveListservFromMessage(
     cc: string[];
   },
 ) {
+  // A Simplelists confirmation names its list in the sender address, so it can
+  // be resolved exactly. Try that before the substring heuristic below, which
+  // matches on local parts and can easily land on the wrong row.
+  const listName = listNameFromConfirmationSender(message.senderEmail);
+  const listAddress = listName ? simplelistsAddressForList(listName) : null;
+  if (listAddress) {
+    // `by_list_email` is not unique — duplicate rows are exactly the state the
+    // reconciliation work exists to clean up — so take the first match.
+    const exact = await ctx.db
+      .query("listservs")
+      .withIndex("by_list_email", (q) => q.eq("listEmail", listAddress))
+      .first();
+    if (exact) return exact._id;
+  }
+
   const listservs = await ctx.db.query("listservs").collect();
   const searchable =
     `${message.subject}\n${message.bodyText}\n${message.senderEmail}\n${message.to.join(" ")}\n${message.cc.join(" ")}`.toLowerCase();
@@ -792,11 +829,9 @@ function scoreCandidate(
   const reasons: string[] = [];
   let score = 0;
 
-  if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  ) {
+  // Discovery scores current Simplelists addresses as well as legacy Lyris
+  // ones — new lists only ever land on lists.cornell.edu.
+  if (isCornellListAddress(email)) {
     score += 55;
     reasons.push("list domain");
   }
@@ -846,13 +881,16 @@ function detectJoinStrategy(
   const primary = normalizeEmail(listEmail);
   const [local = "", domain = ""] = primary.split("@");
 
-  if (isCornellListDomainAddress(primary)) {
+  // Only the retired Lyris domains get the e-mail-command join flow. Current
+  // Simplelists addresses fall through to the generic branches below until
+  // their own web-subscribe strategy lands.
+  if (isLegacyLyrisAddress(primary)) {
     return buildJoinDefaults(
       "cornell_lyris",
       primary,
       inferDisplayName(primary),
       [
-        isCornellLyrisAddress(primary)
+        isLegacyLyrisListAddress(primary)
           ? "Cornell Lyris list address"
           : "Cornell list domain",
         "Official flow: send subject 'join' to listname-request@cornell.edu",
@@ -860,14 +898,14 @@ function detectJoinStrategy(
     );
   }
 
-  const lyrisSender = allEmails.find(isCornellListDomainAddress);
+  const lyrisSender = allEmails.find(isLegacyLyrisAddress);
   if (lyrisSender) {
     return buildJoinDefaults(
       "cornell_lyris",
       lyrisSender,
       inferDisplayName(lyrisSender),
       [
-        isCornellLyrisAddress(lyrisSender)
+        isLegacyLyrisListAddress(lyrisSender)
           ? "Sender alias looks like Cornell Lyris"
           : "Sender uses Cornell list domain",
         "Official flow: send subject 'join' to listname-request@cornell.edu",
@@ -1002,25 +1040,6 @@ function buildJoinDefaults(
     joinDetectionReasons: reasons ?? ["Manual review required"],
     joinDetectedAt: now,
   };
-}
-
-function isCornellLyrisAddress(email: string) {
-  const [local = "", domain = ""] = normalizeEmail(email).split("@");
-  return (
-    local.endsWith("-l") &&
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  );
-}
-
-function isCornellListDomainAddress(email: string) {
-  const [, domain = ""] = normalizeEmail(email).split("@");
-  return [
-    "list.cornell.edu",
-    "mm.list.cornell.edu",
-    "list.cs.cornell.edu",
-  ].includes(domain);
 }
 
 function isNewsletterDomain(domain: string) {

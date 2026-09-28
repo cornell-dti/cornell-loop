@@ -5,8 +5,14 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
-import type { ActionCtx } from "./_generated/server";
+import {
+  isJoinConfirmationMail,
+  listNameFromAddress,
+  listNameFromConfirmationSender,
+  simplelistsAddressForList,
+} from "./lib/cornellLists";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { ActionCtx, MutationCtx } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -82,11 +88,30 @@ type MatchableListserv = {
   senderEmails: string[];
 };
 
+type ListservMatch = {
+  listservId?: Id<"listservs">;
+  organizationId?: Id<"orgs">;
+  /**
+   * Set when a Simplelists confirmation named a list we have no row for. The
+   * caller turns these into candidates rather than guessing at an owner.
+   */
+  unknownListAddress?: string;
+};
+
 type IngestionRunResult = {
   fetched: number;
   unseen: number;
   stored: number;
 };
+
+/** Reason recorded on candidates raised from an unmatched confirmation. */
+const UNKNOWN_LIST_REASON = "confirmation received for unknown list";
+
+/**
+ * A subscription confirmation is direct evidence the list exists and that we
+ * asked to join it, so these rank above pattern-matched discovery candidates.
+ */
+const UNKNOWN_LIST_CONFIDENCE = 90;
 
 type FetchedMessageIds = {
   messageIds: string[];
@@ -140,15 +165,28 @@ export const pollListservInbox = internalAction({
           ctx.runQuery(internal.ingestion.getMatchableListservs),
         ])) as [GmailFullMessage[], MatchableListserv[]];
 
+        const unknownListAddresses = new Set<string>();
         const parsed: StoredParsedEmail[] = messages.flatMap(
           (message: GmailFullMessage) => {
             const email = parseGmailMessage(message);
             if (!email) return [];
 
-            const sourceMatch = matchListserv(email, listservs);
+            const { unknownListAddress, ...sourceMatch } = matchListserv(
+              email,
+              listservs,
+            );
+            if (unknownListAddress)
+              unknownListAddresses.add(unknownListAddress);
             return [{ ...email, ...sourceMatch }];
           },
         );
+
+        if (unknownListAddresses.size > 0) {
+          await ctx.runMutation(
+            internal.ingestion.recordUnknownListCandidates,
+            { addresses: [...unknownListAddresses] },
+          );
+        }
 
         if (parsed.length > 0) {
           const result = await ctx.runMutation(
@@ -409,11 +447,7 @@ export const storeParsedMessages = internalMutation({
 
       if (message.listservId) {
         const listserv = await ctx.db.get(message.listservId);
-        const patch = buildListservIngestionPatch(
-          message,
-          now,
-          listserv?.joinStatus,
-        );
+        const patch = buildListservIngestionPatch(message, now, listserv);
         await ctx.db.patch(message.listservId, patch);
       }
 
@@ -424,34 +458,174 @@ export const storeParsedMessages = internalMutation({
   },
 });
 
+/**
+ * Raise a candidate for a Simplelists list we received a confirmation from but
+ * have no row for. This is the normal case, not an error: the confirmation is
+ * for `<LIST>@lists.cornell.edu`, while an existing org row commonly holds the
+ * org's own From address. Guessing that the two are the same would overwrite a
+ * real value, so the address becomes an actionable Sources-tab item instead.
+ */
+export const recordUnknownListCandidates = internalMutation({
+  args: { addresses: v.array(v.string()) },
+  returns: v.object({ inserted: v.number(), updated: v.number() }),
+  handler: async (ctx, args) => {
+    let inserted = 0;
+    let updated = 0;
+    for (const address of args.addresses) {
+      const result = await recordUnknownListCandidate(ctx, address);
+      if (result === "inserted") inserted += 1;
+      if (result === "updated") updated += 1;
+    }
+    return { inserted, updated };
+  },
+});
+
+async function recordUnknownListCandidate(ctx: MutationCtx, address: string) {
+  const email = normalizeEmail(address);
+  const listName = listNameFromAddress(email);
+  if (!listName) return "skipped";
+
+  const now = Date.now();
+  const existing = await ctx.db
+    .query("listservCandidates")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .unique();
+
+  if (existing) {
+    if (
+      existing.status !== "candidate" ||
+      existing.matchedReasons.includes(UNKNOWN_LIST_REASON)
+    ) {
+      return "skipped";
+    }
+    await ctx.db.patch(existing._id, {
+      confidence: Math.max(existing.confidence, UNKNOWN_LIST_CONFIDENCE),
+      matchedReasons: [...existing.matchedReasons, UNKNOWN_LIST_REASON],
+      updatedAt: now,
+    });
+    return "updated";
+  }
+
+  await ctx.db.insert("listservCandidates", {
+    email,
+    displayName: listName.toUpperCase(),
+    source: "manual",
+    status: "candidate",
+    confidence: UNKNOWN_LIST_CONFIDENCE,
+    matchedReasons: [UNKNOWN_LIST_REASON],
+    notes:
+      "Raised automatically from a Simplelists subscription confirmation. Attach it to the right organization, or reject it if we should not be subscribed.",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return "inserted";
+}
+
+/**
+ * Re-run source matching over messages that were never attributed to an org.
+ *
+ * New matching logic only affects future ingestion, so messages parked before
+ * it landed stay parked. Admin-triggered rather than automatic, bounded per
+ * run, and idempotent — a message that still matches nothing is simply left
+ * alone.
+ */
+export const rematchUnassignedMessages = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  returns: v.object({
+    scanned: v.number(),
+    matched: v.number(),
+    candidatesRaised: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+
+    const listservs: MatchableListserv[] = (
+      await ctx.db.query("listservs").collect()
+    )
+      .filter(
+        (listserv) =>
+          listserv.status === "active" || listserv.status === "joining",
+      )
+      .map((listserv) => ({
+        _id: listserv._id,
+        organizationId: listserv.organizationId,
+        listEmail: listserv.listEmail,
+        senderEmails: listserv.senderEmails,
+      }));
+
+    const messages = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_organization", (q) => q.eq("organizationId", undefined))
+      .take(limit);
+
+    let matched = 0;
+    let candidatesRaised = 0;
+    const seenAddresses = new Set<string>();
+
+    for (const message of messages) {
+      const { unknownListAddress, ...match } = matchListserv(
+        message,
+        listservs,
+      );
+
+      if (unknownListAddress && !seenAddresses.has(unknownListAddress)) {
+        seenAddresses.add(unknownListAddress);
+        const result = await recordUnknownListCandidate(
+          ctx,
+          unknownListAddress,
+        );
+        if (result === "inserted") candidatesRaised += 1;
+      }
+
+      if (!match.listservId) continue;
+
+      await ctx.db.patch(message._id, {
+        listservId: match.listservId,
+        organizationId: match.organizationId,
+      });
+      matched += 1;
+    }
+
+    return { scanned: messages.length, matched, candidatesRaised };
+  },
+});
+
 function buildListservIngestionPatch(
   message: {
     receivedAt: number;
     senderEmail: string;
     subject: string;
     bodyText: string;
+    bodyHtml?: string;
   },
   now: number,
-  currentJoinStatus?:
-    | "not_started"
-    | "join_email_sent"
-    | "awaiting_confirmation"
-    | "joined"
-    | "failed"
-    | "manual_required",
+  listserv: Pick<Doc<"listservs">, "joinStatus" | "status"> | null,
 ) {
-  if (isJoinConfirmation(message)) {
+  if (isJoinConfirmationMail(message)) {
     return {
       lastReceivedAt: message.receivedAt,
       joinStatus:
-        currentJoinStatus === "joined"
+        listserv?.joinStatus === "joined"
           ? ("joined" as const)
           : ("awaiting_confirmation" as const),
       updatedAt: now,
     };
   }
 
-  if (currentJoinStatus !== "joined") {
+  // `paused` is the one state incoming mail must never override: it is set by
+  // an admin explicitly ignoring a source, and silently un-ignoring it on the
+  // next message would undo that decision.
+  if (listserv?.status === "paused") {
+    return {
+      lastReceivedAt: message.receivedAt,
+      updatedAt: now,
+    };
+  }
+
+  // Otherwise, receiving genuine list traffic is the strongest evidence we
+  // have that the subscription went through — including for lists we were
+  // added to by hand, where no confirmation mail ever arrives.
+  if (listserv?.joinStatus !== "joined") {
     return {
       lastReceivedAt: message.receivedAt,
       joinStatus: "joined" as const,
@@ -680,7 +854,32 @@ function collectHeaders(part: GmailMessagePart | undefined) {
     .map((header) => ({ name: header.name ?? "", value: header.value ?? "" }));
 }
 
-function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
+function matchListserv(
+  email: ParsedEmail,
+  listservs: MatchableListserv[],
+): ListservMatch {
+  // A Simplelists confirmation names its list in the sender address
+  // (`<LIST>-account-manager@lists.cornell.edu`), so it resolves exactly and
+  // is authoritative: we never fall through to the heuristics below for one.
+  // Those match on local-part substrings and would happily attribute an
+  // ACSU-L confirmation to the unrelated row holding ACSU's own From address.
+  const listName = listNameFromConfirmationSender(email.senderEmail);
+  const listAddress = listName ? simplelistsAddressForList(listName) : null;
+  if (listAddress) {
+    // In-memory rather than a `by_list_email` lookup because the candidate set
+    // is already loaded; `find` also takes the first of any duplicate rows
+    // instead of throwing the way a unique lookup would.
+    const exact = listservs.find((listserv) =>
+      [listserv.listEmail, ...listserv.senderEmails].some(
+        (value) => value.toLowerCase() === listAddress,
+      ),
+    );
+    if (exact) {
+      return { listservId: exact._id, organizationId: exact.organizationId };
+    }
+    return { unknownListAddress: listAddress };
+  }
+
   const emailSignals = new Set([
     email.senderEmail,
     ...email.to,
@@ -702,8 +901,10 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
     }
   }
 
+  // Retained for non-Cornell confirmations (Mailchimp, CampusGroups), which
+  // have no deterministic list identifier to resolve against.
   const searchable = `${email.subject}\n${email.bodyText}`.toLowerCase();
-  if (isJoinConfirmation(email)) {
+  if (isJoinConfirmationMail(email)) {
     for (const listserv of listservs) {
       const localParts = [listserv.listEmail, ...listserv.senderEmails]
         .map((value) => value.toLowerCase().split("@")[0])
@@ -718,19 +919,6 @@ function matchListserv(email: ParsedEmail, listservs: MatchableListserv[]) {
   }
 
   return {};
-}
-
-function isJoinConfirmation(
-  email: Pick<ParsedEmail, "senderEmail" | "subject" | "bodyText">,
-) {
-  const sender = email.senderEmail.toLowerCase();
-  const text = `${email.subject}\n${email.bodyText}`.toLowerCase();
-  return (
-    sender.startsWith("lyris-confirm-") ||
-    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(
-      text,
-    )
-  );
 }
 
 function headerValue(

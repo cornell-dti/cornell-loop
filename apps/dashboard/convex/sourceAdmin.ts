@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
+import { isLegacyLyrisAddress, isSimplelistsAddress } from "./lib/cornellLists";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
@@ -213,16 +214,20 @@ export const assignSender = mutation({
         tags: [],
       }));
 
-    const existing = await ctx.db
-      .query("listservs")
-      .withIndex("by_list_email", (q) => q.eq("listEmail", senderEmail))
-      .unique();
+    const existing = await findListservByAnyAddress(ctx, senderEmail);
     const now = Date.now();
     const sourceFields = {
       name: cleanOptional(args.sourceName) ?? suggestion.sourceName,
       displayName: cleanOptional(args.sourceName) ?? suggestion.sourceName,
-      listEmail: senderEmail,
-      senderEmails: [senderEmail],
+      listEmail: existing?.listEmail ?? senderEmail,
+      // Union rather than replace: senderEmails accumulates aliases observed
+      // for this source, and overwriting it loses every one of them.
+      senderEmails: [
+        ...new Set([
+          ...(existing?.senderEmails ?? []).map(normalizeEmail),
+          senderEmail,
+        ]),
+      ],
       organizationId,
       sourceType: args.sourceType ?? suggestion.sourceType,
       status: "active" as const,
@@ -259,10 +264,7 @@ export const ignoreSender = mutation({
 
     // If a listservs row already exists, just mark it paused so it stops
     // surfacing in the unassigned list without losing history.
-    const existing = await ctx.db
-      .query("listservs")
-      .withIndex("by_list_email", (q) => q.eq("listEmail", senderEmail))
-      .unique();
+    const existing = await findListservByAnyAddress(ctx, senderEmail);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -329,6 +331,38 @@ export const assignSourceOrganization = mutation({
   },
 });
 
+/**
+ * Upper bound on the `senderEmails` scan below. The table holds fewer than a
+ * hundred rows today; this exists so the query stays bounded if that changes.
+ */
+const LISTSERV_SCAN_LIMIT = 500;
+
+/**
+ * Find the source that owns an address, checking `senderEmails` as well as
+ * `listEmail`. Looking only at `listEmail` means an address we have already
+ * seen as an alias produces a duplicate row on assign, and silently fails to
+ * pause anything on ignore.
+ *
+ * `by_list_email` carries no uniqueness constraint, so the indexed lookup
+ * takes the first match rather than throwing on duplicates. `senderEmails` is
+ * an unindexed array field, so that half is a bounded scan — a conscious
+ * trade at this table size.
+ */
+async function findListservByAnyAddress(ctx: MutationCtx, email: string) {
+  const byListEmail = await ctx.db
+    .query("listservs")
+    .withIndex("by_list_email", (q) => q.eq("listEmail", email))
+    .first();
+  if (byListEmail) return byListEmail;
+
+  const rows = await ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT);
+  return (
+    rows.find((row) =>
+      row.senderEmails.some((value) => normalizeEmail(value) === email),
+    ) ?? null
+  );
+}
+
 async function getOrCreateOrg(
   ctx: MutationCtx,
   params: {
@@ -371,16 +405,23 @@ function suggestSource(senderEmail: string) {
     .replace(/-l$/, "");
   const organizationName = inferName(cleanedLocal || domain);
 
-  if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  ) {
+  if (isLegacyLyrisAddress(senderEmail)) {
     return {
       organizationName,
       organizationType: "club" as const,
       sourceName: `${organizationName} Listserv`,
       sourceType: "lyris" as const,
+    };
+  }
+
+  // Current Simplelists lists are unambiguously club listservs, but there is
+  // no `simplelists` sourceType yet, so they keep the generic one.
+  if (isSimplelistsAddress(senderEmail)) {
+    return {
+      organizationName,
+      organizationType: "club" as const,
+      sourceName: `${organizationName} Listserv`,
+      sourceType: "direct_email" as const,
     };
   }
 
