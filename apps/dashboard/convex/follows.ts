@@ -1,12 +1,7 @@
-import { ConvexError, v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import {
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
-} from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { authedMutation, authedQuery } from "./lib/auth";
 
 async function findFollow(
   ctx: QueryCtx | MutationCtx,
@@ -21,24 +16,16 @@ async function findFollow(
     .unique();
 }
 
-export const follow = mutation({
+export const follow = authedMutation({
   args: { orgId: v.id("orgs") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to follow an org.",
-      });
-    }
-
-    const existing = await findFollow(ctx, userId, args.orgId);
+    const existing = await findFollow(ctx, ctx.user._id, args.orgId);
     if (existing !== null) {
       return null;
     }
 
     await ctx.db.insert("follows", {
-      userId,
+      userId: ctx.user._id,
       orgId: args.orgId,
       createdAt: Date.now(),
     });
@@ -46,18 +33,10 @@ export const follow = mutation({
   },
 });
 
-export const unfollow = mutation({
+export const unfollow = authedMutation({
   args: { orgId: v.id("orgs") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to unfollow an org.",
-      });
-    }
-
-    const existing = await findFollow(ctx, userId, args.orgId);
+    const existing = await findFollow(ctx, ctx.user._id, args.orgId);
     if (existing !== null) {
       await ctx.db.delete(existing._id);
     }
@@ -65,29 +44,20 @@ export const unfollow = mutation({
   },
 });
 
-export const isFollowing = query({
+export const isFollowing = authedQuery({
   args: { orgId: v.id("orgs") },
   handler: async (ctx, args): Promise<boolean> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return false;
-    }
-    const existing = await findFollow(ctx, userId, args.orgId);
+    const existing = await findFollow(ctx, ctx.user._id, args.orgId);
     return existing !== null;
   },
 });
 
-export const myFollows = query({
+export const myFollows = authedQuery({
   args: {},
   handler: async (ctx): Promise<Id<"orgs">[]> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return [];
-    }
-
     const rows = await ctx.db
       .query("follows")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q) => q.eq("userId", ctx.user._id))
       .take(100);
 
     return rows.map((row) => row.orgId);

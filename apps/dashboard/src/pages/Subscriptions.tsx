@@ -32,7 +32,8 @@ import {
 } from "@app/ui";
 import type { SideBarItemId, RsvpGroup, Club } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Doc, Id } from "../../convex/_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
+import type { PublicOrg } from "../../convex/orgs";
 import { orgsToClubs, rsvpsToRsvpGroups } from "../lib/eventToPost";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -234,7 +235,7 @@ function SubscriptionRow({
  * doesn't yet track per-org email counts; surface tag count as a placeholder
  * proxy so the row still renders meaningfully. Real email counts land later.
  */
-function orgToSubscriptionItem(org: Doc<"orgs">): SubscriptionItem {
+function orgToSubscriptionItem(org: PublicOrg): SubscriptionItem {
   const fallbackEmail = `${org.slug}-l@cornell.edu`;
   return {
     orgName: org.name,
@@ -271,7 +272,7 @@ export function Subscriptions({
   // returned by the server (recency-desc). The sort toggle re-sorts a copy so
   // we don't mutate the source array. "Most emails" sort uses tag count as a
   // placeholder proxy until real email counts are tracked.
-  const orgsList = useMemo<readonly Doc<"orgs">[]>(
+  const orgsList = useMemo<readonly PublicOrg[]>(
     () => followedOrgs ?? [],
     [followedOrgs],
   );

@@ -1,29 +1,37 @@
 /**
- * Playwright seed helpers — wrap the DEV-gated Convex mutations
- * `dev.triggerSeed` and `dev.triggerClearSeed` so each spec can put the dev
- * deployment into a known state without going through the UI.
- *
- * `clearDb()` and `seedDb()` are both idempotent and safe to call repeatedly:
- *   • `seedDb` is keyed by org slug + (listserv, title) inside `seed.seedAll`.
- *   • `clearDb` only deletes rows tagged `isSeed: true`, so any production-
- *     style data created during tests (e.g. a profile row created by an
- *     onboarding spec) is left alone — those are scrubbed by `resetUserState`
- *     instead.
+ * Playwright seed helpers. Seed/clear run through the Convex CLI (deploy key)
+ * against internal `seed:*` mutations. Per-user reset uses
+ * `internal.dev.resetUserState`, which requires TEST_AUTH_ENABLED on the
+ * dev deployment.
  */
 
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { convexRun } from "./convexRun";
 import { getConvexUrl } from "./env";
 
-let _client: ConvexHttpClient | null = null;
-function client(): ConvexHttpClient {
-  if (_client === null) _client = new ConvexHttpClient(getConvexUrl());
-  return _client;
+/**
+ * `orgs.getBySlug` / `events.byOrg` are `authedQuery` (anonymous reads are
+ * locked), so these lookup helpers need a signed-in caller's token — pass the
+ * `token` returned by `signInAs`.
+ */
+function authedClient(token: string): ConvexHttpClient {
+  const c = new ConvexHttpClient(getConvexUrl());
+  c.setAuth(token);
+  return c;
+}
+
+function isClearSeedResult(
+  value: unknown,
+): value is { done: boolean; deleted: number } {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("done" in value) || !("deleted" in value)) return false;
+  return typeof value.done === "boolean" && typeof value.deleted === "number";
 }
 
 export async function seedDb(): Promise<void> {
-  await client().mutation(api.dev.triggerSeed, {});
+  await convexRun("seed:seedAll", {});
 }
 
 /**
@@ -33,9 +41,11 @@ export async function seedDb(): Promise<void> {
  * next assertion.
  */
 export async function clearDb(): Promise<void> {
-  // Loop a few times in case the underlying paginated delete reschedules.
   for (let i = 0; i < 10; i += 1) {
-    const result = await client().mutation(api.dev.triggerClearSeed, {});
+    const result = await convexRun("seed:clearSeed", {});
+    if (!isClearSeedResult(result)) {
+      throw new Error("seed:clearSeed returned an unexpected value");
+    }
     if (result.done) return;
   }
 }
@@ -46,13 +56,28 @@ export async function clearDb(): Promise<void> {
  * same test user without churning auth tokens.
  */
 export async function resetUserState(email: string): Promise<void> {
-  await client().mutation(api.dev.resetUserState, { email });
+  await convexRun("internal.dev.resetUserState", { email });
 }
 
-export async function orgIdForSlug(slug: string): Promise<Id<"orgs"> | null> {
-  return await client().query(api.dev.triggerOrgIdForSlug, { slug });
+export async function orgIdForSlug(
+  token: string,
+  slug: string,
+): Promise<Id<"orgs"> | null> {
+  const result = await authedClient(token).query(api.orgs.getBySlug, {
+    slug,
+  });
+  if (result.org === null) return null;
+  return result.org._id;
 }
 
-export async function firstSeedEventId(): Promise<Id<"events"> | null> {
-  return await client().query(api.dev.triggerFirstEventId, {});
+export async function firstSeedEventId(
+  token: string,
+): Promise<Id<"events"> | null> {
+  const page = await authedClient(token).query(api.events.byOrg, {
+    slug: "wicc",
+    paginationOpts: { numItems: 1, cursor: null },
+  });
+  const first = page.page[0];
+  if (first === undefined) return null;
+  return first.event._id;
 }

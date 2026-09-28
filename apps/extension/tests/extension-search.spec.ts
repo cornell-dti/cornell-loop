@@ -2,9 +2,8 @@
  * Search E2E tests.
  *
  * Verifies:
+ *   • Empty search shows a type-to-search prompt (popular ranks gated off)
  *   • Typing a query returns results from api.events.searchEvents
- *   • Popular search terms are clickable and populate the search bar
- *   • Tag filter narrows search results
  */
 
 import { test, expect } from "@playwright/test";
@@ -20,7 +19,7 @@ test.describe("Extension search", () => {
     await seedDb();
   });
 
-  test("popular search term populates the search bar", async () => {
+  test("empty search shows a prompt then typed query hits Convex", async () => {
     const { context, page } = await launchWithExtension();
 
     try {
@@ -28,24 +27,23 @@ test.describe("Extension search", () => {
       await signInAs(page, TEST_EMAIL, "Search Tester");
 
       await page.goto(FIXTURE_URL);
-      // Playwright auto-pierces shadow DOM — no pierce= prefix needed
       await page.locator("[data-testid='loop-toggle']").click();
 
-      // Click the search input to enter search mode
       await page.locator("[data-testid='search-input']").click();
 
-      // Popular searches should appear
       await expect(
-        page.locator("p", { hasText: /popular searches/i }),
+        page.locator("[data-testid='search-empty-prompt']"),
       ).toBeVisible({ timeout: 10_000 });
+      await expect(
+        page.locator("[data-testid='popular-search-row']"),
+      ).toHaveCount(0);
 
-      // Click the first popular search term
-      await page.locator("[data-testid='popular-search-row']").first().click();
-
-      // Search bar should now contain the term
       const searchInput = page.locator("[data-testid='search-input']");
-      const value = await searchInput.inputValue();
-      expect(value.trim().length).toBeGreaterThan(0);
+      await searchInput.fill("info");
+
+      await expect(page.locator("[data-testid='search-results']")).toBeVisible({
+        timeout: 15_000,
+      });
     } finally {
       await context.close();
     }

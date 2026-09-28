@@ -16,17 +16,19 @@ import type {
   RsvpGroup,
 } from "@app/ui";
 import type { Doc } from "../../convex/_generated/dataModel";
+import type { PublicEvent } from "../../convex/events";
+import type { PublicOrg } from "../../convex/orgs";
 
 export interface HydratedEvent {
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
   isBookmarked: boolean;
 }
 
 export interface HydratedRsvp {
   rsvp: Doc<"rsvps">;
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
 }
 
 export interface MyRsvpsResult {
@@ -79,7 +81,7 @@ function formatTime(timestampMs: number): string {
  *   "Deadline April 30"          (deadline)
  *   ""                           (no usable date)
  */
-function formatEventDatetime(event: Doc<"events">): string {
+function formatEventDatetime(event: PublicEvent): string {
   const start = event.dates.find(
     (d) => d.type === "start" || d.type === "single",
   );
@@ -112,7 +114,7 @@ const RSVP_MONTH_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "short",
 });
 
-function getStartTimestamp(event: Doc<"events">): number | null {
+function getStartTimestamp(event: PublicEvent): number | null {
   for (const date of event.dates) {
     if (date.type === "start" || date.type === "single") {
       return date.timestamp;
@@ -161,7 +163,7 @@ export function rsvpsToRsvpGroups(
  * Convert a list of org docs (e.g. from `api.orgs.listFollowed`) into the
  * `Club[]` shape consumed by <SearchPanel>'s "Your Clubs" grid.
  */
-export function orgsToClubs(orgs: Doc<"orgs">[] | undefined): Club[] {
+export function orgsToClubs(orgs: PublicOrg[] | undefined): Club[] {
   if (!orgs) return [];
   return orgs.map((org) => ({
     id: org.slug,

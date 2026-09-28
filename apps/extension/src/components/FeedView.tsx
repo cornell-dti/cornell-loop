@@ -1,11 +1,11 @@
 /**
- * FeedView — "Your Subscriptions" + "Trending This Week"
+ * FeedView — "Your Subscriptions" + "New This Week"
  *
  * Feed rules (all enforced in useFeedSections / useTrendingEvents):
  *   • Only events whose parent email was sent in the last 14 days
  *   • Sorted newest-first within each org group
  *   • Subscriptions grouped by org; max 3 rows visible with "Show more" expand
- *   • Trending: up to 4 individual event cards (single-event per card)
+ *   • New This Week: up to 4 recent event cards (single-event per card)
  */
 
 import { useState } from "react";
@@ -112,10 +112,10 @@ export default function FeedView({
         })}
       </section>
 
-      {/* ── Trending This Week ── */}
+      {/* ── New This Week ── */}
       {trendingEvents.length > 0 && (
         <section className="flex flex-col gap-[var(--space-4)]">
-          <p className={SECTION_HEADING}>Trending This Week</p>
+          <p className={SECTION_HEADING}>New This Week</p>
 
           {trendingEvents.map((event) => (
             <ExtensionEventCard

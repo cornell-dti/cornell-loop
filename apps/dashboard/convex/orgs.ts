@@ -1,8 +1,44 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { query, type QueryCtx } from "./_generated/server";
+import { type QueryCtx } from "./_generated/server";
+import { authedQuery } from "./lib/auth";
+
+/**
+ * Public projection of an `orgs` doc. Drops internal/admin-only fields
+ * (seed markers, admin org classification, timestamps) that the UI never
+ * reads.
+ */
+export type PublicOrg = Pick<
+  Doc<"orgs">,
+  | "_id"
+  | "slug"
+  | "name"
+  | "avatarUrl"
+  | "description"
+  | "tags"
+  | "coverImageUrl"
+  | "websiteUrl"
+  | "email"
+  | "isVerified"
+  | "loopSummary"
+>;
+
+export function projectOrg(org: Doc<"orgs">): PublicOrg {
+  return {
+    _id: org._id,
+    slug: org.slug,
+    name: org.name,
+    avatarUrl: org.avatarUrl,
+    description: org.description,
+    tags: org.tags,
+    coverImageUrl: org.coverImageUrl,
+    websiteUrl: org.websiteUrl,
+    email: org.email,
+    isVerified: org.isVerified,
+    loopSummary: org.loopSummary,
+  };
+}
 
 async function isFollowingOrg(
   ctx: QueryCtx,
@@ -18,12 +54,12 @@ async function isFollowingOrg(
   return row !== null;
 }
 
-export const getBySlug = query({
+export const getBySlug = authedQuery({
   args: { slug: v.string() },
   handler: async (
     ctx,
     args,
-  ): Promise<{ org: Doc<"orgs"> | null; isFollowing: boolean }> => {
+  ): Promise<{ org: PublicOrg | null; isFollowing: boolean }> => {
     const org = await ctx.db
       .query("orgs")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
@@ -33,29 +69,38 @@ export const getBySlug = query({
       return { org: null, isFollowing: false };
     }
 
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return { org, isFollowing: false };
-    }
-
+    const userId = ctx.user._id;
     const isFollowing = await isFollowingOrg(ctx, userId, org._id);
-    return { org, isFollowing };
+    return { org: projectOrg(org), isFollowing };
   },
 });
 
-export const listAll = query({
+export const listAll = authedQuery({
   args: { paginationOpts: paginationOptsValidator },
-  handler: async (ctx, args) => {
-    return await ctx.db
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: PublicOrg[];
+    isDone: boolean;
+    continueCursor: string;
+  }> => {
+    const result = await ctx.db
       .query("orgs")
+      .filter((q) => q.neq(q.field("orgStatus"), "hidden"))
       .order("desc")
       .paginate(args.paginationOpts);
+    return {
+      page: result.page.map(projectOrg),
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
   },
 });
 
-export const searchOrgs = query({
+export const searchOrgs = authedQuery({
   args: { q: v.string() },
-  handler: async (ctx, args): Promise<Doc<"orgs">[]> => {
+  handler: async (ctx, args): Promise<PublicOrg[]> => {
     if (args.q.length < 2) {
       return [];
     }
@@ -80,17 +125,14 @@ export const searchOrgs = query({
       merged.push(org);
       if (merged.length >= 25) break;
     }
-    return merged;
+    return merged.map(projectOrg);
   },
 });
 
-export const listFollowed = query({
+export const listFollowed = authedQuery({
   args: {},
-  handler: async (ctx): Promise<Doc<"orgs">[]> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return [];
-    }
+  handler: async (ctx): Promise<PublicOrg[]> => {
+    const userId = ctx.user._id;
 
     const follows = await ctx.db
       .query("follows")
@@ -106,16 +148,16 @@ export const listFollowed = query({
         orgs.push(org);
       }
     }
-    return orgs;
+    return orgs.map(projectOrg);
   },
 });
 
-export const getSuggestedForOnboarding = query({
+export const getSuggestedForOnboarding = authedQuery({
   args: {},
-  handler: async (ctx): Promise<Doc<"orgs">[]> => {
+  handler: async (ctx): Promise<PublicOrg[]> => {
     // Placeholder ranking: most recently created orgs.
     // Real tag-overlap ranking lands on a separate branch.
     const orgs = await ctx.db.query("orgs").order("desc").take(12);
-    return orgs;
+    return orgs.map(projectOrg);
   },
 });

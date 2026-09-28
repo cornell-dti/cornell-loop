@@ -1,6 +1,6 @@
 import { test, expect } from "./helpers/fixtures";
 import { signInAs } from "./helpers/auth";
-import { resetUserState, seedDb } from "./helpers/seed";
+import { orgIdForSlug, resetUserState, seedDb } from "./helpers/seed";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api";
 import { getConvexUrl } from "./helpers/env";
@@ -56,9 +56,7 @@ test.describe("Org page", () => {
     await expect
       .poll(
         async () => {
-          const orgId = await verifyClient.query(api.dev.triggerOrgIdForSlug, {
-            slug: "wicc",
-          });
+          const orgId = await orgIdForSlug(token, "wicc");
           if (orgId === null) return false;
           return await verifyClient.query(api.follows.isFollowing, { orgId });
         },

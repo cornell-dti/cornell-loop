@@ -19,6 +19,7 @@ import type * as gmailConnection from "../gmailConnection.js";
 import type * as gmailOAuth from "../gmailOAuth.js";
 import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
+import type * as lib_auth from "../lib/auth.js";
 import type * as listservAdmin from "../listservAdmin.js";
 import type * as orgs from "../orgs.js";
 import type * as parser from "../parser.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   gmailOAuth: typeof gmailOAuth;
   http: typeof http;
   ingestion: typeof ingestion;
+  "lib/auth": typeof lib_auth;
   listservAdmin: typeof listservAdmin;
   orgs: typeof orgs;
   parser: typeof parser;

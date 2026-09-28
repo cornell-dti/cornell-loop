@@ -1,19 +1,16 @@
-import { ConvexError, v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
-} from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { type PublicEvent, projectEvent } from "./events";
+import { authedMutation, authedQuery } from "./lib/auth";
+import { type PublicOrg, projectOrg } from "./orgs";
 
 type RsvpStatus = "going" | "interested" | "maybe";
 
 type HydratedRsvp = {
   rsvp: Doc<"rsvps">;
-  event: Doc<"events">;
-  orgs: Doc<"orgs">[];
+  event: PublicEvent;
+  orgs: PublicOrg[];
 };
 
 type MyRsvpsResult = {
@@ -53,7 +50,7 @@ async function findRsvp(
     .unique();
 }
 
-function getStartTimestamp(event: Doc<"events">): number | null {
+function getStartTimestamp(event: Pick<Doc<"events">, "dates">): number | null {
   // Prefer "start" or "single" date types as the canonical event start.
   for (const date of event.dates) {
     if (date.type === "start" || date.type === "single") {
@@ -70,7 +67,7 @@ function utcDayKey(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
-export const setRsvp = mutation({
+export const setRsvp = authedMutation({
   args: {
     eventId: v.id("events"),
     status: v.union(
@@ -80,20 +77,12 @@ export const setRsvp = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to RSVP.",
-      });
-    }
-
-    const existing = await findRsvp(ctx, userId, args.eventId);
+    const existing = await findRsvp(ctx, ctx.user._id, args.eventId);
     const status: RsvpStatus = args.status;
 
     if (existing === null) {
       await ctx.db.insert("rsvps", {
-        userId,
+        userId: ctx.user._id,
         eventId: args.eventId,
         status,
         createdAt: Date.now(),
@@ -106,18 +95,10 @@ export const setRsvp = mutation({
   },
 });
 
-export const clearRsvp = mutation({
+export const clearRsvp = authedMutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "You must be signed in to clear an RSVP.",
-      });
-    }
-
-    const existing = await findRsvp(ctx, userId, args.eventId);
+    const existing = await findRsvp(ctx, ctx.user._id, args.eventId);
     if (existing !== null) {
       await ctx.db.delete(existing._id);
     }
@@ -125,17 +106,12 @@ export const clearRsvp = mutation({
   },
 });
 
-export const myRsvps = query({
+export const myRsvps = authedQuery({
   args: {},
   handler: async (ctx): Promise<MyRsvpsResult> => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return { today: [], thisWeek: [] };
-    }
-
     const rows = await ctx.db
       .query("rsvps")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q) => q.eq("userId", ctx.user._id))
       .take(100);
 
     const now = Date.now();
@@ -153,7 +129,11 @@ export const myRsvps = query({
       if (start === null) continue;
 
       const orgs = await loadOrgsForEvent(ctx, event._id);
-      const hydrated: HydratedRsvp = { rsvp: row, event, orgs };
+      const hydrated: HydratedRsvp = {
+        rsvp: row,
+        event: projectEvent(event),
+        orgs: orgs.map(projectOrg),
+      };
 
       if (utcDayKey(start) === todayKey) {
         today.push(hydrated);
