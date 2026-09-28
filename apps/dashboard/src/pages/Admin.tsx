@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useMutation,
+  usePaginatedQuery,
+  useQuery,
+} from "convex/react";
 import { api } from "../../convex/_generated/api";
+import {
+  confirmationLinkFrom,
+  isCornellListAddress,
+  listNameFromConfirmationSender,
+} from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -9,7 +20,25 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 const ADMIN_TOKEN_STORAGE_KEY = "cornell_loop_admin_token";
 
 type Candidate = Doc<"listservCandidates">;
+
+/**
+ * Candidates rendered before the queue collapses behind a "show all".
+ *
+ * Directory discovery raises hundreds of departmental and lab lists at low
+ * confidence; without a cap they turn the review queue into an endless scroll.
+ */
+const CANDIDATE_PREVIEW_COUNT = 25;
+
 type Listserv = Doc<"listservs">;
+
+/** Mirrors sourceAdmin.ts's `findSimilarOrganizations` return validator. */
+type SimilarOrgMatch = {
+  organizationId: Id<"orgs">;
+  name: string;
+  slug: string;
+  matchedOn: string[];
+};
+
 type IngestionState = Doc<"listservIngestionState">;
 type IngestionRun = Doc<"ingestionRuns">;
 // Full doc type — kept for reference but dashboard/overview queries return projected subsets.
@@ -26,7 +55,10 @@ type RecentMessage = Pick<
   | "processingStatus"
 >;
 // Projected shape for confirmation messages (includes body fields needed for link extraction).
-type ConfirmationMessage = Pick<
+type ConfirmationMessage = {
+  /** Computed server-side: DMARC/DKIM passed for a Cornell domain. */
+  senderAuthenticated: boolean;
+} & Pick<
   _ListservMessageFull,
   | "_id"
   | "_creationTime"
@@ -86,6 +118,8 @@ type OrgType =
 
 type UnassignedSender = {
   senderEmail: string;
+  listAddress?: string;
+  senderEmails: string[];
   count: number;
   latestReceivedAt: number;
   sampleSubjects: string[];
@@ -116,6 +150,7 @@ type ConfirmationItem = {
   receivedAt: number;
   clearedAt?: number;
   link?: string;
+  linkTrusted: boolean;
 };
 
 type OrgUpdatePayload = {
@@ -143,6 +178,11 @@ const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "publish", label: "Publish", hint: "Review + publish drafts" },
 ];
 
+/** Narrows a `?tab=` query value to {@link AdminTab} without an `as` cast. */
+function parseAdminTab(value: string | null): AdminTab | undefined {
+  return TABS.find((t) => t.id === value)?.id;
+}
+
 const ORG_TYPES: OrgType[] = [
   "club",
   "department",
@@ -151,15 +191,68 @@ const ORG_TYPES: OrgType[] = [
   "company",
   "other",
 ];
+
+/** Narrows a `<select>` value to {@link OrgType} without an `as` cast. */
+function parseOrgType(value: string): OrgType {
+  const match = ORG_TYPES.find((t) => t === value);
+  if (!match) throw new Error(`Unknown organization type: ${value}`);
+  return match;
+}
+
+/**
+ * Selectable strategies. The two `cornell_lyris*` values are deliberately
+ * absent: Cornell retired Lyris, so nothing new should ever be classified into
+ * them. Existing Lyris rows still *render* their stored strategy — see
+ * {@link joinStrategyOptions}.
+ */
 const JOIN_STRATEGIES: JoinStrategy[] = [
-  "cornell_lyris",
-  "cornell_lyris_owner_contact",
+  "cornell_simplelists",
+  "cornell_simplelists_owner_contact",
   "campus_groups",
   "newsletter",
   "direct_org_email",
   "manual",
   "unknown",
 ];
+
+/**
+ * The picker options for one row: the selectable strategies, plus the row's
+ * own stored strategy when that is a retired one, so a legacy row does not
+ * silently display someone else's value.
+ */
+function joinStrategyOptions(current: JoinStrategy | undefined) {
+  if (current && !JOIN_STRATEGIES.includes(current)) {
+    return [current, ...JOIN_STRATEGIES];
+  }
+  return JOIN_STRATEGIES;
+}
+
+const ALL_JOIN_STRATEGIES: JoinStrategy[] = [
+  ...JOIN_STRATEGIES,
+  "cornell_lyris",
+  "cornell_lyris_owner_contact",
+];
+
+/** Narrows a `<select>` value to {@link JoinStrategy} without an `as` cast. */
+function parseJoinStrategy(value: string): JoinStrategy {
+  const match = ALL_JOIN_STRATEGIES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown join strategy: ${value}`);
+  return match;
+}
+
+const LISTSERV_STATUSES: Listserv["status"][] = [
+  "joining",
+  "active",
+  "paused",
+  "failed",
+];
+
+/** Narrows a `<select>` value to a listserv status without an `as` cast. */
+function parseListservStatus(value: string): Listserv["status"] {
+  const match = LISTSERV_STATUSES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown listserv status: ${value}`);
+  return match;
+}
 
 type EventTypeValue = EventDoc["eventType"];
 const EVENT_TYPES: EventTypeValue[] = [
@@ -199,7 +292,7 @@ export default function Admin() {
   );
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
     const p = new URLSearchParams(window.location.search).get("tab");
-    return TABS.some((t) => t.id === p) ? (p as AdminTab) : "setup";
+    return parseAdminTab(p) ?? "setup";
   });
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(
     null,
@@ -240,9 +333,18 @@ export default function Admin() {
 
   // ── mutations / actions ──
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
+  const runDirectoryDiscovery = useAction(
+    api.listservAdmin.runDirectoryDiscovery,
+  );
   const runIngestionNow = useAction(api.listservAdmin.runIngestionNow);
+  const rematchUnassigned = useAction(
+    api.listservAdmin.rematchUnassignedMessagesNow,
+  );
   const runParseNow = useAction(api.parser.runParseNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
+  const submitSubscribe = useAction(
+    api.listservAdmin.submitSimplelistsSubscribe,
+  );
 
   const createOAuthNonce = useMutation(api.gmailOAuth.createOAuthNonce);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
@@ -261,17 +363,76 @@ export default function Admin() {
     api.listservAdmin.updateListservStatus,
   );
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
+  const recomputeJoinStrategy = useMutation(
+    api.listservAdmin.recomputeJoinStrategy,
+  );
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
+  const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
   const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
+  const requeueMessage = useMutation(api.parser.requeueMessage);
+  const updateListservEmail = useMutation(
+    api.listservAdmin.updateListservEmail,
+  );
+  const foldListservs = useAction(api.listservAdmin.foldListservs);
+  const setPrimaryListserv = useMutation(api.listservAdmin.setPrimaryListserv);
 
-  async function act(label: string, fn: () => Promise<unknown>) {
+  // ── duplicate-org guard ──
+  // findSimilarOrganizations is a query, called imperatively (not via
+  // useQuery) because it only runs at the moment an admin asks to create an
+  // org, not reactively on every render.
+  const convex = useConvex();
+  const [pendingOrgCreation, setPendingOrgCreation] = useState<{
+    name: string;
+    type: OrgType;
+    matches: SimilarOrgMatch[];
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>;
+  } | null>(null);
+
+  /**
+   * Every "create org" entry point in this page routes through here instead
+   * of calling `createOrg` directly, so a near-duplicate name or a source
+   * address that already belongs to another org always surfaces a choice
+   * before a second org for the same real-world club gets created.
+   */
+  async function createOrgWithGuard(
+    name: string,
+    type: OrgType,
+    sourceEmail: string | undefined,
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>,
+  ) {
+    try {
+      const matches = await convex.query(
+        api.sourceAdmin.findSimilarOrganizations,
+        { token, name, sourceEmail },
+      );
+      if (matches.length === 0) {
+        const orgId = await createOrg({ token, name, type, sourceEmail });
+        await onCreated(orgId);
+        return;
+      }
+      setPendingOrgCreation({ name, type, matches, onCreated });
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Failed to check for duplicates.",
+        false,
+      );
+    }
+  }
+
+  /** Returns whether `fn` succeeded, so a caller can gate follow-up state (e.g. clearing a draft) on that. */
+  async function act(
+    label: string,
+    fn: () => Promise<unknown>,
+  ): Promise<boolean> {
     try {
       await fn();
       showToast(label);
+      return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Action failed.", false);
+      return false;
     }
   }
 
@@ -291,14 +452,39 @@ export default function Admin() {
   const organizations: Organization[] = sourceData?.organizations ?? [];
   const sourceListservs: Listserv[] = sourceData?.listservs ?? listservs;
   const unassigned: UnassignedSender[] = sourceData?.unassignedSenders ?? [];
+  const unassignedTruncated: boolean = sourceData?.unassignedTruncated ?? false;
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
   const drafts: EventDoc[] = parseData?.drafts ?? [];
   const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
     []) as ParseMessage[];
-  const readyMessages: ParseMessage[] = (parseData?.readyMessages ??
+  const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
     []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
+
+  // Real ready-to-parse queue: paginated rather than a number capped at 200,
+  // so a genuine backlog is both visible and inspectable.
+  const {
+    results: readyMessages,
+    status: readyStatus,
+    loadMore: loadMoreReady,
+  } = usePaginatedQuery(
+    api.parser.listReadyMessages,
+    token ? { token } : "skip",
+    { initialNumItems: 25 },
+  );
+
+  // The review queue, paginated for the same reason: `dashboard.candidates`
+  // stops at 150 and directory discovery seeds roughly 600.
+  const {
+    results: candidatePage,
+    status: candidateStatus,
+    loadMore: loadMoreCandidates,
+  } = usePaginatedQuery(
+    api.listservAdmin.listCandidates,
+    token ? { token } : "skip",
+    { initialNumItems: CANDIDATE_PREVIEW_COUNT },
+  );
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
 
@@ -394,6 +580,34 @@ export default function Admin() {
             onRunDiscovery={() =>
               act("Discovery complete.", () => runDiscovery({ token }))
             }
+            onRunDirectoryDiscovery={async () => {
+              try {
+                const result = await runDirectoryDiscovery({ token });
+                showToast(
+                  `Parsed ${result.entriesParsed} lists · kept ${result.candidatesFound} · ${result.inserted} new, ${result.updated} enriched.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error
+                    ? e.message
+                    : "Directory discovery failed.",
+                  false,
+                );
+              }
+            }}
+            onRematchUnassigned={async () => {
+              try {
+                const result = await rematchUnassigned({ token });
+                showToast(
+                  `Scanned ${result.scanned} · matched ${result.matched} · ${result.candidatesRaised} new candidate(s).`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Re-match failed.",
+                  false,
+                );
+              }
+            }}
             onAddCandidate={(email, name, notes) =>
               act("Candidate added.", () =>
                 addCandidate({
@@ -409,7 +623,12 @@ export default function Admin() {
 
         {activeTab === "sources" && (
           <SourcesTab
-            candidates={candidates}
+            candidates={candidatePage}
+            unassignedTruncated={unassignedTruncated}
+            candidateStatus={candidateStatus}
+            onLoadMoreCandidates={() =>
+              loadMoreCandidates(CANDIDATE_PREVIEW_COUNT)
+            }
             listservs={sourceListservs}
             organizations={organizations}
             unassigned={unassigned}
@@ -423,55 +642,95 @@ export default function Admin() {
                 rejectCandidate({ token, candidateId: id }),
               )
             }
-            onAssignSource={(listservId, orgId) =>
-              act("Source assigned.", () =>
+            onAssignSource={async (listservId, orgId) => {
+              await act("Source assigned.", () =>
                 assignSourceOrg({ token, listservId, organizationId: orgId }),
-              )
-            }
-            onCreateAndAssignSource={(listservId, name, type) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSourceOrg({
-                  token,
-                  listservId,
-                  organizationId: orgId,
-                });
+              );
+            }}
+            onCreateAndAssignSource={(listservId, name, type, sourceEmail) =>
+              createOrgWithGuard(name, type, sourceEmail, async (orgId) => {
+                await act(`${name} created and assigned.`, () =>
+                  assignSourceOrg({
+                    token,
+                    listservId,
+                    organizationId: orgId,
+                  }),
+                );
               })
             }
-            onAssignInboxSenderToOrg={(senderEmail, orgId) =>
+            onAssignInboxSenderToOrg={(sender, orgId) =>
               act("Source assigned.", () =>
-                assignSender({ token, senderEmail, organizationId: orgId }),
+                assignSender({
+                  token,
+                  senderEmail: sender.senderEmail,
+                  senderEmails: sender.senderEmails,
+                  listAddress: sender.listAddress,
+                  organizationId: orgId,
+                }),
               )
             }
-            onCreateAndAssignInboxSender={(
-              senderEmail,
-              name,
-              type,
-              sourceName,
-              sourceType,
-            ) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSender({
-                  token,
-                  senderEmail,
-                  organizationId: orgId,
-                  sourceName,
-                  sourceType,
-                });
-              })
+            onCreateAndAssignInboxSender={(sender, name, type) =>
+              createOrgWithGuard(
+                name,
+                type,
+                sender.senderEmail,
+                async (orgId) => {
+                  await act(`${name} created and assigned.`, () =>
+                    assignSender({
+                      token,
+                      senderEmail: sender.senderEmail,
+                      senderEmails: sender.senderEmails,
+                      listAddress: sender.listAddress,
+                      organizationId: orgId,
+                      sourceName: sender.suggestion.sourceName,
+                      sourceType: sender.suggestion.sourceType,
+                    }),
+                  );
+                },
+              )
             }
             onIgnoreSender={(senderEmail) =>
               act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
             }
-            onUnignoreSource={(listservId) =>
-              act("Source reactivated.", () =>
+            onUnignoreSource={async (listservId) => {
+              await act("Source reactivated.", () =>
                 unignoreSource({ token, listservId }),
+              );
+            }}
+            onCreateOrg={(name, type) =>
+              createOrgWithGuard(name, type, undefined, () => {
+                showToast(`${name} created.`);
+              })
+            }
+            onUpdateListservEmail={(listservId, listEmail) =>
+              act("Listserv email updated.", () =>
+                updateListservEmail({ token, listservId, listEmail }),
               )
             }
-            onCreateOrg={(name, type) =>
-              act(`${name} created.`, () => createOrg({ token, name, type }))
+            onSetPrimaryListserv={(listservId) =>
+              act("Primary listserv set.", () =>
+                setPrimaryListserv({ token, listservId }),
+              )
             }
+            onFoldListservs={async (targetId, duplicateIds) => {
+              // Not routed through `act` because the toast reports the fold's
+              // actual blast radius, which only the result carries.
+              try {
+                const result = await foldListservs({
+                  token,
+                  targetId,
+                  duplicateIds,
+                });
+                showToast(
+                  `Folded ${result.foldedCount} row${result.foldedCount !== 1 ? "s" : ""}, repointed ${result.rowsRepointed} record${result.rowsRepointed !== 1 ? "s" : ""}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Fold failed.",
+                  false,
+                );
+              }
+            }}
             onUpdateOrg={(orgId, payload) =>
               act("Organization updated.", () =>
                 updateOrg({
@@ -506,11 +765,42 @@ export default function Admin() {
             onSendJoin={async (e) => {
               e.preventDefault();
               if (!joinDraft) return;
-              await act("Join email sent.", () =>
+              // Only clear the composed draft on success — on a transient
+              // Gmail error the admin would otherwise lose everything they
+              // typed and have to reconstruct it from scratch.
+              const sent = await act("Join email sent.", () =>
                 sendJoinEmail({ token, ...joinDraft }),
               );
-              setJoinDraft(null);
+              if (sent) setJoinDraft(null);
             }}
+            onSubscribe={async (id) => {
+              // The action resolves with the failure reason rather than
+              // throwing, so the toast has to read the result — the row keeps
+              // rendering the subscribe URL either way.
+              try {
+                const result = await submitSubscribe({
+                  token,
+                  listservId: id,
+                });
+                showToast(
+                  result.ok
+                    ? "Subscribe form submitted. Watch Ingest for the confirmation email."
+                    : (result.error ??
+                        "Subscribe failed. Use the subscribe link instead."),
+                  result.ok,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Subscribe failed.",
+                  false,
+                );
+              }
+            }}
+            onRedetect={(id) =>
+              act("Re-detected.", () =>
+                recomputeJoinStrategy({ token, listservId: id }),
+              )
+            }
             onStatusChange={(id, status) =>
               act("Status updated.", () =>
                 updateListservStatus({ token, listservId: id, status }),
@@ -548,13 +838,24 @@ export default function Admin() {
             runs={parseRuns}
             drafts={drafts}
             failedMessages={failedMessages}
-            readyCount={readyMessages.length}
+            ignoredMessages={ignoredMessages}
+            readyMessages={readyMessages}
+            readyStatus={readyStatus}
+            onLoadMoreReady={() => loadMoreReady(25)}
             needsAssignment={needsAssignment}
             onRunParse={() =>
               act("Parse complete.", () => runParseNow({ token }))
             }
             onPublish={(id) =>
               act("Published.", () => publishEvent({ token, eventId: id }))
+            }
+            onPublishMany={(ids) =>
+              act(
+                ids.length === 1
+                  ? "Published."
+                  : `Published ${ids.length} events.`,
+                () => publishEvents({ token, eventIds: ids }),
+              )
             }
             onHide={(id) =>
               act("Hidden.", () => hideEvent({ token, eventId: id }))
@@ -567,10 +868,75 @@ export default function Admin() {
             onReparse={(id) =>
               act("Reparsed.", () => runParseNow({ token, messageId: id }))
             }
+            onRequeue={(id) =>
+              act("Requeued.", () => requeueMessage({ token, messageId: id }))
+            }
             onGoToSources={() => switchTab("sources")}
           />
         )}
       </div>
+
+      {/* Duplicate-org confirmation */}
+      {pendingOrgCreation && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] p-6 shadow-[var(--shadow-2)]">
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              "{pendingOrgCreation.name}" looks like it might already exist
+            </h2>
+            <div className="mt-3 grid gap-2">
+              {pendingOrgCreation.matches.map((match) => (
+                <div
+                  key={match.organizationId}
+                  className="rounded-xl border border-[var(--color-border)] px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold">{match.name}</span>
+                    <Btn
+                      primary
+                      onClick={async () => {
+                        const { onCreated } = pendingOrgCreation;
+                        setPendingOrgCreation(null);
+                        await onCreated(match.organizationId);
+                      }}
+                    >
+                      Attach here instead
+                    </Btn>
+                  </div>
+                  <p className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {match.matchedOn.join(" · ")}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Btn onClick={() => setPendingOrgCreation(null)}>Cancel</Btn>
+              <Btn
+                danger
+                onClick={async () => {
+                  const { name, type, onCreated } = pendingOrgCreation;
+                  setPendingOrgCreation(null);
+                  try {
+                    const orgId = await createOrg({
+                      token,
+                      name,
+                      type,
+                      confirmedNew: true,
+                    });
+                    await onCreated(orgId);
+                  } catch (e) {
+                    showToast(
+                      e instanceof Error ? e.message : "Failed to create org.",
+                      false,
+                    );
+                  }
+                }}
+              >
+                Create "{pendingOrgCreation.name}" anyway
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -617,6 +983,8 @@ function SetupTab({
   discoveryRuns,
   onConnectGmail,
   onRunDiscovery,
+  onRunDirectoryDiscovery,
+  onRematchUnassigned,
   onAddCandidate,
 }: {
   gmailStatus: GmailStatus | undefined;
@@ -624,6 +992,8 @@ function SetupTab({
   discoveryRuns: Doc<"discoveryRuns">[];
   onConnectGmail: () => void;
   onRunDiscovery: () => void;
+  onRunDirectoryDiscovery: () => void;
+  onRematchUnassigned: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -676,13 +1046,27 @@ function SetupTab({
       <Card>
         <CardHeader
           title="Discover"
-          subtitle="Find probable Cornell list addresses from the sender dataset."
+          subtitle="Find probable Cornell list addresses from the sender dataset and the official list directory."
         />
         <div className="mt-4 flex flex-wrap gap-2">
           <Btn primary onClick={onRunDiscovery}>
             Run discovery
           </Btn>
+          <Btn onClick={onRunDirectoryDiscovery}>Run directory discovery</Btn>
+          <Btn onClick={onRematchUnassigned}>Re-match unassigned mail</Btn>
         </div>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Discovery ranks senders students actually receive mail from — the only
+          source that finds CampusGroups, Mailchimp, and Gmail senders.
+          Directory discovery reads every list on lists.cornell.edu and adds the
+          real names and descriptions; its own entries rank low until a list
+          also shows up in the sender data.
+        </p>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Re-matching replays already-stored messages that were never attached
+          to an organization, and raises a candidate for any list confirmation
+          we cannot place.
+        </p>
         {discoveryRuns.length > 0 && (
           <div className="mt-4 grid gap-1">
             {discoveryRuns.slice(0, 5).map((run) => (
@@ -750,6 +1134,9 @@ function SetupTab({
 
 function SourcesTab({
   candidates,
+  candidateStatus,
+  onLoadMoreCandidates,
+  unassignedTruncated,
   listservs,
   organizations,
   unassigned,
@@ -764,32 +1151,59 @@ function SourcesTab({
   onCreateOrg,
   onUpdateOrg,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onFoldListservs,
 }: {
   candidates: Candidate[];
+  candidateStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreCandidates: () => void;
+  unassignedTruncated: boolean;
   listservs: Listserv[];
   organizations: Organization[];
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSource: (listservId: Id<"listservs">, orgId: Id<"orgs">) => void;
+  onAssignSource: (
+    listservId: Id<"listservs">,
+    orgId: Id<"orgs">,
+  ) => void | Promise<void>;
   onCreateAndAssignSource: (
     listservId: Id<"listservs">,
     name: string,
     type: OrgType,
+    sourceEmail: string,
   ) => void;
-  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"orgs">) => void;
+  // The whole group rather than one address: a list group carries every From
+  // address that posted to it, and all of them have to reach `assignSender` so
+  // they land as aliases on one row instead of becoming rows of their own.
+  onAssignInboxSenderToOrg: (
+    sender: UnassignedSender,
+    orgId: Id<"orgs">,
+  ) => void;
   onCreateAndAssignInboxSender: (
-    senderEmail: string,
+    sender: UnassignedSender,
     name: string,
     type: OrgType,
-    sourceName: string,
-    sourceType: NonNullable<Listserv["sourceType"]>,
   ) => void;
   onIgnoreSender: (senderEmail: string) => void;
-  onUnignoreSource: (listservId: Id<"listservs">) => void;
+  onUnignoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onFoldListservs: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   // Partition listservs into three buckets
   const unassignedSources = listservs.filter(
@@ -797,7 +1211,11 @@ function SourcesTab({
   );
   const assignedSources = listservs.filter((s) => !!s.organizationId);
   const ignoredSources = listservs.filter((s) => s.status === "paused");
-  const pendingCandidates = candidates.filter((c) => c.status === "candidate");
+  // Already highest-confidence-first, and already only `status: "candidate"`,
+  // from the paginated `listCandidates` query. Directory discovery contributes
+  // hundreds of low-confidence departmental lists, so the rest are fetched on
+  // demand instead of being capped out of reach.
+  const pendingCandidates = candidates;
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
@@ -845,8 +1263,10 @@ function SourcesTab({
       {pendingCandidates.length > 0 && (
         <Card>
           <CardHeader
-            title={`${pendingCandidates.length} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
-            subtitle="Addresses found by discovery. Approve to create a source, or reject to dismiss."
+            // "N loaded" rather than "N awaiting review": the queue is paged,
+            // so this is how many have been fetched, not the whole backlog.
+            title={`${pendingCandidates.length}${candidateStatus === "Exhausted" ? "" : "+"} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
+            subtitle="Addresses found by discovery, strongest first. Approve to create a source, or reject to dismiss."
           />
           <div className="mt-4 grid gap-2">
             {pendingCandidates.map((c) => (
@@ -858,6 +1278,18 @@ function SourcesTab({
               />
             ))}
           </div>
+          {candidateStatus !== "Exhausted" && (
+            <div className="mt-3">
+              <Btn
+                onClick={onLoadMoreCandidates}
+                disabled={candidateStatus !== "CanLoadMore"}
+              >
+                {candidateStatus === "LoadingMore"
+                  ? "Loading…"
+                  : `Load ${CANDIDATE_PREVIEW_COUNT} more candidates`}
+              </Btn>
+            </div>
+          )}
         </Card>
       )}
 
@@ -868,6 +1300,13 @@ function SourcesTab({
             title={`${unifiedItems.length} source${unifiedItems.length !== 1 ? "s" : ""} need an organization`}
             subtitle="Assign each source to an organization to enable parsing. Ignore sources you don't want to track."
           />
+          {unassignedTruncated && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[length:var(--font-size-body3)] text-amber-800">
+              Showing the most recent slice of unassigned mail only — there is
+              more behind it. Assign or ignore these, and the next batch will
+              appear.
+            </p>
+          )}
           <div className="mt-4 grid gap-2">
             {unifiedItems.map((item) =>
               item.kind === "known" ? (
@@ -880,12 +1319,18 @@ function SourcesTab({
                   suggestedOrgType={"club"}
                   messageCount={undefined}
                   sampleSubjects={[]}
+                  groupedSenders={[]}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
                     onAssignSource(item.source._id, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignSource(item.source._id, name, type)
+                    onCreateAndAssignSource(
+                      item.source._id,
+                      name,
+                      type,
+                      item.source.listEmail,
+                    )
                   }
                   onIgnore={() => onIgnoreSender(item.source.listEmail)}
                 />
@@ -899,18 +1344,13 @@ function SourcesTab({
                   suggestedOrgType={item.sender.suggestion.organizationType}
                   messageCount={item.sender.count}
                   sampleSubjects={item.sender.sampleSubjects}
+                  groupedSenders={item.sender.senderEmails}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
-                    onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)
+                    onAssignInboxSenderToOrg(item.sender, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignInboxSender(
-                      item.sender.senderEmail,
-                      name,
-                      type,
-                      item.sender.suggestion.sourceName,
-                      item.sender.suggestion.sourceType,
-                    )
+                    onCreateAndAssignInboxSender(item.sender, name, type)
                   }
                   onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
                 />
@@ -964,9 +1404,12 @@ function SourcesTab({
                 source={src}
                 organizations={organizations}
                 onReactivate={() => onUnignoreSource(src._id)}
-                onAssign={(orgId) => {
-                  onUnignoreSource(src._id);
-                  onAssignSource(src._id, orgId);
+                onAssign={async (orgId) => {
+                  // Sequenced on purpose: firing both without awaiting races
+                  // two separate mutations against the same row, and assign
+                  // completing first would have unignore's patch overwrite it.
+                  await onUnignoreSource(src._id);
+                  await onAssignSource(src._id, orgId);
                 }}
               />
             ))}
@@ -982,17 +1425,24 @@ function SourcesTab({
         />
         {organizations.length > 0 && (
           <div className="mt-4 grid gap-2">
-            {organizations.map((org) => (
-              <OrgRow
-                key={org._id}
-                org={org}
-                sourceCount={
-                  listservs.filter((s) => s.organizationId === org._id).length
-                }
-                onUpdate={(payload) => onUpdateOrg(org._id, payload)}
-                onGenerateUploadUrl={onGenerateUploadUrl}
-              />
-            ))}
+            {organizations.map((org) => {
+              const orgListservs = listservs.filter(
+                (s) => s.organizationId === org._id,
+              );
+              return (
+                <OrgRow
+                  key={org._id}
+                  org={org}
+                  sourceCount={orgListservs.length}
+                  listservRows={orgListservs}
+                  onUpdate={(payload) => onUpdateOrg(org._id, payload)}
+                  onGenerateUploadUrl={onGenerateUploadUrl}
+                  onUpdateListservEmail={onUpdateListservEmail}
+                  onSetPrimaryListserv={onSetPrimaryListserv}
+                  onFoldListservs={onFoldListservs}
+                />
+              );
+            })}
           </div>
         )}
         <CreateOrgForm className="mt-4" onCreate={onCreateOrg} />
@@ -1074,7 +1524,7 @@ function IgnoredSourceRow({
   source: Listserv;
   organizations: Organization[];
   onReactivate: () => void;
-  onAssign: (orgId: Id<"orgs">) => void;
+  onAssign: (orgId: Id<"orgs">) => void | Promise<void>;
 }) {
   const [assigning, setAssigning] = useState(false);
   return (
@@ -1266,13 +1716,27 @@ function ImageUploadField({
 function OrgRow({
   org,
   sourceCount,
+  listservRows,
   onUpdate,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onFoldListservs,
 }: {
   org: Organization;
   sourceCount: number;
+  listservRows: Listserv[];
   onUpdate: (payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onFoldListservs: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -1419,7 +1883,7 @@ function OrgRow({
 
       {/* Expanded edit form */}
       {editing && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           <div className="grid gap-4">
             {/* Row 1: Name + Type + Status */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
@@ -1441,7 +1905,7 @@ function OrgRow({
                 <div className="w-36">
                   <select
                     value={type}
-                    onChange={(e) => setType(e.target.value as OrgType)}
+                    onChange={(e) => setType(parseOrgType(e.target.value))}
                     className={input()}
                   >
                     {ORG_TYPES.map((t) => (
@@ -1578,9 +2042,278 @@ function OrgRow({
               </Btn>
               <Btn onClick={cancel}>Cancel</Btn>
             </div>
+
+            {/* Row 8: Listservs — edit address, pick primary, merge duplicates */}
+            <div className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-4">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Listservs ({listservRows.length})
+              </label>
+              <OrgListservsPanel
+                rows={listservRows}
+                onUpdateEmail={onUpdateListservEmail}
+                onSetPrimary={onSetPrimaryListserv}
+                onFold={onFoldListservs}
+              />
+            </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Every `listservs` row for one org, editable in place. This is the "merge
+ * and fix an address" surface the plan describes — Entrepreneurship's 61
+ * mis-attributed personal-sender rows are cleaned up through exactly this
+ * panel, not through the Convex data browser.
+ */
+function OrgListservsPanel({
+  rows,
+  onUpdateEmail,
+  onSetPrimary,
+  onFold,
+}: {
+  rows: Listserv[];
+  onUpdateEmail: (listservId: Id<"listservs">, listEmail: string) => void;
+  onSetPrimary: (listservId: Id<"listservs">) => void;
+  onFold: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
+}) {
+  const [emailDrafts, setEmailDrafts] = useState<
+    Record<string, string | undefined>
+  >({});
+  const [pendingFold, setPendingFold] = useState<{
+    target: Listserv;
+    duplicates: Listserv[];
+  } | null>(null);
+  const [folding, setFolding] = useState(false);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+        No listserv rows yet.
+      </p>
+    );
+  }
+
+  // The row that should survive a "fold everything" pass: the explicit primary
+  // if one is set, otherwise the only row whose address is a real Cornell list.
+  const foldTarget =
+    rows.find((row) => row.isPrimary === true) ??
+    rows.find((row) => isCornellListAddress(row.listEmail));
+
+  async function runFold() {
+    if (!pendingFold) return;
+    setFolding(true);
+    try {
+      await onFold(
+        pendingFold.target._id,
+        pendingFold.duplicates.map((row) => row._id),
+      );
+      setPendingFold(null);
+    } finally {
+      setFolding(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-2">
+      {pendingFold && (
+        <FoldConfirmDialog
+          target={pendingFold.target}
+          duplicates={pendingFold.duplicates}
+          busy={folding}
+          onCancel={() => setPendingFold(null)}
+          onConfirm={runFold}
+        />
+      )}
+
+      {rows.length > 1 && foldTarget && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-3 py-2">
+          <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {rows.length} rows for this org. Folding keeps{" "}
+            <strong>{foldTarget.listEmail}</strong> and moves every other row's
+            mail onto it.
+          </span>
+          <Btn
+            onClick={() =>
+              setPendingFold({
+                target: foldTarget,
+                duplicates: rows.filter((row) => row._id !== foldTarget._id),
+              })
+            }
+          >
+            Fold {rows.length - 1} row{rows.length - 1 !== 1 ? "s" : ""} into
+            primary
+          </Btn>
+        </div>
+      )}
+
+      {rows.map((row) => {
+        const draft = emailDrafts[row._id] ?? row.listEmail;
+        const dirty = draft.trim().toLowerCase() !== row.listEmail;
+        const otherRows = rows.filter((other) => other._id !== row._id);
+
+        return (
+          <div
+            key={row._id}
+            className="grid gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:grid-cols-[auto_1fr_auto] sm:items-center"
+          >
+            <label className="flex items-center gap-1.5 text-[length:var(--font-size-body3)] whitespace-nowrap select-none">
+              <input
+                type="radio"
+                checked={row.isPrimary === true}
+                onChange={() => onSetPrimary(row._id)}
+                className="size-4 accent-[var(--color-primary-700)]"
+              />
+              Primary
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={draft}
+                onChange={(e) =>
+                  setEmailDrafts((d) => ({ ...d, [row._id]: e.target.value }))
+                }
+                className={input()}
+              />
+              <Btn
+                disabled={!dirty}
+                onClick={() => onUpdateEmail(row._id, draft)}
+              >
+                Save
+              </Btn>
+              <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {row.senderEmails.length} sender
+                {row.senderEmails.length !== 1 ? "s" : ""} · {row.status}
+              </span>
+            </div>
+            {otherRows.length > 0 ? (
+              <MergeControl
+                row={row}
+                otherRows={otherRows}
+                onRequestFold={(target) =>
+                  setPendingFold({ target, duplicates: [row] })
+                }
+              />
+            ) : (
+              <span />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The fold half of one row: pick the row that should survive, fold this one into it. */
+function MergeControl({
+  row,
+  otherRows,
+  onRequestFold,
+}: {
+  row: Listserv;
+  otherRows: Listserv[];
+  onRequestFold: (target: Listserv) => void;
+}) {
+  const [targetId, setTargetId] = useState<string>("");
+  // Resolved against the real rows rather than cast from the select value, so
+  // the id reaching the mutation is one we know exists.
+  const target = otherRows.find((other) => other._id === targetId);
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        aria-label={`Fold ${row.listEmail} into another row`}
+        className={input()}
+      >
+        <option value="">Fold into…</option>
+        {otherRows.map((other) => (
+          <option key={other._id} value={other._id}>
+            {other.listEmail}
+          </option>
+        ))}
+      </select>
+      <Btn
+        danger
+        disabled={!target}
+        onClick={() => {
+          if (!target) return;
+          onRequestFold(target);
+          setTargetId("");
+        }}
+      >
+        Fold
+      </Btn>
+    </div>
+  );
+}
+
+/**
+ * Names both sides of a fold before it runs. Deleting a listserv row is
+ * irreversible, and the direction is not obvious from a dropdown labelled
+ * "Fold into…", so the row that disappears is spelled out explicitly.
+ */
+function FoldConfirmDialog({
+  target,
+  duplicates,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  target: Listserv;
+  duplicates: Listserv[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const senderCount = new Set(
+    duplicates.flatMap((row) => [row.listEmail, ...row.senderEmails]),
+  ).size;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fold-confirm-title"
+    >
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h3
+          id="fold-confirm-title"
+          className="text-[length:var(--font-size-body1)] font-semibold"
+        >
+          Fold {duplicates.length} row{duplicates.length !== 1 ? "s" : ""} into{" "}
+          {target.listEmail}?
+        </h3>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Every message, join attempt, and event from{" "}
+          {duplicates.length === 1 ? "this row" : "these rows"} moves onto{" "}
+          <strong>{target.listEmail}</strong>, and {senderCount} sender address
+          {senderCount !== 1 ? "es" : ""} are kept on it. The folded row
+          {duplicates.length !== 1 ? "s are" : " is"} then deleted. This cannot
+          be undone.
+        </p>
+        <ul className="mt-3 grid gap-1 text-[length:var(--font-size-body3)]">
+          {duplicates.map((row) => (
+            <li key={row._id} className="truncate">
+              {row.listEmail}
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Btn onClick={onCancel} disabled={busy}>
+            Cancel
+          </Btn>
+          <Btn danger onClick={onConfirm} disabled={busy}>
+            {busy ? "Folding…" : "Fold and delete"}
+          </Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1595,6 +2328,7 @@ function UnassignedRow({
   suggestedOrgType,
   messageCount,
   sampleSubjects,
+  groupedSenders,
   organizations,
   onAssignToOrg,
   onCreateAndAssign,
@@ -1607,6 +2341,11 @@ function UnassignedRow({
   suggestedOrgType: OrgType;
   messageCount: number | undefined;
   sampleSubjects: string[];
+  /**
+   * The individual From addresses behind a list group. Empty for direct mail,
+   * where the group identity already *is* the sender.
+   */
+  groupedSenders: string[];
   organizations: Organization[];
   onAssignToOrg: (orgId: Id<"orgs">) => void;
   onCreateAndAssign: (name: string, type: OrgType) => void;
@@ -1630,6 +2369,21 @@ function UnassignedRow({
               ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
             {sampleSubjects[0] && ` · "${sampleSubjects[0]}"`}
           </div>
+          {groupedSenders.length > 1 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                {groupedSenders.length} people posted to this list — all become
+                one source
+              </summary>
+              <div className="mt-1 flex flex-col gap-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {groupedSenders.map((sender) => (
+                  <span key={sender} className="truncate">
+                    {sender}
+                  </span>
+                ))}
+              </div>
+            </details>
+          )}
           {mode === "idle" && (
             <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               Suggested org: <strong>{suggestedOrgName}</strong>
@@ -1694,7 +2448,7 @@ function UnassignedRow({
             Type
             <select
               value={orgType}
-              onChange={(e) => setOrgType(e.target.value as OrgType)}
+              onChange={(e) => setOrgType(parseOrgType(e.target.value))}
               className={input()}
             >
               {ORG_TYPES.map((t) => (
@@ -1742,6 +2496,11 @@ function CandidateRow({
             </span>
             <ConfidenceBadge value={candidate.confidence} />
           </div>
+          {candidate.directoryDescription && (
+            <p className="mt-0.5 text-[length:var(--font-size-body3)]">
+              {candidate.directoryDescription}
+            </p>
+          )}
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {candidate.matchedReasons.join(" · ")}
             {candidate.popularity !== undefined &&
@@ -1804,7 +2563,7 @@ function CreateOrgForm({
         Type
         <select
           value={type}
-          onChange={(e) => setType(e.target.value as OrgType)}
+          onChange={(e) => setType(parseOrgType(e.target.value))}
           className={input()}
         >
           {ORG_TYPES.map((t) => (
@@ -1829,6 +2588,8 @@ function JoinTab({
   onPrepareJoin,
   onDraftChange,
   onSendJoin,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
   onStrategyChange,
 }: {
@@ -1839,6 +2600,8 @@ function JoinTab({
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
   onSendJoin: (e: FormEvent) => void;
+  onSubscribe: (id: Id<"listservs">) => Promise<void>;
+  onRedetect: (id: Id<"listservs">) => void;
   onStatusChange: (id: Id<"listservs">, status: Listserv["status"]) => void;
   onStrategyChange: (id: Id<"listservs">, strategy: JoinStrategy) => void;
 }) {
@@ -1848,6 +2611,15 @@ function JoinTab({
 
   const pending = listservs.filter((l) => !isJoined(l));
   const joined = listservs.filter(isJoined);
+
+  // joinAttempts arrives newest-first from the dashboard query, so grouping
+  // preserves that order and `[0]` is each row's most recent attempt.
+  const attemptsByListserv = new Map<Id<"listservs">, JoinAttempt[]>();
+  for (const attempt of joinAttempts) {
+    const existing = attemptsByListserv.get(attempt.listservId);
+    if (existing) existing.push(attempt);
+    else attemptsByListserv.set(attempt.listservId, [attempt]);
+  }
 
   return (
     <div className="grid gap-6">
@@ -1904,14 +2676,17 @@ function JoinTab({
         <Card>
           <CardHeader
             title={`${pending.length} source${pending.length !== 1 ? "s" : ""} to join`}
-            subtitle="Prepare a join email, review it, then send."
+            subtitle="Simplelists lists are joined through their web form, then confirmed from the reply. Other sources use an email request."
           />
           <div className="mt-4 grid gap-3">
             {pending.map((l) => (
               <JoinRow
                 key={l._id}
                 listserv={l}
+                attempts={attemptsByListserv.get(l._id) ?? []}
                 onPrepare={() => onPrepareJoin(defaultJoinDraft(l))}
+                onSubscribe={() => onSubscribe(l._id)}
+                onRedetect={() => onRedetect(l._id)}
                 onStatusChange={(status) => onStatusChange(l._id, status)}
                 onStrategyChange={(s) => onStrategyChange(l._id, s)}
               />
@@ -1923,7 +2698,7 @@ function JoinTab({
       {/* Recent attempts */}
       {joinAttempts.length > 0 && (
         <Card>
-          <CardHeader title="Recent join emails sent" />
+          <CardHeader title="Recent join attempts" />
           <div className="mt-3 grid gap-2">
             {joinAttempts.map((a) => (
               <div
@@ -1931,9 +2706,14 @@ function JoinTab({
                 className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
               >
                 <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <span className="truncate font-semibold">{a.recipient}</span>
+                <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
+                <span className="truncate font-semibold">
+                  {a.recipient ?? a.subscribeUrl ?? "—"}
+                </span>
                 <span className="truncate text-[color:var(--color-text-muted)]">
-                  {a.subject}
+                  {a.error ??
+                    a.subject ??
+                    (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
                 </span>
                 <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
                   {fmtDate(a.createdAt)}
@@ -1977,17 +2757,29 @@ function JoinTab({
 
 function JoinRow({
   listserv,
+  attempts,
   onPrepare,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
   onStrategyChange,
 }: {
   listserv: Listserv;
+  attempts: JoinAttempt[];
   onPrepare: () => void;
+  onSubscribe: () => Promise<void>;
+  onRedetect: () => void;
   onStatusChange: (status: Listserv["status"]) => void;
   onStrategyChange: (s: JoinStrategy) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const join = getEffectiveJoin(listserv);
+  const [subscribing, setSubscribing] = useState(false);
+  const join = storedJoin(listserv);
+  // Simplelists is web-interface only, so this row gets a subscribe button
+  // rather than the email composer. The composer stays for every other
+  // strategy, including the retired Lyris rows that still carry a recipient.
+  const isSimplelists = join.joinStrategy === "cornell_simplelists";
+  const latestAttempt = attempts[0];
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -2003,13 +2795,64 @@ function JoinRow({
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {join.joinStrategy.replace(/_/g, " ")} · {join.joinConfidence}%
             confident
-            {join.joinRecipient && ` · sends to ${join.joinRecipient}`}
+            {isSimplelists
+              ? " · web subscribe form"
+              : join.joinRecipient && ` · sends to ${join.joinRecipient}`}
           </div>
+          {isSimplelists && listserv.subscribeUrl && (
+            <a
+              href={listserv.subscribeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-[length:var(--font-size-body3)] font-semibold break-all text-[color:var(--color-primary-700)] underline"
+            >
+              {listserv.subscribeUrl}
+            </a>
+          )}
+          {latestAttempt && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[length:var(--font-size-body3)]">
+              <StatusDot
+                status={latestAttempt.status === "sent" ? "green" : "red"}
+              />
+              <span className="text-[color:var(--color-text-muted)]">
+                last{" "}
+                {latestAttempt.method === "web_form" ? "subscribe" : "email"}{" "}
+                {latestAttempt.status}
+                {latestAttempt.httpStatus
+                  ? ` (HTTP ${latestAttempt.httpStatus})`
+                  : ""}{" "}
+                · {fmtDate(latestAttempt.createdAt)}
+              </span>
+              {latestAttempt.error && (
+                <span className="text-red-600">{latestAttempt.error}</span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Btn primary onClick={onPrepare}>
-            Prepare email
-          </Btn>
+          {isSimplelists ? (
+            <Btn
+              primary
+              // Disabled while in flight: each click POSTs the real
+              // lists.cornell.edu form, so a double-click sends two genuine
+              // subscription requests and produces two confirmation emails.
+              disabled={!listserv.subscribeUrl || subscribing}
+              onClick={async () => {
+                setSubscribing(true);
+                try {
+                  await onSubscribe();
+                } finally {
+                  setSubscribing(false);
+                }
+              }}
+            >
+              {subscribing ? "Submitting…" : "Submit subscribe form"}
+            </Btn>
+          ) : (
+            <Btn primary onClick={onPrepare}>
+              Prepare email
+            </Btn>
+          )}
           <Btn onClick={() => setOpen(!open)}>Settings</Btn>
         </div>
       </div>
@@ -2019,10 +2862,12 @@ function JoinRow({
             Join method
             <select
               value={join.joinStrategy}
-              onChange={(e) => onStrategyChange(e.target.value as JoinStrategy)}
+              onChange={(e) =>
+                onStrategyChange(parseJoinStrategy(e.target.value))
+              }
               className={input()}
             >
-              {JOIN_STRATEGIES.map((s) => (
+              {joinStrategyOptions(listserv.joinStrategy).map((s) => (
                 <option key={s} value={s}>
                   {s.replace(/_/g, " ")}
                 </option>
@@ -2034,7 +2879,7 @@ function JoinRow({
             <select
               value={listserv.status}
               onChange={(e) =>
-                onStatusChange(e.target.value as Listserv["status"])
+                onStatusChange(parseListservStatus(e.target.value))
               }
               className={input()}
             >
@@ -2045,9 +2890,21 @@ function JoinRow({
               ))}
             </select>
           </label>
+          <div className="col-span-2 flex flex-wrap items-center gap-3">
+            <Btn onClick={onRedetect}>Re-detect</Btn>
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Re-runs detection on this row&apos;s addresses. Nothing
+              reclassifies on its own.
+            </span>
+          </div>
           {join.joinInstructions && (
             <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               {join.joinInstructions}
+            </p>
+          )}
+          {join.ownerRecipient && (
+            <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              List manager: {join.ownerRecipient}
             </p>
           )}
         </div>
@@ -2169,7 +3026,7 @@ function IngestTab({
           <div className="flex items-center justify-between">
             <CardHeader
               title="Confirmation queue"
-              subtitle="Lyris emails asking you to confirm a subscription."
+              subtitle="Emails asking you to confirm a list subscription."
             />
             {pending.length > 0 && (
               <Tag variant="amber">{pending.length} pending</Tag>
@@ -2269,17 +3126,27 @@ function ConfirmationCard({
             ` · cleared ${fmtDate(confirmation.clearedAt)}`}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {confirmation.link && (
-          <a
-            href={confirmation.link}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
-          >
-            Open confirm link
-          </a>
-        )}
+      <div className="flex flex-wrap items-center gap-2">
+        {confirmation.link &&
+          (confirmation.linkTrusted ? (
+            <a
+              href={confirmation.link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              Open confirm link
+            </a>
+          ) : (
+            <div className="min-w-0">
+              <div className="text-[length:var(--font-size-body3)] font-semibold text-red-600">
+                Sender not authenticated — link not clickable
+              </div>
+              <div className="truncate font-mono text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {confirmation.link}
+              </div>
+            </div>
+          ))}
         {!cleared && onClear && (
           <Btn onClick={() => onClear(confirmation.id)}>Clear</Btn>
         )}
@@ -2294,28 +3161,57 @@ function PublishTab({
   runs,
   drafts,
   failedMessages,
-  readyCount,
+  ignoredMessages,
+  readyMessages,
+  readyStatus,
+  onLoadMoreReady,
   needsAssignment,
   onRunParse,
   onPublish,
+  onPublishMany,
   onHide,
   onEdit,
   onReparse,
+  onRequeue,
   onGoToSources,
 }: {
   runs: ParseRun[];
   drafts: EventDoc[];
   failedMessages: ParseMessage[];
-  readyCount: number;
+  ignoredMessages: ParseMessage[];
+  readyMessages: ParseMessage[];
+  readyStatus: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
+  onLoadMoreReady: () => void;
   needsAssignment: number;
   onRunParse: () => void;
   onPublish: (id: Id<"events">) => void;
+  onPublishMany: (ids: Id<"events">[]) => void;
   onHide: (id: Id<"events">) => void;
   onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
   onReparse: (id: Id<"listservMessages">) => void;
+  onRequeue: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
 }) {
+  const readyCount = readyMessages.length;
   const blocked = readyCount === 0 && needsAssignment > 0;
+  const [showReady, setShowReady] = useState(false);
+  const [selected, setSelected] = useState<Set<Id<"events">>>(new Set());
+
+  function toggleSelected(id: Id<"events">) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function publishSelected() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    onPublishMany(ids);
+    setSelected(new Set());
+  }
 
   return (
     <div className="grid gap-6">
@@ -2334,9 +3230,13 @@ function PublishTab({
           <div className="flex items-center gap-4">
             <div className="flex gap-4 text-center">
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold">
+                <button
+                  onClick={() => setShowReady((v) => !v)}
+                  className="text-[length:var(--font-size-sub2)] font-bold underline-offset-2 hover:underline"
+                >
                   {readyCount}
-                </div>
+                  {readyStatus === "CanLoadMore" ? "+" : ""}
+                </button>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   ready
                 </div>
@@ -2409,14 +3309,53 @@ function PublishTab({
             ))}
           </div>
         )}
+        {showReady && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+            {readyCount === 0 ? (
+              <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+                No assigned messages waiting to be parsed.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {readyMessages.map((m) => (
+                  <div
+                    key={m._id}
+                    className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold">
+                        {m.subject || "(no subject)"}
+                      </div>
+                      <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                        {m.senderEmail}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {readyStatus === "CanLoadMore" && (
+              <Btn onClick={onLoadMoreReady} className="mt-3">
+                Load more
+              </Btn>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Drafts */}
       <Card>
-        <CardHeader
-          title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
-          subtitle="Review each item before publishing. Published items appear in the user-facing feed."
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardHeader
+            title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
+            subtitle="Review each item before publishing. Published items appear in the user-facing feed."
+          />
+          {selected.size > 0 && (
+            <Btn primary onClick={publishSelected}>
+              Publish {selected.size} selected
+            </Btn>
+          )}
+        </div>
         {drafts.length === 0 ? (
           <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
             No drafts. Run the parser after assigning sources to organizations.
@@ -2427,6 +3366,8 @@ function PublishTab({
               <DraftCard
                 key={event._id}
                 event={event}
+                selected={selected.has(event._id)}
+                onToggleSelect={() => toggleSelected(event._id)}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
@@ -2446,7 +3387,7 @@ function PublishTab({
         <Card>
           <CardHeader
             title={`${failedMessages.length} failed message${failedMessages.length !== 1 ? "s" : ""}`}
-            subtitle="Parser errors."
+            subtitle="Parser errors. Retry reparses immediately; Requeue hands it back to the normal queue."
           />
           <div className="mt-3 grid gap-2">
             {failedMessages.map((m) => (
@@ -2463,6 +3404,35 @@ function PublishTab({
                   </div>
                 </div>
                 <Btn onClick={() => onReparse(m._id)}>Retry</Btn>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Ignored */}
+      {ignoredMessages.length > 0 && (
+        <Card>
+          <CardHeader
+            title={`${ignoredMessages.length} ignored message${ignoredMessages.length !== 1 ? "s" : ""}`}
+            subtitle="Skipped as administrative, confirmation, or irrelevant content. Requeue to have the parser look again."
+          />
+          <div className="mt-3 grid gap-2">
+            {ignoredMessages.map((m) => (
+              <div
+                key={m._id}
+                className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">
+                    {m.subject || "(no subject)"}
+                  </div>
+                  <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {m.parseError ?? m.senderEmail}
+                  </div>
+                </div>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
               </div>
             ))}
           </div>
@@ -2474,12 +3444,16 @@ function PublishTab({
 
 function DraftCard({
   event,
+  selected,
+  onToggleSelect,
   onPublish,
   onHide,
   onEdit,
   onReparse,
 }: {
   event: EventDoc;
+  selected: boolean;
+  onToggleSelect: () => void;
   onPublish: () => void;
   onHide: () => void;
   onEdit: (patch: DraftEditPatch) => void;
@@ -2573,6 +3547,15 @@ function DraftCard({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+        {!editing && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            className="mt-1 size-4 shrink-0"
+            aria-label={`Select ${event.title} for bulk publish`}
+          />
+        )}
         <div className="min-w-0 flex-1">
           {editing ? (
             <input
@@ -2637,7 +3620,7 @@ function DraftCard({
       </div>
 
       {editing && (
-        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           {/* Description + AI summary */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
@@ -3114,63 +4097,23 @@ function suggestFromEmail(email: string) {
 }
 
 function defaultJoinDraft(listserv: Listserv): JoinDraft {
-  const join = getEffectiveJoin(listserv);
   return {
     listservId: listserv._id,
-    recipient: join.joinRecipient ?? listserv.listEmail,
-    subject: join.joinSubject ?? `Request to join ${listserv.name}`,
-    body: join.joinBody ?? "",
+    recipient: listserv.joinRecipient ?? listserv.listEmail,
+    subject: listserv.joinSubject ?? `Request to join ${listserv.name}`,
+    body: listserv.joinBody ?? "",
   };
 }
 
-function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
-  const auto = detectJoinDefaults(listserv);
-  if (
-    auto.joinStrategy === "cornell_lyris" &&
-    (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")
-  ) {
-    return auto;
-  }
-  return {
-    joinStrategy: listserv.joinStrategy ?? auto.joinStrategy,
-    joinRecipient: listserv.joinRecipient ?? auto.joinRecipient,
-    ownerRecipient: listserv.ownerRecipient ?? auto.ownerRecipient,
-    joinSubject: listserv.joinSubject ?? auto.joinSubject,
-    joinBody: listserv.joinBody ?? auto.joinBody,
-    joinInstructions: listserv.joinInstructions ?? auto.joinInstructions,
-    joinConfidence: listserv.joinConfidence ?? auto.joinConfidence,
-    joinDetectionReasons:
-      listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
-  };
-}
-
-function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
-  const email = listserv.listEmail.toLowerCase();
-  const [local = "", domain = ""] = email.split("@");
-  if (
-    [
-      "lists.cornell.edu",
-      "mm.lists.cornell.edu",
-      "list.cs.cornell.edu",
-    ].includes(domain)
-  ) {
-    const listName = local.replace(/^owner-/, "");
-    return {
-      joinStrategy: "cornell_lyris",
-      joinRecipient: `${listName}-request@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions:
-        "Cornell list: send subject 'join' to listname-request@cornell.edu with blank body.",
-      joinConfidence: listName.endsWith("-l") ? 95 : 75,
-      joinDetectionReasons: [
-        listName.endsWith("-l")
-          ? "Cornell Lyris list address"
-          : "Cornell list domain",
-      ],
-    };
-  }
+/**
+ * The stored detection, with display-only fallbacks.
+ *
+ * Detection itself lives entirely in `listservAdmin.detectJoinStrategy`. This
+ * used to re-derive a strategy client-side and could therefore *display* one
+ * that differed from what was saved; now it only reads what the backend wrote,
+ * so "Re-detect" is the single way a row's strategy changes.
+ */
+function storedJoin(listserv: Listserv): EffectiveJoin {
   return {
     joinStrategy: listserv.joinStrategy ?? "unknown",
     joinRecipient: listserv.joinRecipient,
@@ -3179,7 +4122,7 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
     joinBody: listserv.joinBody,
     joinInstructions:
       listserv.joinInstructions ??
-      "No reliable join flow detected. Review manually.",
+      "No join flow detected yet — run Re-detect, or review manually.",
     joinConfidence: listserv.joinConfidence ?? 20,
     joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };
@@ -3189,9 +4132,6 @@ function toConfirmationItem(
   mail: ConfirmationMessage,
   listservById: Map<Id<"listservs">, Listserv>,
 ): ConfirmationItem | null {
-  const link =
-    extractConfirmationLink(mail.bodyText) ??
-    extractConfirmationLink(mail.bodyHtml);
   return {
     id: mail._id,
     listservName: mail.listservId
@@ -3201,7 +4141,11 @@ function toConfirmationItem(
     sender: mail.senderEmail || mail.sender,
     receivedAt: mail.receivedAt,
     clearedAt: mail.confirmationClearedAt,
-    link,
+    link: confirmationLinkFrom(mail) ?? undefined,
+    // `From` is trivially spoofable and the confirm link is a one-click
+    // account action, so it is only made clickable for a message the mail
+    // server actually authenticated.
+    linkTrusted: mail.senderAuthenticated,
   };
 }
 
@@ -3222,14 +4166,12 @@ function confirmationMatchesListserv(
   );
 }
 
-function extractConfirmationLink(value: string) {
-  const match = value.match(
-    /https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i,
-  );
-  return match?.[0].replace(/&amp;/g, "&");
-}
-
 function inferListNameFromMessage(mail: ConfirmationMessage) {
+  // A Simplelists confirmation names its list in the sender address, so prefer
+  // that over guessing at it from the prose.
+  const fromSender = listNameFromConfirmationSender(mail.senderEmail);
+  if (fromSender) return fromSender.toUpperCase();
+
   const match = `${mail.subject}\n${mail.bodyText}`.match(
     /(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i,
   );

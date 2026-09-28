@@ -1,4 +1,8 @@
 import { v } from "convex/values";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { internal } from "./_generated/api";
 import {
   action,
@@ -8,7 +12,33 @@ import {
   query,
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
-import type { Id } from "./_generated/dataModel";
+import {
+  hasAuthenticatedCornellSender,
+  isCornellListAddress,
+  isJoinConfirmationMail,
+  isLegacyLyrisAddress,
+  isSimplelistsAddress,
+  listNameFromConfirmationSender,
+  managerAddressForList,
+  simplelistsAddressForList,
+  subscribeUrlForList,
+  subscriptionListNameFrom,
+  SIMPLELISTS_ORIGIN,
+} from "./lib/cornellLists";
+import {
+  buildLyrisJoinDefaults,
+  lyrisDetectionReasons,
+} from "./lib/legacyLyris";
+import { UNKNOWN_LIST_REASON } from "./ingestion";
+import {
+  discoveryRunDocValidator,
+  ingestionRunDocValidator,
+  joinAttemptDocValidator,
+  listservCandidateDocValidator,
+  listservDocValidator,
+  listservIngestionStateDocValidator,
+} from "./lib/docValidators";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -17,12 +47,19 @@ const GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GMAIL_SEND_URL =
   "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
+/** Name submitted on the Simplelists subscribe form alongside the inbox address. */
+const SUBSCRIBER_DISPLAY_NAME = "Cornell Loop";
+
 type CandidateInput = {
   email: string;
   displayName?: string;
   confidence: number;
   popularity?: number;
   matchedReasons: string[];
+  /** Omitted by D1 discovery, which predates the field and means `d1_discovery`. */
+  source?: "d1_discovery" | "simplelists_directory";
+  directoryDescription?: string;
+  subscribeUrl?: string;
 };
 
 type D1QueryResponse = {
@@ -48,12 +85,27 @@ type IngestionRunResult = {
   stored: number;
 };
 
+type RematchResult = {
+  scanned: number;
+  matched: number;
+  candidatesRaised: number;
+};
+
 type GmailConnectionSnapshot = {
   email: string;
   refreshToken: string;
 };
 
+type SubscribeResult = {
+  ok: boolean;
+  httpStatus?: number;
+  subscribeUrl: string;
+  error?: string;
+};
+
 type JoinStrategy =
+  | "cornell_simplelists"
+  | "cornell_simplelists_owner_contact"
   | "cornell_lyris"
   | "cornell_lyris_owner_contact"
   | "campus_groups"
@@ -69,13 +121,76 @@ type JoinDetection = {
   joinSubject?: string;
   joinBody?: string;
   joinInstructions?: string;
+  subscribeUrl?: string;
   joinConfidence: number;
   joinDetectionReasons: string[];
   joinDetectedAt: number;
 };
 
+/**
+ * {@link JoinDetection} with every optional key required-but-nullable, so
+ * spreading it into a `ctx.db.patch` clears fields the new strategy does not
+ * set instead of leaving the previous strategy's values behind.
+ */
+type JoinDetectionPatch = JoinDetection & {
+  joinRecipient: string | undefined;
+  ownerRecipient: string | undefined;
+  joinSubject: string | undefined;
+  joinBody: string | undefined;
+  joinInstructions: string | undefined;
+  subscribeUrl: string | undefined;
+};
+
+const CONFIRMATION_MESSAGE_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  receivedAt: v.number(),
+  listservId: v.optional(v.id("listservs")),
+  subject: v.string(),
+  senderEmail: v.string(),
+  sender: v.string(),
+  to: v.array(v.string()),
+  cc: v.array(v.string()),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+  confirmationClearedAt: v.optional(v.number()),
+  bodyText: v.string(),
+  bodyHtml: v.string(),
+  senderAuthenticated: v.boolean(),
+});
+
+const RECENT_MESSAGE_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  receivedAt: v.number(),
+  listservId: v.optional(v.id("listservs")),
+  subject: v.string(),
+  senderEmail: v.string(),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+});
+
 export const dashboard = query({
   args: { token: v.string() },
+  returns: v.object({
+    candidates: v.array(listservCandidateDocValidator),
+    listservs: v.array(listservDocValidator),
+    ingestionState: v.array(listservIngestionStateDocValidator),
+    discoveryRuns: v.array(discoveryRunDocValidator),
+    joinAttempts: v.array(joinAttemptDocValidator),
+    ingestionRuns: v.array(ingestionRunDocValidator),
+    recentMessages: v.array(RECENT_MESSAGE_VALIDATOR),
+    pendingConfirmations: v.array(CONFIRMATION_MESSAGE_VALIDATOR),
+    clearedConfirmations: v.array(CONFIRMATION_MESSAGE_VALIDATOR),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -89,7 +204,16 @@ export const dashboard = query({
       recentMessages,
       clearedConfirmations,
     ] = await Promise.all([
-      ctx.db.query("listservCandidates").order("desc").take(150),
+      // Highest confidence first, not newest first: directory discovery adds
+      // ~600 low-confidence rows in one go, and ordering by creation time
+      // would push every D1 candidate out of the 150-row window.
+      ctx.db
+        .query("listservCandidates")
+        .withIndex("by_status_and_confidence", (q) =>
+          q.eq("status", "candidate"),
+        )
+        .order("desc")
+        .take(150),
       ctx.db.query("listservs").order("desc").take(150),
       ctx.db.query("listservIngestionState").collect(),
       ctx.db
@@ -134,22 +258,19 @@ export const dashboard = query({
       confirmationClearedAt: m.confirmationClearedAt,
       bodyText: m.bodyText,
       bodyHtml: m.bodyHtml,
+      // Whether the receiving server recorded a DMARC/DKIM pass for a Cornell
+      // domain. The admin UI only renders the confirmation link as clickable
+      // when this holds, so the (large) raw headers never leave the backend.
+      senderAuthenticated: hasAuthenticatedCornellSender(m.headers),
     });
 
     // Pending confirmations: uncleared messages that look like confirmation requests.
     // These need body content so we keep those fields — but only for this targeted set.
-    const isConfirmation = (m: (typeof recentMessages)[number]) => {
-      const sender = m.senderEmail.toLowerCase();
-      const text = `${m.subject}\n${m.bodyText}`.toLowerCase();
-      return (
-        sender.startsWith("lyris-confirm-") ||
-        /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(
-          text,
-        )
-      );
-    };
     const pendingConfirmations = recentMessages
-      .filter((m) => m.confirmationClearedAt === undefined && isConfirmation(m))
+      .filter(
+        (m) =>
+          m.confirmationClearedAt === undefined && isJoinConfirmationMail(m),
+      )
       .map(confirmationFields);
 
     // Project only the fields the admin UI actually needs for the general message
@@ -183,14 +304,172 @@ export const dashboard = query({
   },
 });
 
+/**
+ * The full candidate review queue, paginated.
+ *
+ * `dashboard.candidates` is capped at 150 highest-confidence rows, which is the
+ * right default for the summary card but hid roughly 450 of the ~600 rows
+ * directory discovery seeds — the UI offered "Show all N" and could never get
+ * past the cap. Confidence order is preserved so the most promising candidates
+ * still come first; the rest are now reachable by paging rather than invisible.
+ */
+export const listCandidates = query({
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  // `paginate()` returns `splitCursor`/`pageStatus` alongside `page`,
+  // `isDone`, and `continueCursor` — a hand-rolled v.object() that omits
+  // them fails ReturnsValidationError on every call. Convex ships this
+  // factory precisely so the validator stays in sync with what
+  // `.paginate()` actually returns.
+  returns: paginationResultValidator(listservCandidateDocValidator),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await ctx.db
+      .query("listservCandidates")
+      .withIndex("by_status_and_confidence", (q) => q.eq("status", "candidate"))
+      .order("desc")
+      .paginate(args.paginationOpts);
+  },
+});
+
+/**
+ * Read-only visibility into the org/listserv damage that is deliberately
+ * repaired by hand rather than by migration — see PR5's plan for why. Groups
+ * every `listservs` row by organization, flags rows that look like the
+ * `assignSender` senderEmails-clobbering bug fixed in PR1 (a single sender
+ * address on an org that has more than one row), and surfaces a Simplelists
+ * directory match by e-mail so PR4's descriptions reach rows that were never
+ * themselves sourced from the directory.
+ */
+export const reconciliationReport = query({
+  args: { token: v.string() },
+  returns: v.object({
+    orgs: v.array(
+      v.object({
+        organizationId: v.id("orgs"),
+        organizationName: v.string(),
+        hasDuplicates: v.boolean(),
+        rows: v.array(
+          v.object({
+            listservId: v.id("listservs"),
+            listEmail: v.string(),
+            senderEmailsCount: v.number(),
+            isPrimary: v.boolean(),
+            status: v.union(
+              v.literal("joining"),
+              v.literal("active"),
+              v.literal("paused"),
+              v.literal("failed"),
+            ),
+            possiblyTruncated: v.boolean(),
+            directoryDescription: v.optional(v.string()),
+            directorySubscribeUrl: v.optional(v.string()),
+          }),
+        ),
+      }),
+    ),
+    // Raised automatically when a Simplelists confirmation resolves a list
+    // name with no listservs row. listservCandidates carries no organizationId,
+    // so these cannot be attributed to an org here — an admin has to look at
+    // the address and decide.
+    unknownListCandidates: v.array(
+      v.object({
+        candidateId: v.id("listservCandidates"),
+        email: v.string(),
+        displayName: v.optional(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const [orgs, listservs, candidates] = await Promise.all([
+      ctx.db.query("orgs").take(ORG_SCAN_LIMIT),
+      ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT),
+      // Directory discovery alone has added ~600 rows in one run, so this
+      // needs a real bound rather than the 500 used elsewhere in this file.
+      ctx.db.query("listservCandidates").take(CANDIDATE_SCAN_LIMIT),
+    ]);
+
+    const directoryByEmail = new Map<string, Doc<"listservCandidates">>();
+    for (const candidate of candidates) {
+      if (candidate.source === "simplelists_directory") {
+        directoryByEmail.set(normalizeEmail(candidate.email), candidate);
+      }
+    }
+
+    const rowsByOrg = new Map<Id<"orgs">, Doc<"listservs">[]>();
+    for (const listserv of listservs) {
+      if (!listserv.organizationId) continue;
+      const bucket = rowsByOrg.get(listserv.organizationId) ?? [];
+      bucket.push(listserv);
+      rowsByOrg.set(listserv.organizationId, bucket);
+    }
+
+    const orgReports = orgs.flatMap((org) => {
+      const rows = rowsByOrg.get(org._id) ?? [];
+      if (rows.length === 0) return [];
+
+      const hasDuplicates = rows.length > 1;
+      return [
+        {
+          organizationId: org._id,
+          organizationName: org.name,
+          hasDuplicates,
+          rows: rows.map((row) => {
+            const directoryMatch =
+              directoryByEmail.get(normalizeEmail(row.listEmail)) ??
+              row.senderEmails
+                .map((email) => directoryByEmail.get(normalizeEmail(email)))
+                .find((match) => match !== undefined);
+
+            return {
+              listservId: row._id,
+              listEmail: row.listEmail,
+              senderEmailsCount: row.senderEmails.length,
+              isPrimary: row.isPrimary === true,
+              status: row.status,
+              // A single sender address only looks like the PR1 clobbering
+              // bug when there is more than one row competing for the same
+              // org — a genuinely single-sender org is normal, not damage.
+              possiblyTruncated: hasDuplicates && row.senderEmails.length <= 1,
+              directoryDescription: directoryMatch?.directoryDescription,
+              directorySubscribeUrl: directoryMatch?.subscribeUrl,
+            };
+          }),
+        },
+      ];
+    });
+    orgReports.sort((a, b) => b.rows.length - a.rows.length);
+
+    const unknownListCandidates = candidates
+      .filter(
+        (candidate) =>
+          candidate.status === "candidate" &&
+          candidate.matchedReasons.includes(UNKNOWN_LIST_REASON),
+      )
+      .map((candidate) => ({
+        candidateId: candidate._id,
+        email: candidate.email,
+        displayName: candidate.displayName,
+      }));
+
+    return { orgs: orgReports, unknownListCandidates };
+  },
+});
+
 export const runDiscovery = action({
   args: { token: v.string() },
+  returns: v.object({
+    candidatesFound: v.number(),
+    inserted: v.number(),
+    updated: v.number(),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
     const runId: Id<"discoveryRuns"> = await ctx.runMutation(
       internal.listservAdmin.startDiscoveryRun,
-      {},
+      { source: "initial_sender_dataset" },
     );
 
     try {
@@ -225,6 +504,62 @@ export const runDiscovery = action({
   },
 });
 
+/**
+ * Discovery from the official lists.cornell.edu index.
+ *
+ * Complements {@link runDiscovery} rather than replacing it. D1 answers "which
+ * addresses do students actually receive mail from" — the only source that
+ * surfaces the CampusGroups, Mailchimp, and Gmail senders that most current
+ * orgs use. The directory answers "which Cornell lists exist, what are they
+ * really called, and can I subscribe", authoritatively and with human-written
+ * descriptions. The candidates worth reviewing are the intersection.
+ */
+export const runDirectoryDiscovery = action({
+  args: { token: v.string() },
+  returns: v.object({
+    entriesParsed: v.number(),
+    candidatesFound: v.number(),
+    inserted: v.number(),
+    updated: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const runId: Id<"discoveryRuns"> = await ctx.runMutation(
+      internal.listservAdmin.startDiscoveryRun,
+      { source: "simplelists_directory" },
+    );
+
+    try {
+      const { entriesParsed, candidates } = await fetchSimplelistsDirectory();
+      const stats: DiscoveryStats = await ctx.runMutation(
+        internal.listservAdmin.upsertDirectoryCandidates,
+        { candidates },
+      );
+
+      await ctx.runMutation(internal.listservAdmin.finishDiscoveryRun, {
+        runId,
+        status: "completed",
+        candidatesFound: candidates.length,
+        candidatesInserted: stats.inserted,
+        candidatesUpdated: stats.updated,
+      });
+
+      return { entriesParsed, candidatesFound: candidates.length, ...stats };
+    } catch (error) {
+      await ctx.runMutation(internal.listservAdmin.finishDiscoveryRun, {
+        runId,
+        status: "failed",
+        candidatesFound: 0,
+        candidatesInserted: 0,
+        candidatesUpdated: 0,
+        error: formatError(error),
+      });
+      throw error;
+    }
+  },
+});
+
 export const addCandidate = mutation({
   args: {
     token: v.string(),
@@ -232,6 +567,7 @@ export const addCandidate = mutation({
     displayName: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
+  returns: v.id("listservCandidates"),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -264,6 +600,7 @@ export const rejectCandidate = mutation({
     candidateId: v.id("listservCandidates"),
     notes: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.candidateId, {
@@ -271,6 +608,7 @@ export const rejectCandidate = mutation({
       notes: cleanOptional(args.notes),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -289,6 +627,7 @@ export const approveCandidate = mutation({
     ),
     notes: v.optional(v.string()),
   },
+  returns: v.id("listservs"),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -296,10 +635,14 @@ export const approveCandidate = mutation({
     if (!candidateRow) throw new Error("Candidate not found.");
 
     const listEmail = stripOwnerPrefix(candidateRow.email);
+    // `.first()`, not `.unique()`: `by_list_email` carries no uniqueness
+    // constraint, and duplicate rows are exactly the state this tooling exists
+    // to repair — so a unique lookup threw precisely when an admin was trying
+    // to approve a candidate for an already-duplicated list.
     const existing = await ctx.db
       .query("listservs")
       .withIndex("by_list_email", (q) => q.eq("listEmail", listEmail))
-      .unique();
+      .first();
 
     const now = Date.now();
     const joinDetection = detectJoinStrategy(listEmail, [
@@ -323,14 +666,11 @@ export const approveCandidate = mutation({
       updatedAt: now,
     };
 
-    let listservId = existing?._id;
+    const listservId: Id<"listservs"> = existing
+      ? existing._id
+      : await ctx.db.insert("listservs", { ...listservFields, createdAt: now });
     if (existing) {
       await ctx.db.patch(existing._id, listservFields);
-    } else {
-      listservId = await ctx.db.insert("listservs", {
-        ...listservFields,
-        createdAt: now,
-      });
     }
 
     await ctx.db.patch(args.candidateId, {
@@ -350,6 +690,7 @@ export const sendJoinEmail = action({
     subject: v.string(),
     body: v.string(),
   },
+  returns: v.object({ gmailMessageId: v.string() }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -378,10 +719,17 @@ export const sendJoinEmail = action({
         subject,
         body,
       );
+      // Gmail's send API always returns an id alongside a 2xx response; a
+      // missing one means the response shape wasn't what we expected, which
+      // is worth surfacing as a real failure rather than recording a bogus
+      // join attempt.
+      if (!sent.id)
+        throw new Error("Gmail send succeeded but returned no message id.");
 
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
         listservId: args.listservId,
         status: "sent",
+        method: "email",
         recipient,
         subject,
         body,
@@ -393,6 +741,7 @@ export const sendJoinEmail = action({
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
         listservId: args.listservId,
         status: "failed",
+        method: "email",
         recipient,
         subject,
         body,
@@ -403,8 +752,138 @@ export const sendJoinEmail = action({
   },
 });
 
+/**
+ * Subscribes the ingestion inbox to a Simplelists list through the list's
+ * public web form, which is the only join path Simplelists supports.
+ *
+ * This is a convenience, never the only path: on any failure the Join tab
+ * still renders the raw subscribe URL so an admin can click through by hand.
+ * Lists configured to require approval degrade gracefully — Simplelists
+ * notifies their managers instead of subscribing us immediately, which still
+ * shows up here as a successful POST.
+ */
+export const submitSimplelistsSubscribe = action({
+  args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.object({
+    ok: v.boolean(),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.string(),
+    error: v.optional(v.string()),
+  }),
+  handler: async (ctx, args): Promise<SubscribeResult> => {
+    requireAdminToken(args.token);
+
+    // This POSTs the real lists.cornell.edu form using the real connected
+    // mailbox — there is no sandbox to point at. Without an explicit opt-in,
+    // every deployment that happens to have Gmail connected can send genuine
+    // subscription requests to a live university service, which is how an
+    // accidental burst across the ~600 seeded lists would get us rate-limited
+    // or blocked by Cornell IT.
+    if (process.env.SIMPLELISTS_ALLOW_SUBSCRIBE !== "true") {
+      throw new Error(
+        "Automatic subscribing is disabled on this deployment. Set SIMPLELISTS_ALLOW_SUBSCRIBE=true to enable it, or use the subscribe link to join by hand.",
+      );
+    }
+
+    const listserv = await ctx.runQuery(
+      internal.listservAdmin.getListservForAdmin,
+      { listservId: args.listservId },
+    );
+    if (!listserv) throw new Error("Listserv not found.");
+
+    // Re-subscribing an already-joined list sends the mailbox a second
+    // confirmation and dirties the confirmation queue for no gain.
+    if (
+      listserv.joinStatus === "joined" ||
+      listserv.joinStatus === "awaiting_confirmation"
+    ) {
+      throw new Error(
+        `${listserv.listEmail} is already ${listserv.joinStatus.replace(/_/g, " ")}. Nothing to submit.`,
+      );
+    }
+
+    const listName = subscriptionListNameFrom(listserv.listEmail);
+    const subscribeUrl =
+      listserv.subscribeUrl ??
+      (listName ? subscribeUrlForList(listName) : null);
+    const listAddress = listName ? simplelistsAddressForList(listName) : null;
+
+    if (!listName || !subscribeUrl || !listAddress) {
+      throw new Error(
+        `${listserv.listEmail} is not a Simplelists list address, so it has no subscribe form.`,
+      );
+    }
+
+    const connection = await getGmailConnection(ctx);
+
+    try {
+      const { sessionCookie, csrfToken, listField } =
+        await fetchSubscribeForm(subscribeUrl);
+
+      const form = new URLSearchParams({
+        csrf_token: csrfToken,
+        name: SUBSCRIBER_DISPLAY_NAME,
+        email: connection.email,
+        list: listField ?? listAddress,
+        action: "subscribe",
+      });
+
+      const response = await fetch(`${SIMPLELISTS_ORIGIN}/subscribe/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // Convex's fetch does not manage cookies, so the session captured
+          // from the GET is echoed back by hand. The csrf_token is bound to
+          // it, so dropping this makes the POST fail CSRF validation.
+          Cookie: sessionCookie,
+          Referer: subscribeUrl,
+        },
+        body: form.toString(),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Subscribe POST failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+        );
+      }
+
+      await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
+        listservId: args.listservId,
+        status: "sent",
+        method: "web_form",
+        httpStatus: response.status,
+        subscribeUrl,
+        recipient: listAddress,
+      });
+
+      return { ok: true, httpStatus: response.status, subscribeUrl };
+    } catch (error) {
+      const message = formatError(error);
+      await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
+        listservId: args.listservId,
+        status: "failed",
+        method: "web_form",
+        httpStatus: httpStatusFrom(error),
+        subscribeUrl,
+        recipient: listAddress,
+        error: message,
+      });
+
+      // Deliberately not rethrown: the UI needs to render the fallback link
+      // alongside the reason, and a thrown action would surface only a toast.
+      return {
+        ok: false,
+        httpStatus: httpStatusFrom(error),
+        subscribeUrl,
+        error: message,
+      };
+    }
+  },
+});
+
 export const recomputeJoinStrategy = mutation({
   args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const listserv = await ctx.db.get(args.listservId);
@@ -414,6 +893,7 @@ export const recomputeJoinStrategy = mutation({
       ...detectJoinStrategy(listserv.listEmail, listserv.senderEmails),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -422,6 +902,10 @@ export const updateJoinStrategy = mutation({
     token: v.string(),
     listservId: v.id("listservs"),
     joinStrategy: v.union(
+      v.literal("cornell_simplelists"),
+      v.literal("cornell_simplelists_owner_contact"),
+      // Lyris values stay accepted so an admin can still correct a legacy row,
+      // but they are no longer offered for new selections in the UI.
       v.literal("cornell_lyris"),
       v.literal("cornell_lyris_owner_contact"),
       v.literal("campus_groups"),
@@ -431,6 +915,7 @@ export const updateJoinStrategy = mutation({
       v.literal("unknown"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const listserv = await ctx.db.get(args.listservId);
@@ -444,16 +929,37 @@ export const updateJoinStrategy = mutation({
       ),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
 export const runIngestionNow = action({
   args: { token: v.string() },
+  returns: v.object({
+    fetched: v.number(),
+    unseen: v.number(),
+    stored: v.number(),
+  }),
   handler: async (ctx, args): Promise<IngestionRunResult> => {
     requireAdminToken(args.token);
     return (await ctx.runAction(internal.ingestion.pollListservInbox, {
       trigger: "manual",
     })) as IngestionRunResult;
+  },
+});
+
+export const rematchUnassignedMessagesNow = action({
+  args: { token: v.string(), limit: v.optional(v.number()) },
+  returns: v.object({
+    scanned: v.number(),
+    matched: v.number(),
+    candidatesRaised: v.number(),
+  }),
+  handler: async (ctx, args): Promise<RematchResult> => {
+    requireAdminToken(args.token);
+    return await ctx.runMutation(internal.ingestion.rematchUnassignedMessages, {
+      limit: args.limit,
+    });
   },
 });
 
@@ -468,12 +974,14 @@ export const updateListservStatus = mutation({
       v.literal("failed"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
       status: args.status,
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -490,6 +998,7 @@ export const updateJoinStatus = mutation({
       v.literal("manual_required"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const patch =
@@ -504,6 +1013,7 @@ export const updateJoinStatus = mutation({
     await ctx.db.patch(args.listservId, {
       ...patch,
     });
+    return null;
   },
 });
 
@@ -513,24 +1023,332 @@ export const updateListservNotes = mutation({
     listservId: v.id("listservs"),
     notes: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
       notes: cleanOptional(args.notes),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
+export const updateListservEmail = mutation({
+  args: {
+    token: v.string(),
+    listservId: v.id("listservs"),
+    listEmail: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+
+    const listEmail = cleanRequired(args.listEmail, "List email");
+    const normalized = normalizeEmail(listEmail);
+
+    const collision = await ctx.db
+      .query("listservs")
+      .withIndex("by_list_email", (q) => q.eq("listEmail", normalized))
+      .first();
+    if (collision && collision._id !== args.listservId) {
+      throw new Error(
+        `${normalized} is already in use by "${collision.name}". Merge the two rows instead of renaming onto it.`,
+      );
+    }
+
+    await ctx.db.patch(args.listservId, {
+      listEmail: normalized,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Rows repointed per `foldBatch` call.
+ *
+ * `listservMessages` documents carry the full `bodyText` and `bodyHtml` of
+ * every archived email, so the transaction size is driven by body length rather
+ * than row count. 200 keeps a batch comfortably inside Convex's limits even for
+ * a list with years of long HTML digests.
+ */
+const FOLD_BATCH_SIZE = 200;
+
+/**
+ * Folds duplicate `listservs` rows into one surviving row.
+ *
+ * Entrepreneurship is the motivating case: ~62 students each mailed
+ * `eship-l@lists.cornell.edu`, and the old sender-keyed Sources tab turned each
+ * of them into a row of its own. All 62 describe one list, so they collapse
+ * into one row whose `senderEmails` holds every student address.
+ *
+ * Batched through an action rather than done in one mutation because the
+ * previous implementation `.collect()`ed every message for the duplicate and
+ * patched them in a single transaction — which exceeds Convex's limits on
+ * exactly the high-volume rows that most need folding.
+ *
+ * Scoped to one organization on purpose: a cross-org fold would silently
+ * reassign a listserv's message history to a different org's page, which is
+ * never what "fold this duplicate" means.
+ */
+export const foldListservs = action({
+  args: {
+    token: v.string(),
+    targetId: v.id("listservs"),
+    duplicateIds: v.array(v.id("listservs")),
+  },
+  returns: v.object({
+    foldedCount: v.number(),
+    rowsRepointed: v.number(),
+  }),
+  handler: async (ctx, args): Promise<FoldResult> => {
+    requireAdminToken(args.token);
+
+    let rowsRepointed = 0;
+    let foldedCount = 0;
+
+    for (const duplicateId of args.duplicateIds) {
+      // Scalars move first, so a failure part-way through the drain leaves the
+      // target already carrying the duplicate's addresses and subscribe URL
+      // rather than losing them. Re-running the fold then finishes the job.
+      await ctx.runMutation(internal.listservAdmin.absorbListservFields, {
+        targetId: args.targetId,
+        duplicateId,
+      });
+
+      for (;;) {
+        const batch = await ctx.runMutation(internal.listservAdmin.foldBatch, {
+          targetId: args.targetId,
+          duplicateId,
+        });
+        rowsRepointed += batch.repointed;
+        if (batch.done) break;
+      }
+
+      // Only after every child row has been repointed, so an interrupted fold
+      // never leaves a dangling `joinAttempts.listservId` — that field is
+      // required, so a dangling id is unrepresentable rather than merely ugly.
+      await ctx.runMutation(internal.listservAdmin.deleteFoldedListserv, {
+        duplicateId,
+      });
+      foldedCount += 1;
+    }
+
+    return { foldedCount, rowsRepointed };
+  },
+});
+
+type FoldResult = { foldedCount: number; rowsRepointed: number };
+
+/**
+ * Moves the duplicate's scalar fields onto the target, keeping whichever value
+ * is more informative rather than whichever row happens to survive.
+ *
+ * The `listEmail` rule matters most: folding the real list row into a
+ * personal-sender row would otherwise discard `eship-l@lists.cornell.edu` and
+ * leave the survivor identified by a student's address.
+ */
+export const absorbListservFields = internalMutation({
+  args: {
+    targetId: v.id("listservs"),
+    duplicateId: v.id("listservs"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (args.targetId === args.duplicateId) {
+      throw new Error("Cannot fold a listserv into itself.");
+    }
+
+    const [target, duplicate] = await Promise.all([
+      ctx.db.get(args.targetId),
+      ctx.db.get(args.duplicateId),
+    ]);
+    if (!target) throw new Error("Target listserv not found.");
+    if (!duplicate) throw new Error("Duplicate listserv not found.");
+    if (target.organizationId !== duplicate.organizationId) {
+      throw new Error(
+        "Fold target and duplicate must belong to the same organization.",
+      );
+    }
+
+    // A real Cornell list address always wins over a personal one. When both
+    // or neither qualify, the target keeps its own.
+    const targetIsList = isCornellListAddress(target.listEmail);
+    const duplicateIsList = isCornellListAddress(duplicate.listEmail);
+    const listEmail =
+      !targetIsList && duplicateIsList ? duplicate.listEmail : target.listEmail;
+
+    await ctx.db.patch(args.targetId, {
+      listEmail: normalizeEmail(listEmail),
+      // Both rows' own addresses are folded in alongside the aliases, so no
+      // address the system has ever seen for this list is lost.
+      senderEmails: [
+        ...new Set(
+          [
+            ...target.senderEmails,
+            ...duplicate.senderEmails,
+            target.listEmail,
+            duplicate.listEmail,
+          ].map(normalizeEmail),
+        ),
+      ],
+      lastReceivedAt: maxOptional(
+        target.lastReceivedAt,
+        duplicate.lastReceivedAt,
+      ),
+      isPrimary: target.isPrimary || duplicate.isPrimary || undefined,
+      // Join and subscribe details are only taken when the target has none:
+      // the duplicate may be the row detection actually ran against.
+      subscribeUrl: target.subscribeUrl ?? duplicate.subscribeUrl,
+      joinStrategy: target.joinStrategy ?? duplicate.joinStrategy,
+      joinRecipient: target.joinRecipient ?? duplicate.joinRecipient,
+      ownerRecipient: target.ownerRecipient ?? duplicate.ownerRecipient,
+      joinSubject: target.joinSubject ?? duplicate.joinSubject,
+      joinBody: target.joinBody ?? duplicate.joinBody,
+      joinInstructions: target.joinInstructions ?? duplicate.joinInstructions,
+      joinConfidence: target.joinConfidence ?? duplicate.joinConfidence,
+      joinDetectionReasons:
+        target.joinDetectionReasons ?? duplicate.joinDetectionReasons,
+      joinDetectedAt: target.joinDetectedAt ?? duplicate.joinDetectedAt,
+      notes: mergeNotes(target.notes, duplicate.notes),
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** Keeps both rows' notes rather than letting the duplicate's disappear. */
+function mergeNotes(targetNotes?: string, duplicateNotes?: string) {
+  const parts = [targetNotes?.trim(), duplicateNotes?.trim()].filter(
+    (part): part is string => Boolean(part),
+  );
+  if (parts.length === 0) return undefined;
+  return [...new Set(parts)].join("\n\n");
+}
+
+/**
+ * Repoints one batch of the duplicate's child rows onto the target.
+ *
+ * Exactly three tables reference `listservs`: `listservMessages.listservId`,
+ * `joinAttempts.listservId` (required, so it must never dangle), and
+ * `events.listservId`. Draining `by_listserv` with `.take()` self-terminates —
+ * each repointed row leaves the index range this query reads.
+ */
+export const foldBatch = internalMutation({
+  args: {
+    targetId: v.id("listservs"),
+    duplicateId: v.id("listservs"),
+  },
+  returns: v.object({
+    repointed: v.number(),
+    done: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const messages = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_listserv", (q) => q.eq("listservId", args.duplicateId))
+      .take(FOLD_BATCH_SIZE);
+    for (const message of messages) {
+      await ctx.db.patch(message._id, { listservId: args.targetId });
+    }
+    if (messages.length === FOLD_BATCH_SIZE) {
+      return { repointed: messages.length, done: false };
+    }
+
+    const attempts = await ctx.db
+      .query("joinAttempts")
+      .withIndex("by_listserv", (q) => q.eq("listservId", args.duplicateId))
+      .take(FOLD_BATCH_SIZE);
+    for (const attempt of attempts) {
+      await ctx.db.patch(attempt._id, { listservId: args.targetId });
+    }
+    if (attempts.length === FOLD_BATCH_SIZE) {
+      return { repointed: messages.length + attempts.length, done: false };
+    }
+
+    // Drafts and published events keep pointing at a row that still exists, so
+    // the admin page can still tell an admin which list an event came from.
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_listserv_id", (q) => q.eq("listservId", args.duplicateId))
+      .take(FOLD_BATCH_SIZE);
+    for (const event of events) {
+      await ctx.db.patch(event._id, { listservId: args.targetId });
+    }
+
+    const repointed = messages.length + attempts.length + events.length;
+    return { repointed, done: events.length < FOLD_BATCH_SIZE };
+  },
+});
+
+export const deleteFoldedListserv = internalMutation({
+  args: { duplicateId: v.id("listservs") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.duplicateId);
+    return null;
+  },
+});
+
+/**
+ * Sets `isPrimary` on one row and clears it on every other row in the same
+ * org, so "at most one primary per org" holds after the mutation regardless
+ * of what the rows looked like before.
+ */
+export const setPrimaryListserv = mutation({
+  args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+    if (!listserv.organizationId) {
+      throw new Error(
+        "This listserv has no organization yet, so there is nothing to be primary among.",
+      );
+    }
+
+    const siblings = await ctx.db
+      .query("listservs")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", listserv.organizationId),
+      )
+      .collect();
+
+    const now = Date.now();
+    for (const sibling of siblings) {
+      const shouldBePrimary = sibling._id === args.listservId;
+      if (sibling.isPrimary === shouldBePrimary) continue;
+      await ctx.db.patch(sibling._id, {
+        isPrimary: shouldBePrimary || undefined,
+        updatedAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+function maxOptional(a: number | undefined, b: number | undefined) {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return Math.max(a, b);
+}
+
 export const clearConfirmation = mutation({
   args: { token: v.string(), messageId: v.id("listservMessages") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const now = Date.now();
     const message = await ctx.db.get(args.messageId);
+    if (!message) throw new Error("Message not found.");
     const listservId =
-      message?.listservId ??
-      (message ? await resolveListservFromMessage(ctx, message) : undefined);
+      message.listservId ?? (await resolveListservFromMessage(ctx, message));
 
     await ctx.db.patch(args.messageId, {
       confirmationClearedAt: now,
@@ -544,8 +1362,26 @@ export const clearConfirmation = mutation({
         updatedAt: now,
       });
     }
+    return null;
   },
 });
+
+/**
+ * Upper bound on unindexed `listservs` scans in this file: the substring-match
+ * scan in {@link resolveListservFromMessage} and the `reconciliationReport`
+ * dashboard read. The table holds well under this today.
+ */
+const LISTSERV_SCAN_LIMIT = 500;
+
+/** Upper bound on the unindexed `orgs` scan in `reconciliationReport`. */
+const ORG_SCAN_LIMIT = 500;
+
+/**
+ * Upper bound on the unindexed `listservCandidates` scan in
+ * `reconciliationReport`. Directory discovery alone adds ~600 low-confidence
+ * rows in one run, so this needs real headroom above the other scan limits.
+ */
+const CANDIDATE_SCAN_LIMIT = 3000;
 
 async function resolveListservFromMessage(
   ctx: MutationCtx,
@@ -557,7 +1393,26 @@ async function resolveListservFromMessage(
     cc: string[];
   },
 ) {
-  const listservs = await ctx.db.query("listservs").collect();
+  // A Simplelists confirmation names its list in the sender address, so it can
+  // be resolved exactly. Try that before the substring heuristic below, which
+  // matches on local parts and can easily land on the wrong row.
+  const listName = listNameFromConfirmationSender(message.senderEmail);
+  const listAddress = listName ? simplelistsAddressForList(listName) : null;
+  if (listAddress) {
+    // `by_list_email` is not unique — duplicate rows are exactly the state the
+    // reconciliation work exists to clean up — so take the first match.
+    const exact = await ctx.db
+      .query("listservs")
+      .withIndex("by_list_email", (q) => q.eq("listEmail", listAddress))
+      .first();
+    if (exact) return exact._id;
+  }
+
+  // Bounded rather than unbounded: this fallback matches on subject/body
+  // substrings, which is inherently a full scan (no index can serve a
+  // "does this text contain this address" predicate). The table holds well
+  // under this today.
+  const listservs = await ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT);
   const searchable =
     `${message.subject}\n${message.bodyText}\n${message.senderEmail}\n${message.to.join(" ")}\n${message.cc.join(" ")}`.toLowerCase();
 
@@ -581,10 +1436,15 @@ async function resolveListservFromMessage(
 }
 
 export const startDiscoveryRun = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    source: v.union(
+      v.literal("initial_sender_dataset"),
+      v.literal("simplelists_directory"),
+    ),
+  },
+  handler: async (ctx, args) => {
     return ctx.db.insert("discoveryRuns", {
-      source: "initial_sender_dataset",
+      source: args.source,
       status: "running",
       startedAt: Date.now(),
       candidatesFound: 0,
@@ -632,6 +1492,31 @@ export const upsertDiscoveredCandidates = internalMutation({
   },
 });
 
+export const upsertDirectoryCandidates = internalMutation({
+  args: {
+    candidates: v.array(
+      v.object({
+        email: v.string(),
+        displayName: v.string(),
+        confidence: v.number(),
+        matchedReasons: v.array(v.string()),
+        directoryDescription: v.optional(v.string()),
+        subscribeUrl: v.string(),
+      }),
+    ),
+  },
+  returns: v.object({ inserted: v.number(), updated: v.number() }),
+  handler: async (ctx, args) => {
+    return upsertCandidates(
+      ctx,
+      args.candidates.map((candidate) => ({
+        ...candidate,
+        source: "simplelists_directory" as const,
+      })),
+    );
+  },
+});
+
 export const getListservForAdmin = internalQuery({
   args: { listservId: v.id("listservs") },
   handler: async (ctx, args) => {
@@ -643,29 +1528,46 @@ export const recordJoinAttempt = internalMutation({
   args: {
     listservId: v.id("listservs"),
     status: v.union(v.literal("sent"), v.literal("failed")),
-    recipient: v.string(),
-    subject: v.string(),
-    body: v.string(),
+    method: v.optional(v.union(v.literal("email"), v.literal("web_form"))),
+    recipient: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
     gmailMessageId: v.optional(v.string()),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const now = Date.now();
+    const method = args.method ?? "email";
     await ctx.db.insert("joinAttempts", {
       listservId: args.listservId,
       status: args.status,
+      method,
       recipient: args.recipient,
       subject: args.subject,
       body: args.body,
       gmailMessageId: args.gmailMessageId,
+      httpStatus: args.httpStatus,
+      subscribeUrl: args.subscribeUrl,
       error: args.error,
       createdAt: now,
     });
 
+    // A successful web subscribe does not join us — Simplelists replies with a
+    // confirmation mail that ingestion has to see, so the row waits on that
+    // rather than reporting an e-mail we never sent.
     await ctx.db.patch(args.listservId, {
-      joinStatus: args.status === "sent" ? "join_email_sent" : "failed",
+      joinStatus:
+        args.status === "failed"
+          ? "failed"
+          : method === "web_form"
+            ? "awaiting_confirmation"
+            : "join_email_sent",
       updatedAt: now,
     });
+    return null;
   },
 });
 
@@ -686,14 +1588,30 @@ async function upsertCandidates(
 
     if (existing) {
       if (existing.status !== "candidate") continue;
+
+      // A list that is in the directory *and* shows up in the student mail
+      // data is the strongest signal discovery has — far stronger than the
+      // `-l` suffix heuristic, which is only ever guessing at this. The boost
+      // is credited once: re-running must not inflate confidence each time.
+      const crossReferenced =
+        input.matchedReasons.includes(DIRECTORY_REASON) &&
+        !existing.matchedReasons.includes(DIRECTORY_REASON) &&
+        (existing.popularity ?? 0) > 0;
+
       await ctx.db.patch(existing._id, {
         displayName:
           input.displayName ?? existing.displayName ?? inferDisplayName(email),
-        confidence: Math.max(existing.confidence, input.confidence),
+        confidence: clampConfidence(
+          Math.max(existing.confidence, input.confidence) +
+            (crossReferenced ? DIRECTORY_MATCH_BOOST : 0),
+        ),
         popularity: input.popularity ?? existing.popularity,
         matchedReasons: [
           ...new Set([...existing.matchedReasons, ...input.matchedReasons]),
         ],
+        directoryDescription:
+          input.directoryDescription ?? existing.directoryDescription,
+        subscribeUrl: input.subscribeUrl ?? existing.subscribeUrl,
         updatedAt: now,
       });
       updated += 1;
@@ -703,11 +1621,13 @@ async function upsertCandidates(
     await ctx.db.insert("listservCandidates", {
       email,
       displayName: input.displayName ?? inferDisplayName(email),
-      source: "d1_discovery",
+      source: input.source ?? "d1_discovery",
       status: "candidate",
       confidence: input.confidence,
       popularity: input.popularity,
       matchedReasons: input.matchedReasons,
+      directoryDescription: input.directoryDescription,
+      subscribeUrl: input.subscribeUrl,
       createdAt: now,
       updatedAt: now,
     });
@@ -733,7 +1653,11 @@ async function discoverCandidatesFromInitialDataset() {
     FROM emails e
     LEFT JOIN email_submissions es ON es.email_id = e.id
     WHERE
-      lower(e.email) LIKE '%@list.cornell.edu'
+      lower(e.email) LIKE '%@lists.cornell.edu'
+      -- The retired Lyris domains are kept: historical mail in the dataset
+      -- still references them, and a hit there is a useful signal that an org
+      -- *had* a list whose Simplelists successor is worth finding.
+      OR lower(e.email) LIKE '%@list.cornell.edu'
       OR lower(e.email) LIKE '%@mm.list.cornell.edu'
       OR lower(e.email) LIKE '%@list.cs.cornell.edu'
       OR lower(substr(e.email, 1, instr(e.email, '@') - 1)) LIKE '%-l'
@@ -779,6 +1703,174 @@ async function discoverCandidatesFromInitialDataset() {
     .slice(0, 100);
 }
 
+/** Reason string that marks a candidate as present in the official index. */
+const DIRECTORY_REASON = "in Simplelists directory";
+
+/**
+ * Directory-only candidates start well below the D1 threshold. Most of the
+ * ~600 survivors are lab, departmental, or course lists; they are worth having
+ * on file and worth enriching D1 hits with, but they must not outrank an
+ * address students demonstrably receive mail from.
+ */
+const DIRECTORY_BASE_CONFIDENCE = 25;
+
+/** Credited once when a directory entry meets a candidate that has D1 overlap. */
+const DIRECTORY_MATCH_BOOST = 25;
+
+/**
+ * Prefixes that are never a student org.
+ *
+ * `test` and `EXAMPLE` are Simplelists' own scratch lists, `training` is the
+ * playpen, and `CCE` is Cornell Cooperative Extension — 47 county-office and
+ * program lists that would dominate the queue on volume alone. Matched
+ * case-insensitively because the directory mixes `test-AC2535-01-L` with
+ * `TEST-DEV-TODD-001-02-DUCO-L`.
+ */
+const DIRECTORY_SKIP_PREFIXES = ["test-", "example-", "training-", "cce-"];
+
+type DirectoryCandidate = {
+  email: string;
+  displayName: string;
+  confidence: number;
+  matchedReasons: string[];
+  directoryDescription?: string;
+  subscribeUrl: string;
+};
+
+/**
+ * One GET of the directory, parsed into candidates.
+ *
+ * The page renders every list as an `<option>` whose value is
+ * `NAME%lists.cornell.edu` — a `%` separator, not `@` — and whose text is the
+ * name optionally followed by a parenthesised description, both spread across
+ * several lines of whitespace.
+ */
+async function fetchSimplelistsDirectory() {
+  const response = await fetch(`${SIMPLELISTS_ORIGIN}/`);
+  if (!response.ok) {
+    throw new Error(
+      `Simplelists directory request failed (${response.status}).`,
+    );
+  }
+
+  const entries = parseDirectoryOptions(await response.text());
+  if (entries.length === 0) {
+    // The page rendered but held no list options, which means its markup
+    // changed. Failing loudly beats recording a successful run that found
+    // nothing and letting the directory silently rot.
+    throw new Error(
+      "Simplelists directory returned no list entries — the page markup likely changed.",
+    );
+  }
+
+  const candidates: DirectoryCandidate[] = [];
+  for (const entry of entries) {
+    if (
+      DIRECTORY_SKIP_PREFIXES.some((prefix) =>
+        entry.listName.startsWith(prefix),
+      )
+    ) {
+      continue;
+    }
+
+    const email = simplelistsAddressForList(entry.listName);
+    const subscribeUrl = subscribeUrlForList(entry.listName);
+    if (!email || !subscribeUrl) continue;
+
+    candidates.push({
+      email,
+      displayName: entry.displayName,
+      confidence: DIRECTORY_BASE_CONFIDENCE,
+      matchedReasons: [DIRECTORY_REASON],
+      directoryDescription: entry.description,
+      subscribeUrl,
+    });
+  }
+
+  return { entriesParsed: entries.length, candidates };
+}
+
+type DirectoryEntry = {
+  /** Lowercased, as every other list-name helper expects. */
+  listName: string;
+  /** The directory's own casing, e.g. `AABP-L`. */
+  displayName: string;
+  description?: string;
+};
+
+function parseDirectoryOptions(html: string): DirectoryEntry[] {
+  const entries: DirectoryEntry[] = [];
+  const seen = new Set<string>();
+  const pattern =
+    /<option\s+value="([^"%]+)%lists\.cornell\.edu"\s*>([\s\S]*?)<\/option>/gi;
+
+  for (const match of html.matchAll(pattern)) {
+    const rawName = match[1]?.trim();
+    if (!rawName) continue;
+
+    const listName = rawName.toLowerCase();
+    if (seen.has(listName)) continue;
+    seen.add(listName);
+
+    const text = collapseWhitespace(decodeHtmlEntities(match[2] ?? ""));
+    entries.push({
+      listName,
+      displayName: rawName,
+      description: descriptionFrom(text, rawName),
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * The parenthesised blurb in an option's text, or undefined when there is none.
+ *
+ * Seventeen descriptions contain their own nested parentheses, so this strips
+ * the name and then removes one outer pair rather than matching `\(([^)]*)\)`,
+ * which would truncate at the first inner `)`.
+ */
+function descriptionFrom(text: string, listName: string) {
+  const remainder = text.slice(listName.length).trim();
+  if (!remainder.startsWith("(") || !remainder.endsWith(")")) return undefined;
+
+  const description = remainder.slice(1, -1).trim();
+  return description.length > 0 ? description : undefined;
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+/** Enough entity handling for option text; the directory has no markup inside. */
+function decodeHtmlEntities(value: string) {
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const codePoint =
+        body.startsWith("#x") || body.startsWith("#X")
+          ? Number.parseInt(body.slice(2), 16)
+          : Number.parseInt(body.slice(1), 10);
+      return Number.isFinite(codePoint) && codePoint > 0
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+    return HTML_ENTITIES[body.toLowerCase()] ?? match;
+  });
+}
+
+function collapseWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clampConfidence(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function scoreCandidate(
   emailValue: string,
   popularity: number,
@@ -792,11 +1884,9 @@ function scoreCandidate(
   const reasons: string[] = [];
   let score = 0;
 
-  if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  ) {
+  // Discovery scores current Simplelists addresses as well as legacy Lyris
+  // ones — new lists only ever land on lists.cornell.edu.
+  if (isCornellListAddress(email)) {
     score += 55;
     reasons.push("list domain");
   }
@@ -841,37 +1931,50 @@ function scoreCandidate(
 function detectJoinStrategy(
   listEmail: string,
   senderEmails: string[],
-): JoinDetection {
+): JoinDetectionPatch {
   const allEmails = [listEmail, ...senderEmails].map(normalizeEmail);
   const primary = normalizeEmail(listEmail);
   const [local = "", domain = ""] = primary.split("@");
 
-  if (isCornellListDomainAddress(primary)) {
+  // Simplelists is checked first so a real lists.cornell.edu address can never
+  // fall through to the generic `endsWith("cornell.edu")` branch below, which
+  // would classify it `direct_org_email` and offer to *email* the list asking
+  // to be added. None of the existing non-Cornell-list rows reach this branch,
+  // so ordering it first leaves their classification untouched.
+  const simplelistsAddress = allEmails.find(isSimplelistsAddress);
+  if (simplelistsAddress) {
+    const viaSender = simplelistsAddress !== primary;
     return buildJoinDefaults(
-      "cornell_lyris",
-      primary,
-      inferDisplayName(primary),
+      "cornell_simplelists",
+      simplelistsAddress,
+      inferDisplayName(simplelistsAddress),
       [
-        isCornellLyrisAddress(primary)
-          ? "Cornell Lyris list address"
-          : "Cornell list domain",
-        "Official flow: send subject 'join' to listname-request@cornell.edu",
+        viaSender
+          ? "Sender uses the Cornell Simplelists domain"
+          : "Cornell Simplelists list address",
+        "Official flow: subscribe through the list's web form",
       ],
     );
   }
 
-  const lyrisSender = allEmails.find(isCornellListDomainAddress);
+  // Only the retired Lyris domains get the e-mail-command join flow, and only
+  // for rows that already live on those domains. See lib/legacyLyris.ts.
+  if (isLegacyLyrisAddress(primary)) {
+    return buildJoinDefaults(
+      "cornell_lyris",
+      primary,
+      inferDisplayName(primary),
+      lyrisDetectionReasons(primary, false),
+    );
+  }
+
+  const lyrisSender = allEmails.find(isLegacyLyrisAddress);
   if (lyrisSender) {
     return buildJoinDefaults(
       "cornell_lyris",
       lyrisSender,
       inferDisplayName(lyrisSender),
-      [
-        isCornellLyrisAddress(lyrisSender)
-          ? "Sender alias looks like Cornell Lyris"
-          : "Sender uses Cornell list domain",
-        "Official flow: send subject 'join' to listname-request@cornell.edu",
-      ],
+      lyrisDetectionReasons(lyrisSender, true),
     );
   }
 
@@ -911,7 +2014,31 @@ function detectJoinStrategy(
   ]);
 }
 
+/**
+ * Every optional field is spelled out so a `ctx.db.patch` of this object
+ * *clears* whatever the previous strategy stored rather than leaving it
+ * behind. That matters most for `cornell_simplelists`: a stale `joinRecipient`
+ * inherited from a `direct_org_email` classification would make the Join tab
+ * offer an email composer for a list that cannot be joined by email at all.
+ */
 function buildJoinDefaults(
+  joinStrategy: JoinStrategy,
+  listEmail: string,
+  name: string,
+  reasons?: string[],
+): JoinDetectionPatch {
+  return {
+    joinRecipient: undefined,
+    ownerRecipient: undefined,
+    joinSubject: undefined,
+    joinBody: undefined,
+    joinInstructions: undefined,
+    subscribeUrl: undefined,
+    ...resolveJoinDefaults(joinStrategy, listEmail, name, reasons),
+  };
+}
+
+function resolveJoinDefaults(
   joinStrategy: JoinStrategy,
   listEmail: string,
   name: string,
@@ -921,38 +2048,54 @@ function buildJoinDefaults(
   const [local = ""] = email.split("@");
   const now = Date.now();
 
-  if (joinStrategy === "cornell_lyris") {
-    const listName = local.replace(/^owner-/, "");
-    const looksCanonical = listName.endsWith("-l");
+  if (joinStrategy === "cornell_simplelists") {
+    const listName = subscriptionListNameFrom(email);
+    const subscribeUrl = listName ? subscribeUrlForList(listName) : null;
+    const managerAddress = listName ? managerAddressForList(listName) : null;
     return {
       joinStrategy,
-      joinRecipient: `${listName}-request@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions:
-        "Cornell Lyris lists are joined by sending a blank email with subject 'join' to listname-request@cornell.edu from the receiving inbox.",
-      joinConfidence: looksCanonical ? 95 : 75,
-      joinDetectionReasons: reasons ?? ["Cornell Lyris list address"],
+      // No joinRecipient/joinSubject/joinBody: Simplelists cannot be joined by
+      // email, so leaving them unset is what stops the UI offering a composer.
+      ownerRecipient: managerAddress ?? undefined,
+      subscribeUrl: subscribeUrl ?? undefined,
+      joinInstructions: subscribeUrl
+        ? "Cornell Simplelists lists are joined through the web form — email commands are not supported. Submit the subscribe form, then confirm from the email Simplelists sends back."
+        : "This looks like a Simplelists address but its list name could not be derived, so no subscribe URL is available. Find the list on lists.cornell.edu and subscribe by hand.",
+      joinConfidence: subscribeUrl ? 95 : 40,
+      joinDetectionReasons: reasons ?? ["Cornell Simplelists list address"],
       joinDetectedAt: now,
     };
   }
 
-  if (joinStrategy === "cornell_lyris_owner_contact") {
-    const listName = local.replace(/^owner-/, "").replace(/-request$/, "");
+  if (joinStrategy === "cornell_simplelists_owner_contact") {
+    const listName = subscriptionListNameFrom(email);
+    const managerAddress = listName ? managerAddressForList(listName) : null;
     return {
       joinStrategy,
-      joinRecipient: `owner-${listName}@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: `Request to join ${listName}`,
-      joinBody: ownerContactBody(listName),
+      joinRecipient: managerAddress ?? undefined,
+      ownerRecipient: managerAddress ?? undefined,
+      joinSubject: listName
+        ? `Request to join ${listName}`
+        : "Request to join mailing list",
+      joinBody: managerContactBody(listName ?? name),
+      subscribeUrl: listName
+        ? (subscribeUrlForList(listName) ?? undefined)
+        : undefined,
       joinInstructions:
-        "Use this if the list is private/closed or the normal join request fails.",
-      joinConfidence: 75,
-      joinDetectionReasons: reasons ?? ["Owner contact fallback"],
+        "Use this when the list is closed or requires approval, so the web subscribe form will not add us directly. This emails the list's human manager.",
+      joinConfidence: managerAddress ? 75 : 30,
+      joinDetectionReasons: reasons ?? ["Simplelists manager contact fallback"],
       joinDetectedAt: now,
     };
   }
+
+  const lyrisDefaults = buildLyrisJoinDefaults(
+    joinStrategy,
+    local,
+    reasons,
+    now,
+  );
+  if (lyrisDefaults) return { joinStrategy, ...lyrisDefaults };
 
   if (joinStrategy === "campus_groups") {
     return {
@@ -1004,32 +2147,13 @@ function buildJoinDefaults(
   };
 }
 
-function isCornellLyrisAddress(email: string) {
-  const [local = "", domain = ""] = normalizeEmail(email).split("@");
-  return (
-    local.endsWith("-l") &&
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  );
-}
-
-function isCornellListDomainAddress(email: string) {
-  const [, domain = ""] = normalizeEmail(email).split("@");
-  return [
-    "list.cornell.edu",
-    "mm.list.cornell.edu",
-    "list.cs.cornell.edu",
-  ].includes(domain);
-}
-
 function isNewsletterDomain(domain: string) {
   return /substack|beehiiv|mailchimp|mailerlite|ccsend|constantcontact|newsletter/.test(
     domain,
   );
 }
 
-function ownerContactBody(listName: string) {
+function managerContactBody(listName: string) {
   return `Hello,\n\nCould you please add dtiincubator@gmail.com to ${listName}?\n\nThis inbox is used by Cornell Loop to aggregate public Cornell student organization announcements for Cornell students.\n\nThank you.`;
 }
 
@@ -1170,4 +2294,119 @@ function formatError(error: unknown) {
   if (error instanceof Error) return error.message.slice(0, 500);
   if (typeof error === "string") return error.slice(0, 500);
   return "Unknown error.";
+}
+
+/**
+ * An HTTP failure from the Simplelists subscribe flow, carrying the status so
+ * the recorded attempt can distinguish "list does not exist" (404) from a
+ * transient upstream error.
+ */
+class SubscribeHttpError extends Error {
+  readonly httpStatus: number;
+
+  constructor(httpStatus: number, message: string) {
+    super(message);
+    this.name = "SubscribeHttpError";
+    this.httpStatus = httpStatus;
+  }
+}
+
+function httpStatusFrom(error: unknown) {
+  return error instanceof SubscribeHttpError ? error.httpStatus : undefined;
+}
+
+/**
+ * GETs a list's subscribe page to pick up the session cookie and the
+ * session-bound CSRF token the POST requires.
+ *
+ * A 404 here is meaningful rather than incidental: Simplelists serves the page
+ * only for lists that exist and accept self-subscribe, so the URL doubles as a
+ * validity probe.
+ */
+async function fetchSubscribeForm(subscribeUrl: string) {
+  const response = await fetch(subscribeUrl, { redirect: "follow" });
+
+  if (response.status === 404) {
+    throw new SubscribeHttpError(
+      404,
+      "Simplelists returned 404 for this subscribe page — the list does not exist or does not allow self-subscribe. Contact the list manager instead.",
+    );
+  }
+  if (!response.ok) {
+    throw new SubscribeHttpError(
+      response.status,
+      `Could not load the subscribe form (${response.status}).`,
+    );
+  }
+
+  const html = await response.text();
+  const form = subscribeFormFrom(html);
+  const csrfToken = inputValueFrom(form, "csrf_token");
+  if (!csrfToken) {
+    throw new Error(
+      "Loaded the subscribe form but found no csrf_token field; the Simplelists form markup has probably changed.",
+    );
+  }
+
+  const sessionCookie = sessionCookieFrom(response);
+  if (!sessionCookie) {
+    throw new Error(
+      "Simplelists did not set a session cookie on the subscribe page, so the CSRF token cannot be used.",
+    );
+  }
+
+  // The form carries the list address in its own casing (`WICC-L@…`, not
+  // `wicc-l@…`). It is submitted verbatim rather than rebuilt from the
+  // lowercased list name, so this cannot break if Simplelists ever compares it
+  // case-sensitively.
+  return {
+    sessionCookie,
+    csrfToken,
+    listField: inputValueFrom(form, "list"),
+  };
+}
+
+/**
+ * The subscribe form's markup. The page also contains an unrelated `/subs/`
+ * form, so the fields are read from this block rather than the whole document.
+ */
+function subscribeFormFrom(html: string) {
+  const match = html.match(
+    /<form[^>]+action=["'][^"']*\/subscribe\/["'][^>]*>([\s\S]*?)<\/form>/i,
+  );
+  return match?.[1] ?? html;
+}
+
+function inputValueFrom(html: string, field: string) {
+  const name = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match =
+    html.match(
+      new RegExp(
+        `<input[^>]+name=["']${name}["'][^>]+value=["']([^"']*)["']`,
+        "i",
+      ),
+    ) ??
+    html.match(
+      new RegExp(
+        `<input[^>]+value=["']([^"']*)["'][^>]+name=["']${name}["']`,
+        "i",
+      ),
+    );
+  return match?.[1] ?? null;
+}
+
+/**
+ * Rebuilds a `name=value` Cookie header from the response's `Set-Cookie`,
+ * dropping attributes (`Path`, `HttpOnly`, …) that must not be echoed back.
+ */
+function sessionCookieFrom(response: Response) {
+  const raw = response.headers.get("set-cookie");
+  if (!raw) return null;
+
+  const pairs = raw
+    .split(/,(?=[^;,]+=)/)
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter((pair): pair is string => Boolean(pair) && pair.includes("="));
+
+  return pairs.length > 0 ? pairs.join("; ") : null;
 }
