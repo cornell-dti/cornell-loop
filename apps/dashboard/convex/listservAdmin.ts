@@ -43,6 +43,10 @@ type CandidateInput = {
   confidence: number;
   popularity?: number;
   matchedReasons: string[];
+  /** Omitted by D1 discovery, which predates the field and means `d1_discovery`. */
+  source?: "d1_discovery" | "simplelists_directory";
+  directoryDescription?: string;
+  subscribeUrl?: string;
 };
 
 type D1QueryResponse = {
@@ -139,7 +143,16 @@ export const dashboard = query({
       recentMessages,
       clearedConfirmations,
     ] = await Promise.all([
-      ctx.db.query("listservCandidates").order("desc").take(150),
+      // Highest confidence first, not newest first: directory discovery adds
+      // ~600 low-confidence rows in one go, and ordering by creation time
+      // would push every D1 candidate out of the 150-row window.
+      ctx.db
+        .query("listservCandidates")
+        .withIndex("by_status_and_confidence", (q) =>
+          q.eq("status", "candidate"),
+        )
+        .order("desc")
+        .take(150),
       ctx.db.query("listservs").order("desc").take(150),
       ctx.db.query("listservIngestionState").collect(),
       ctx.db
@@ -237,7 +250,7 @@ export const runDiscovery = action({
 
     const runId: Id<"discoveryRuns"> = await ctx.runMutation(
       internal.listservAdmin.startDiscoveryRun,
-      {},
+      { source: "initial_sender_dataset" },
     );
 
     try {
@@ -258,6 +271,62 @@ export const runDiscovery = action({
       });
 
       return { candidatesFound: discovered.length, ...stats };
+    } catch (error) {
+      await ctx.runMutation(internal.listservAdmin.finishDiscoveryRun, {
+        runId,
+        status: "failed",
+        candidatesFound: 0,
+        candidatesInserted: 0,
+        candidatesUpdated: 0,
+        error: formatError(error),
+      });
+      throw error;
+    }
+  },
+});
+
+/**
+ * Discovery from the official lists.cornell.edu index.
+ *
+ * Complements {@link runDiscovery} rather than replacing it. D1 answers "which
+ * addresses do students actually receive mail from" — the only source that
+ * surfaces the CampusGroups, Mailchimp, and Gmail senders that most current
+ * orgs use. The directory answers "which Cornell lists exist, what are they
+ * really called, and can I subscribe", authoritatively and with human-written
+ * descriptions. The candidates worth reviewing are the intersection.
+ */
+export const runDirectoryDiscovery = action({
+  args: { token: v.string() },
+  returns: v.object({
+    entriesParsed: v.number(),
+    candidatesFound: v.number(),
+    inserted: v.number(),
+    updated: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const runId: Id<"discoveryRuns"> = await ctx.runMutation(
+      internal.listservAdmin.startDiscoveryRun,
+      { source: "simplelists_directory" },
+    );
+
+    try {
+      const { entriesParsed, candidates } = await fetchSimplelistsDirectory();
+      const stats: DiscoveryStats = await ctx.runMutation(
+        internal.listservAdmin.upsertDirectoryCandidates,
+        { candidates },
+      );
+
+      await ctx.runMutation(internal.listservAdmin.finishDiscoveryRun, {
+        runId,
+        status: "completed",
+        candidatesFound: candidates.length,
+        candidatesInserted: stats.inserted,
+        candidatesUpdated: stats.updated,
+      });
+
+      return { entriesParsed, candidatesFound: candidates.length, ...stats };
     } catch (error) {
       await ctx.runMutation(internal.listservAdmin.finishDiscoveryRun, {
         runId,
@@ -765,10 +834,15 @@ async function resolveListservFromMessage(
 }
 
 export const startDiscoveryRun = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    source: v.union(
+      v.literal("initial_sender_dataset"),
+      v.literal("simplelists_directory"),
+    ),
+  },
+  handler: async (ctx, args) => {
     return ctx.db.insert("discoveryRuns", {
-      source: "initial_sender_dataset",
+      source: args.source,
       status: "running",
       startedAt: Date.now(),
       candidatesFound: 0,
@@ -813,6 +887,31 @@ export const upsertDiscoveredCandidates = internalMutation({
   },
   handler: async (ctx, args) => {
     return upsertCandidates(ctx, args.candidates);
+  },
+});
+
+export const upsertDirectoryCandidates = internalMutation({
+  args: {
+    candidates: v.array(
+      v.object({
+        email: v.string(),
+        displayName: v.string(),
+        confidence: v.number(),
+        matchedReasons: v.array(v.string()),
+        directoryDescription: v.optional(v.string()),
+        subscribeUrl: v.string(),
+      }),
+    ),
+  },
+  returns: v.object({ inserted: v.number(), updated: v.number() }),
+  handler: async (ctx, args) => {
+    return upsertCandidates(
+      ctx,
+      args.candidates.map((candidate) => ({
+        ...candidate,
+        source: "simplelists_directory" as const,
+      })),
+    );
   },
 });
 
@@ -887,14 +986,30 @@ async function upsertCandidates(
 
     if (existing) {
       if (existing.status !== "candidate") continue;
+
+      // A list that is in the directory *and* shows up in the student mail
+      // data is the strongest signal discovery has — far stronger than the
+      // `-l` suffix heuristic, which is only ever guessing at this. The boost
+      // is credited once: re-running must not inflate confidence each time.
+      const crossReferenced =
+        input.matchedReasons.includes(DIRECTORY_REASON) &&
+        !existing.matchedReasons.includes(DIRECTORY_REASON) &&
+        (existing.popularity ?? 0) > 0;
+
       await ctx.db.patch(existing._id, {
         displayName:
           input.displayName ?? existing.displayName ?? inferDisplayName(email),
-        confidence: Math.max(existing.confidence, input.confidence),
+        confidence: clampConfidence(
+          Math.max(existing.confidence, input.confidence) +
+            (crossReferenced ? DIRECTORY_MATCH_BOOST : 0),
+        ),
         popularity: input.popularity ?? existing.popularity,
         matchedReasons: [
           ...new Set([...existing.matchedReasons, ...input.matchedReasons]),
         ],
+        directoryDescription:
+          input.directoryDescription ?? existing.directoryDescription,
+        subscribeUrl: input.subscribeUrl ?? existing.subscribeUrl,
         updatedAt: now,
       });
       updated += 1;
@@ -904,11 +1019,13 @@ async function upsertCandidates(
     await ctx.db.insert("listservCandidates", {
       email,
       displayName: input.displayName ?? inferDisplayName(email),
-      source: "d1_discovery",
+      source: input.source ?? "d1_discovery",
       status: "candidate",
       confidence: input.confidence,
       popularity: input.popularity,
       matchedReasons: input.matchedReasons,
+      directoryDescription: input.directoryDescription,
+      subscribeUrl: input.subscribeUrl,
       createdAt: now,
       updatedAt: now,
     });
@@ -934,7 +1051,11 @@ async function discoverCandidatesFromInitialDataset() {
     FROM emails e
     LEFT JOIN email_submissions es ON es.email_id = e.id
     WHERE
-      lower(e.email) LIKE '%@list.cornell.edu'
+      lower(e.email) LIKE '%@lists.cornell.edu'
+      -- The retired Lyris domains are kept: historical mail in the dataset
+      -- still references them, and a hit there is a useful signal that an org
+      -- *had* a list whose Simplelists successor is worth finding.
+      OR lower(e.email) LIKE '%@list.cornell.edu'
       OR lower(e.email) LIKE '%@mm.list.cornell.edu'
       OR lower(e.email) LIKE '%@list.cs.cornell.edu'
       OR lower(substr(e.email, 1, instr(e.email, '@') - 1)) LIKE '%-l'
@@ -978,6 +1099,174 @@ async function discoverCandidatesFromInitialDataset() {
     )
     .filter((candidateRow) => candidateRow.confidence >= 45)
     .slice(0, 100);
+}
+
+/** Reason string that marks a candidate as present in the official index. */
+const DIRECTORY_REASON = "in Simplelists directory";
+
+/**
+ * Directory-only candidates start well below the D1 threshold. Most of the
+ * ~600 survivors are lab, departmental, or course lists; they are worth having
+ * on file and worth enriching D1 hits with, but they must not outrank an
+ * address students demonstrably receive mail from.
+ */
+const DIRECTORY_BASE_CONFIDENCE = 25;
+
+/** Credited once when a directory entry meets a candidate that has D1 overlap. */
+const DIRECTORY_MATCH_BOOST = 25;
+
+/**
+ * Prefixes that are never a student org.
+ *
+ * `test` and `EXAMPLE` are Simplelists' own scratch lists, `training` is the
+ * playpen, and `CCE` is Cornell Cooperative Extension — 47 county-office and
+ * program lists that would dominate the queue on volume alone. Matched
+ * case-insensitively because the directory mixes `test-AC2535-01-L` with
+ * `TEST-DEV-TODD-001-02-DUCO-L`.
+ */
+const DIRECTORY_SKIP_PREFIXES = ["test-", "example-", "training-", "cce-"];
+
+type DirectoryCandidate = {
+  email: string;
+  displayName: string;
+  confidence: number;
+  matchedReasons: string[];
+  directoryDescription?: string;
+  subscribeUrl: string;
+};
+
+/**
+ * One GET of the directory, parsed into candidates.
+ *
+ * The page renders every list as an `<option>` whose value is
+ * `NAME%lists.cornell.edu` — a `%` separator, not `@` — and whose text is the
+ * name optionally followed by a parenthesised description, both spread across
+ * several lines of whitespace.
+ */
+async function fetchSimplelistsDirectory() {
+  const response = await fetch(`${SIMPLELISTS_ORIGIN}/`);
+  if (!response.ok) {
+    throw new Error(
+      `Simplelists directory request failed (${response.status}).`,
+    );
+  }
+
+  const entries = parseDirectoryOptions(await response.text());
+  if (entries.length === 0) {
+    // The page rendered but held no list options, which means its markup
+    // changed. Failing loudly beats recording a successful run that found
+    // nothing and letting the directory silently rot.
+    throw new Error(
+      "Simplelists directory returned no list entries — the page markup likely changed.",
+    );
+  }
+
+  const candidates: DirectoryCandidate[] = [];
+  for (const entry of entries) {
+    if (
+      DIRECTORY_SKIP_PREFIXES.some((prefix) =>
+        entry.listName.startsWith(prefix),
+      )
+    ) {
+      continue;
+    }
+
+    const email = simplelistsAddressForList(entry.listName);
+    const subscribeUrl = subscribeUrlForList(entry.listName);
+    if (!email || !subscribeUrl) continue;
+
+    candidates.push({
+      email,
+      displayName: entry.displayName,
+      confidence: DIRECTORY_BASE_CONFIDENCE,
+      matchedReasons: [DIRECTORY_REASON],
+      directoryDescription: entry.description,
+      subscribeUrl,
+    });
+  }
+
+  return { entriesParsed: entries.length, candidates };
+}
+
+type DirectoryEntry = {
+  /** Lowercased, as every other list-name helper expects. */
+  listName: string;
+  /** The directory's own casing, e.g. `AABP-L`. */
+  displayName: string;
+  description?: string;
+};
+
+function parseDirectoryOptions(html: string): DirectoryEntry[] {
+  const entries: DirectoryEntry[] = [];
+  const seen = new Set<string>();
+  const pattern =
+    /<option\s+value="([^"%]+)%lists\.cornell\.edu"\s*>([\s\S]*?)<\/option>/gi;
+
+  for (const match of html.matchAll(pattern)) {
+    const rawName = match[1]?.trim();
+    if (!rawName) continue;
+
+    const listName = rawName.toLowerCase();
+    if (seen.has(listName)) continue;
+    seen.add(listName);
+
+    const text = collapseWhitespace(decodeHtmlEntities(match[2] ?? ""));
+    entries.push({
+      listName,
+      displayName: rawName,
+      description: descriptionFrom(text, rawName),
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * The parenthesised blurb in an option's text, or undefined when there is none.
+ *
+ * Seventeen descriptions contain their own nested parentheses, so this strips
+ * the name and then removes one outer pair rather than matching `\(([^)]*)\)`,
+ * which would truncate at the first inner `)`.
+ */
+function descriptionFrom(text: string, listName: string) {
+  const remainder = text.slice(listName.length).trim();
+  if (!remainder.startsWith("(") || !remainder.endsWith(")")) return undefined;
+
+  const description = remainder.slice(1, -1).trim();
+  return description.length > 0 ? description : undefined;
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+/** Enough entity handling for option text; the directory has no markup inside. */
+function decodeHtmlEntities(value: string) {
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const codePoint =
+        body.startsWith("#x") || body.startsWith("#X")
+          ? Number.parseInt(body.slice(2), 16)
+          : Number.parseInt(body.slice(1), 10);
+      return Number.isFinite(codePoint) && codePoint > 0
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+    return HTML_ENTITIES[body.toLowerCase()] ?? match;
+  });
+}
+
+function collapseWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clampConfidence(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function scoreCandidate(
