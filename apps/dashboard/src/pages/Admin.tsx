@@ -18,6 +18,15 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 const ADMIN_TOKEN_STORAGE_KEY = "cornell_loop_admin_token";
 
 type Candidate = Doc<"listservCandidates">;
+
+/**
+ * Candidates rendered before the queue collapses behind a "show all".
+ *
+ * Directory discovery raises hundreds of departmental and lab lists at low
+ * confidence; without a cap they turn the review queue into an endless scroll.
+ */
+const CANDIDATE_PREVIEW_COUNT = 25;
+
 type Listserv = Doc<"listservs">;
 type IngestionState = Doc<"listservIngestionState">;
 type IngestionRun = Doc<"ingestionRuns">;
@@ -298,6 +307,9 @@ export default function Admin() {
 
   // ── mutations / actions ──
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
+  const runDirectoryDiscovery = useAction(
+    api.listservAdmin.runDirectoryDiscovery,
+  );
   const runIngestionNow = useAction(api.listservAdmin.runIngestionNow);
   const rematchUnassigned = useAction(
     api.listservAdmin.rematchUnassignedMessagesNow,
@@ -475,6 +487,21 @@ export default function Admin() {
             onRunDiscovery={() =>
               act("Discovery complete.", () => runDiscovery({ token }))
             }
+            onRunDirectoryDiscovery={async () => {
+              try {
+                const result = await runDirectoryDiscovery({ token });
+                showToast(
+                  `Parsed ${result.entriesParsed} lists · kept ${result.candidatesFound} · ${result.inserted} new, ${result.updated} enriched.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error
+                    ? e.message
+                    : "Directory discovery failed.",
+                  false,
+                );
+              }
+            }}
             onRematchUnassigned={async () => {
               try {
                 const result = await rematchUnassigned({ token });
@@ -753,6 +780,7 @@ function SetupTab({
   discoveryRuns,
   onConnectGmail,
   onRunDiscovery,
+  onRunDirectoryDiscovery,
   onRematchUnassigned,
   onAddCandidate,
 }: {
@@ -761,6 +789,7 @@ function SetupTab({
   discoveryRuns: Doc<"discoveryRuns">[];
   onConnectGmail: () => void;
   onRunDiscovery: () => void;
+  onRunDirectoryDiscovery: () => void;
   onRematchUnassigned: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
 }) {
@@ -814,14 +843,22 @@ function SetupTab({
       <Card>
         <CardHeader
           title="Discover"
-          subtitle="Find probable Cornell list addresses from the sender dataset."
+          subtitle="Find probable Cornell list addresses from the sender dataset and the official list directory."
         />
         <div className="mt-4 flex flex-wrap gap-2">
           <Btn primary onClick={onRunDiscovery}>
             Run discovery
           </Btn>
+          <Btn onClick={onRunDirectoryDiscovery}>Run directory discovery</Btn>
           <Btn onClick={onRematchUnassigned}>Re-match unassigned mail</Btn>
         </div>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Discovery ranks senders students actually receive mail from — the only
+          source that finds CampusGroups, Mailchimp, and Gmail senders.
+          Directory discovery reads every list on lists.cornell.edu and adds the
+          real names and descriptions; its own entries rank low until a list
+          also shows up in the sender data.
+        </p>
         <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
           Re-matching replays already-stored messages that were never attached
           to an organization, and raises a candidate for any list confirmation
@@ -935,13 +972,21 @@ function SourcesTab({
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
 }) {
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
+
   // Partition listservs into three buckets
   const unassignedSources = listservs.filter(
     (s) => !s.organizationId && s.status !== "paused",
   );
   const assignedSources = listservs.filter((s) => !!s.organizationId);
   const ignoredSources = listservs.filter((s) => s.status === "paused");
+  // Already highest-confidence-first from the dashboard query. Directory
+  // discovery contributes hundreds of low-confidence departmental lists, so
+  // only the top slice is rendered until an admin asks for the rest.
   const pendingCandidates = candidates.filter((c) => c.status === "candidate");
+  const visibleCandidates = showAllCandidates
+    ? pendingCandidates
+    : pendingCandidates.slice(0, CANDIDATE_PREVIEW_COUNT);
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
@@ -990,10 +1035,10 @@ function SourcesTab({
         <Card>
           <CardHeader
             title={`${pendingCandidates.length} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
-            subtitle="Addresses found by discovery. Approve to create a source, or reject to dismiss."
+            subtitle="Addresses found by discovery, strongest first. Approve to create a source, or reject to dismiss."
           />
           <div className="mt-4 grid gap-2">
-            {pendingCandidates.map((c) => (
+            {visibleCandidates.map((c) => (
               <CandidateRow
                 key={c._id}
                 candidate={c}
@@ -1002,6 +1047,13 @@ function SourcesTab({
               />
             ))}
           </div>
+          {pendingCandidates.length > visibleCandidates.length && (
+            <div className="mt-3">
+              <Btn onClick={() => setShowAllCandidates(true)}>
+                Show all {pendingCandidates.length} candidates
+              </Btn>
+            </div>
+          )}
         </Card>
       )}
 
@@ -1886,6 +1938,11 @@ function CandidateRow({
             </span>
             <ConfidenceBadge value={candidate.confidence} />
           </div>
+          {candidate.directoryDescription && (
+            <p className="mt-0.5 text-[length:var(--font-size-body3)]">
+              {candidate.directoryDescription}
+            </p>
+          )}
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {candidate.matchedReasons.join(" · ")}
             {candidate.popularity !== undefined &&
