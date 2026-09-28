@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useMutation,
+  usePaginatedQuery,
+  useQuery,
+} from "convex/react";
 import { api } from "../../convex/_generated/api";
 import {
   confirmationLinkFrom,
@@ -275,8 +280,10 @@ export default function Admin() {
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
+  const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
   const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
+  const requeueMessage = useMutation(api.parser.requeueMessage);
 
   async function act(label: string, fn: () => Promise<unknown>) {
     try {
@@ -308,9 +315,21 @@ export default function Admin() {
   const drafts: EventDoc[] = parseData?.drafts ?? [];
   const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
     []) as ParseMessage[];
-  const readyMessages: ParseMessage[] = (parseData?.readyMessages ??
+  const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
     []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
+
+  // Real ready-to-parse queue: paginated rather than a number capped at 200,
+  // so a genuine backlog is both visible and inspectable.
+  const {
+    results: readyMessages,
+    status: readyStatus,
+    loadMore: loadMoreReady,
+  } = usePaginatedQuery(
+    api.parser.listReadyMessages,
+    token ? { token } : "skip",
+    { initialNumItems: 25 },
+  );
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
 
@@ -573,13 +592,24 @@ export default function Admin() {
             runs={parseRuns}
             drafts={drafts}
             failedMessages={failedMessages}
-            readyCount={readyMessages.length}
+            ignoredMessages={ignoredMessages}
+            readyMessages={readyMessages}
+            readyStatus={readyStatus}
+            onLoadMoreReady={() => loadMoreReady(25)}
             needsAssignment={needsAssignment}
             onRunParse={() =>
               act("Parse complete.", () => runParseNow({ token }))
             }
             onPublish={(id) =>
               act("Published.", () => publishEvent({ token, eventId: id }))
+            }
+            onPublishMany={(ids) =>
+              act(
+                ids.length === 1
+                  ? "Published."
+                  : `Published ${ids.length} events.`,
+                () => publishEvents({ token, eventIds: ids }),
+              )
             }
             onHide={(id) =>
               act("Hidden.", () => hideEvent({ token, eventId: id }))
@@ -591,6 +621,9 @@ export default function Admin() {
             }
             onReparse={(id) =>
               act("Reparsed.", () => runParseNow({ token, messageId: id }))
+            }
+            onRequeue={(id) =>
+              act("Requeued.", () => requeueMessage({ token, messageId: id }))
             }
             onGoToSources={() => switchTab("sources")}
           />
@@ -2337,28 +2370,57 @@ function PublishTab({
   runs,
   drafts,
   failedMessages,
-  readyCount,
+  ignoredMessages,
+  readyMessages,
+  readyStatus,
+  onLoadMoreReady,
   needsAssignment,
   onRunParse,
   onPublish,
+  onPublishMany,
   onHide,
   onEdit,
   onReparse,
+  onRequeue,
   onGoToSources,
 }: {
   runs: ParseRun[];
   drafts: EventDoc[];
   failedMessages: ParseMessage[];
-  readyCount: number;
+  ignoredMessages: ParseMessage[];
+  readyMessages: ParseMessage[];
+  readyStatus: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
+  onLoadMoreReady: () => void;
   needsAssignment: number;
   onRunParse: () => void;
   onPublish: (id: Id<"events">) => void;
+  onPublishMany: (ids: Id<"events">[]) => void;
   onHide: (id: Id<"events">) => void;
   onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
   onReparse: (id: Id<"listservMessages">) => void;
+  onRequeue: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
 }) {
+  const readyCount = readyMessages.length;
   const blocked = readyCount === 0 && needsAssignment > 0;
+  const [showReady, setShowReady] = useState(false);
+  const [selected, setSelected] = useState<Set<Id<"events">>>(new Set());
+
+  function toggleSelected(id: Id<"events">) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function publishSelected() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    onPublishMany(ids);
+    setSelected(new Set());
+  }
 
   return (
     <div className="grid gap-6">
@@ -2377,9 +2439,13 @@ function PublishTab({
           <div className="flex items-center gap-4">
             <div className="flex gap-4 text-center">
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold">
+                <button
+                  onClick={() => setShowReady((v) => !v)}
+                  className="text-[length:var(--font-size-sub2)] font-bold underline-offset-2 hover:underline"
+                >
                   {readyCount}
-                </div>
+                  {readyStatus === "CanLoadMore" ? "+" : ""}
+                </button>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   ready
                 </div>
@@ -2452,14 +2518,53 @@ function PublishTab({
             ))}
           </div>
         )}
+        {showReady && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+            {readyCount === 0 ? (
+              <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+                No assigned messages waiting to be parsed.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {readyMessages.map((m) => (
+                  <div
+                    key={m._id}
+                    className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold">
+                        {m.subject || "(no subject)"}
+                      </div>
+                      <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                        {m.senderEmail}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {readyStatus === "CanLoadMore" && (
+              <Btn onClick={onLoadMoreReady} className="mt-3">
+                Load more
+              </Btn>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Drafts */}
       <Card>
-        <CardHeader
-          title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
-          subtitle="Review each item before publishing. Published items appear in the user-facing feed."
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardHeader
+            title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
+            subtitle="Review each item before publishing. Published items appear in the user-facing feed."
+          />
+          {selected.size > 0 && (
+            <Btn primary onClick={publishSelected}>
+              Publish {selected.size} selected
+            </Btn>
+          )}
+        </div>
         {drafts.length === 0 ? (
           <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
             No drafts. Run the parser after assigning sources to organizations.
@@ -2470,6 +2575,8 @@ function PublishTab({
               <DraftCard
                 key={event._id}
                 event={event}
+                selected={selected.has(event._id)}
+                onToggleSelect={() => toggleSelected(event._id)}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
@@ -2489,7 +2596,7 @@ function PublishTab({
         <Card>
           <CardHeader
             title={`${failedMessages.length} failed message${failedMessages.length !== 1 ? "s" : ""}`}
-            subtitle="Parser errors."
+            subtitle="Parser errors. Retry reparses immediately; Requeue hands it back to the normal queue."
           />
           <div className="mt-3 grid gap-2">
             {failedMessages.map((m) => (
@@ -2506,6 +2613,35 @@ function PublishTab({
                   </div>
                 </div>
                 <Btn onClick={() => onReparse(m._id)}>Retry</Btn>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Ignored */}
+      {ignoredMessages.length > 0 && (
+        <Card>
+          <CardHeader
+            title={`${ignoredMessages.length} ignored message${ignoredMessages.length !== 1 ? "s" : ""}`}
+            subtitle="Skipped as administrative, confirmation, or irrelevant content. Requeue to have the parser look again."
+          />
+          <div className="mt-3 grid gap-2">
+            {ignoredMessages.map((m) => (
+              <div
+                key={m._id}
+                className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">
+                    {m.subject || "(no subject)"}
+                  </div>
+                  <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {m.parseError ?? m.senderEmail}
+                  </div>
+                </div>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
               </div>
             ))}
           </div>
@@ -2517,12 +2653,16 @@ function PublishTab({
 
 function DraftCard({
   event,
+  selected,
+  onToggleSelect,
   onPublish,
   onHide,
   onEdit,
   onReparse,
 }: {
   event: EventDoc;
+  selected: boolean;
+  onToggleSelect: () => void;
   onPublish: () => void;
   onHide: () => void;
   onEdit: (patch: DraftEditPatch) => void;
@@ -2616,6 +2756,15 @@ function DraftCard({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+        {!editing && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            className="mt-1 size-4 shrink-0"
+            aria-label={`Select ${event.title} for bulk publish`}
+          />
+        )}
         <div className="min-w-0 flex-1">
           {editing ? (
             <input

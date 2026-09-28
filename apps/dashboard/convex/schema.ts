@@ -314,7 +314,11 @@ export default defineSchema({
     messagesScanned: v.number(),
     messagesParsed: v.number(),
     eventsCreated: v.number(),
+    // Kept for existing rows and always written as 0 going forward: the
+    // parser never actually updates an existing event on a dedupe hit, it
+    // skips storing the new one. See eventsSkippedDuplicate below.
     eventsUpdated: v.number(),
+    eventsSkippedDuplicate: v.optional(v.number()),
     messagesIgnored: v.number(),
     error: v.optional(v.string()),
   }).index("by_started_at", ["startedAt"]),
