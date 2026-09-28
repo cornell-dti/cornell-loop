@@ -26,6 +26,14 @@ import {
   lyrisDetectionReasons,
 } from "./lib/legacyLyris";
 import { UNKNOWN_LIST_REASON } from "./ingestion";
+import {
+  discoveryRunDocValidator,
+  ingestionRunDocValidator,
+  joinAttemptDocValidator,
+  listservCandidateDocValidator,
+  listservDocValidator,
+  listservIngestionStateDocValidator,
+} from "./lib/docValidators";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 
@@ -129,8 +137,56 @@ type JoinDetectionPatch = JoinDetection & {
   subscribeUrl: string | undefined;
 };
 
+const CONFIRMATION_MESSAGE_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  receivedAt: v.number(),
+  listservId: v.optional(v.id("listservs")),
+  subject: v.string(),
+  senderEmail: v.string(),
+  sender: v.string(),
+  to: v.array(v.string()),
+  cc: v.array(v.string()),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+  confirmationClearedAt: v.optional(v.number()),
+  bodyText: v.string(),
+  bodyHtml: v.string(),
+  senderAuthenticated: v.boolean(),
+});
+
+const RECENT_MESSAGE_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  receivedAt: v.number(),
+  listservId: v.optional(v.id("listservs")),
+  subject: v.string(),
+  senderEmail: v.string(),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+});
+
 export const dashboard = query({
   args: { token: v.string() },
+  returns: v.object({
+    candidates: v.array(listservCandidateDocValidator),
+    listservs: v.array(listservDocValidator),
+    ingestionState: v.array(listservIngestionStateDocValidator),
+    discoveryRuns: v.array(discoveryRunDocValidator),
+    joinAttempts: v.array(joinAttemptDocValidator),
+    ingestionRuns: v.array(ingestionRunDocValidator),
+    recentMessages: v.array(RECENT_MESSAGE_VALIDATOR),
+    pendingConfirmations: v.array(CONFIRMATION_MESSAGE_VALIDATOR),
+    clearedConfirmations: v.array(CONFIRMATION_MESSAGE_VALIDATOR),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -296,9 +352,11 @@ export const reconciliationReport = query({
     requireAdminToken(args.token);
 
     const [orgs, listservs, candidates] = await Promise.all([
-      ctx.db.query("orgs").collect(),
-      ctx.db.query("listservs").collect(),
-      ctx.db.query("listservCandidates").collect(),
+      ctx.db.query("orgs").take(ORG_SCAN_LIMIT),
+      ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT),
+      // Directory discovery alone has added ~600 rows in one run, so this
+      // needs a real bound rather than the 500 used elsewhere in this file.
+      ctx.db.query("listservCandidates").take(CANDIDATE_SCAN_LIMIT),
     ]);
 
     const directoryByEmail = new Map<string, Doc<"listservCandidates">>();
@@ -370,6 +428,11 @@ export const reconciliationReport = query({
 
 export const runDiscovery = action({
   args: { token: v.string() },
+  returns: v.object({
+    candidatesFound: v.number(),
+    inserted: v.number(),
+    updated: v.number(),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -473,6 +536,7 @@ export const addCandidate = mutation({
     displayName: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
+  returns: v.id("listservCandidates"),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -505,6 +569,7 @@ export const rejectCandidate = mutation({
     candidateId: v.id("listservCandidates"),
     notes: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.candidateId, {
@@ -512,6 +577,7 @@ export const rejectCandidate = mutation({
       notes: cleanOptional(args.notes),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -530,6 +596,7 @@ export const approveCandidate = mutation({
     ),
     notes: v.optional(v.string()),
   },
+  returns: v.id("listservs"),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -564,14 +631,11 @@ export const approveCandidate = mutation({
       updatedAt: now,
     };
 
-    let listservId = existing?._id;
+    const listservId: Id<"listservs"> = existing
+      ? existing._id
+      : await ctx.db.insert("listservs", { ...listservFields, createdAt: now });
     if (existing) {
       await ctx.db.patch(existing._id, listservFields);
-    } else {
-      listservId = await ctx.db.insert("listservs", {
-        ...listservFields,
-        createdAt: now,
-      });
     }
 
     await ctx.db.patch(args.candidateId, {
@@ -591,6 +655,7 @@ export const sendJoinEmail = action({
     subject: v.string(),
     body: v.string(),
   },
+  returns: v.object({ gmailMessageId: v.string() }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -619,6 +684,12 @@ export const sendJoinEmail = action({
         subject,
         body,
       );
+      // Gmail's send API always returns an id alongside a 2xx response; a
+      // missing one means the response shape wasn't what we expected, which
+      // is worth surfacing as a real failure rather than recording a bogus
+      // join attempt.
+      if (!sent.id)
+        throw new Error("Gmail send succeeded but returned no message id.");
 
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
         listservId: args.listservId,
@@ -754,6 +825,7 @@ export const submitSimplelistsSubscribe = action({
 
 export const recomputeJoinStrategy = mutation({
   args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const listserv = await ctx.db.get(args.listservId);
@@ -763,6 +835,7 @@ export const recomputeJoinStrategy = mutation({
       ...detectJoinStrategy(listserv.listEmail, listserv.senderEmails),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -784,6 +857,7 @@ export const updateJoinStrategy = mutation({
       v.literal("unknown"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const listserv = await ctx.db.get(args.listservId);
@@ -797,11 +871,17 @@ export const updateJoinStrategy = mutation({
       ),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
 export const runIngestionNow = action({
   args: { token: v.string() },
+  returns: v.object({
+    fetched: v.number(),
+    unseen: v.number(),
+    stored: v.number(),
+  }),
   handler: async (ctx, args): Promise<IngestionRunResult> => {
     requireAdminToken(args.token);
     return (await ctx.runAction(internal.ingestion.pollListservInbox, {
@@ -812,6 +892,11 @@ export const runIngestionNow = action({
 
 export const rematchUnassignedMessagesNow = action({
   args: { token: v.string(), limit: v.optional(v.number()) },
+  returns: v.object({
+    scanned: v.number(),
+    matched: v.number(),
+    candidatesRaised: v.number(),
+  }),
   handler: async (ctx, args): Promise<RematchResult> => {
     requireAdminToken(args.token);
     return await ctx.runMutation(internal.ingestion.rematchUnassignedMessages, {
@@ -831,12 +916,14 @@ export const updateListservStatus = mutation({
       v.literal("failed"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
       status: args.status,
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -853,6 +940,7 @@ export const updateJoinStatus = mutation({
       v.literal("manual_required"),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const patch =
@@ -867,6 +955,7 @@ export const updateJoinStatus = mutation({
     await ctx.db.patch(args.listservId, {
       ...patch,
     });
+    return null;
   },
 });
 
@@ -876,12 +965,14 @@ export const updateListservNotes = mutation({
     listservId: v.id("listservs"),
     notes: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
       notes: cleanOptional(args.notes),
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -1041,13 +1132,14 @@ function maxOptional(a: number | undefined, b: number | undefined) {
 
 export const clearConfirmation = mutation({
   args: { token: v.string(), messageId: v.id("listservMessages") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const now = Date.now();
     const message = await ctx.db.get(args.messageId);
+    if (!message) throw new Error("Message not found.");
     const listservId =
-      message?.listservId ??
-      (message ? await resolveListservFromMessage(ctx, message) : undefined);
+      message.listservId ?? (await resolveListservFromMessage(ctx, message));
 
     await ctx.db.patch(args.messageId, {
       confirmationClearedAt: now,
@@ -1061,8 +1153,26 @@ export const clearConfirmation = mutation({
         updatedAt: now,
       });
     }
+    return null;
   },
 });
+
+/**
+ * Upper bound on unindexed `listservs` scans in this file: the substring-match
+ * scan in {@link resolveListservFromMessage} and the `reconciliationReport`
+ * dashboard read. The table holds well under this today.
+ */
+const LISTSERV_SCAN_LIMIT = 500;
+
+/** Upper bound on the unindexed `orgs` scan in `reconciliationReport`. */
+const ORG_SCAN_LIMIT = 500;
+
+/**
+ * Upper bound on the unindexed `listservCandidates` scan in
+ * `reconciliationReport`. Directory discovery alone adds ~600 low-confidence
+ * rows in one run, so this needs real headroom above the other scan limits.
+ */
+const CANDIDATE_SCAN_LIMIT = 3000;
 
 async function resolveListservFromMessage(
   ctx: MutationCtx,
@@ -1089,7 +1199,11 @@ async function resolveListservFromMessage(
     if (exact) return exact._id;
   }
 
-  const listservs = await ctx.db.query("listservs").collect();
+  // Bounded rather than unbounded: this fallback matches on subject/body
+  // substrings, which is inherently a full scan (no index can serve a
+  // "does this text contain this address" predicate). The table holds well
+  // under this today.
+  const listservs = await ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT);
   const searchable =
     `${message.subject}\n${message.bodyText}\n${message.senderEmail}\n${message.to.join(" ")}\n${message.cc.join(" ")}`.toLowerCase();
 

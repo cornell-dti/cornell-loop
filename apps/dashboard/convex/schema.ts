@@ -263,7 +263,10 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_received_at", ["receivedAt"])
     .index("by_confirmation_cleared_at", ["confirmationClearedAt"])
-    .index("by_processing_status", ["processingStatus"]),
+    .index("by_processing_status", ["processingStatus"])
+    // assignSender backfills every message from a sender onto the newly
+    // assigned listserv/org; without this it was a full-table scan.
+    .index("by_sender_email", ["senderEmail"]),
 
   listservIngestionState: defineTable({
     key: v.string(),

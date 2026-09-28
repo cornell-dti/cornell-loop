@@ -11,6 +11,11 @@ import {
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 import { isListAdminNoise } from "./lib/cornellLists";
+import {
+  eventDocValidator,
+  parseRunDocValidator,
+  parsedItemValidator,
+} from "./lib/docValidators";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
@@ -100,8 +105,17 @@ type ParseRunSummary = {
   messagesIgnored: number;
 };
 
+const PARSE_RUN_SUMMARY_VALIDATOR = v.object({
+  messagesScanned: v.number(),
+  messagesParsed: v.number(),
+  eventsCreated: v.number(),
+  eventsSkippedDuplicate: v.number(),
+  messagesIgnored: v.number(),
+});
+
 export const runParseNow = action({
   args: { token: v.string(), messageId: v.optional(v.id("listservMessages")) },
+  returns: PARSE_RUN_SUMMARY_VALIDATOR,
   handler: async (ctx, args): Promise<ParseRunSummary> => {
     requireAdminToken(args.token);
     return await ctx.runAction(internal.parser.runParseInternal, {
@@ -330,12 +344,14 @@ export const requeueMessage = mutation({
 
 export const hideEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.eventId, {
       visibility: "hidden",
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -439,8 +455,32 @@ export const updateDraftEvent = mutation({
   },
 });
 
+const PARSE_MESSAGE_PROJECTION_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  subject: v.string(),
+  senderEmail: v.string(),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+  parseError: v.optional(v.string()),
+  organizationId: v.optional(v.id("orgs")),
+  listservId: v.optional(v.id("listservs")),
+  receivedAt: v.number(),
+});
+
 export const overview = query({
   args: { token: v.string() },
+  returns: v.object({
+    runs: v.array(parseRunDocValidator),
+    drafts: v.array(eventDocValidator),
+    failedMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    ignoredMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    needsAssignmentCount: v.number(),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const [runs, drafts, failedMessages, ignoredMessages, newMessages] =
@@ -524,6 +564,11 @@ export const overview = query({
  */
 export const listReadyMessages = query({
   args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  returns: v.object({
+    page: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const result = await ctx.db
@@ -533,7 +578,8 @@ export const listReadyMessages = query({
       .paginate(args.paginationOpts);
 
     return {
-      ...result,
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
       page: result.page
         .filter((m) => m.organizationId !== undefined)
         .map((m) => ({
@@ -668,8 +714,9 @@ export const storeParsedEvents = internalMutation({
     messageId: v.id("listservMessages"),
     confidence: v.number(),
     warnings: v.array(v.string()),
-    items: v.array(v.any()),
+    items: v.array(parsedItemValidator),
   },
+  returns: v.object({ created: v.number(), skippedDuplicate: v.number() }),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) throw new Error("Message not found.");
@@ -699,8 +746,7 @@ export const storeParsedEvents = internalMutation({
     let created = 0;
     let skippedDuplicate = 0;
 
-    for (const rawItem of args.items) {
-      const item = rawItem as ParsedItem;
+    for (const item of args.items) {
       // Scoped to the organization: two orgs can legitimately announce the
       // same career fair, and without organizationId in the key the second
       // one collided with the first and was dropped.
@@ -885,14 +931,18 @@ function getGeminiConfig(): AIConfig | null {
   };
 }
 
+/** Fixed for Cornell's campus, since the source emails never state one. */
+const SOURCE_TIMEZONE = "America/New_York";
+
 function buildParsePrompt(message: SourceMessage) {
+  const receivedAtIso = new Date(message.receivedAt).toISOString();
   const input = {
     sourceOrganization: message.organization?.name,
     sourceOrganizationType: message.organization?.orgType,
     sourceEmail: message.senderEmail,
     sourceName: message.listserv?.name,
     subject: message.subject,
-    receivedAt: new Date(message.receivedAt).toISOString(),
+    receivedAt: receivedAtIso,
     bodyText: message.bodyText.slice(0, 12000),
     links: extractLinks(`${message.bodyText}\n${message.bodyHtml}`).slice(
       0,
@@ -900,7 +950,15 @@ function buildParsePrompt(message: SourceMessage) {
     ),
   };
 
+  // Stated imperatively, up front, rather than left for the model to notice
+  // inside the input JSON below: gpt-4o-mini otherwise defaults a bare
+  // "August 30" or "October 15" to its own training-era year (~2023) instead
+  // of the year this email actually arrived in. Verified against prod: with
+  // no explicit anchor, ~35 of 36 sampled drafts had every date land in 2023
+  // despite every source message arriving in 2025/2026.
   return `Extract Cornell student-relevant feed items from this listserv email. Return strict JSON only. Do not invent details. The source organization advertised the item but may not be the host.
+
+This email was received on ${receivedAtIso} (Cornell/Ithaca local time is ${SOURCE_TIMEZONE}). For any date or time in the email that omits a year, infer the year using the nearest future occurrence relative to that received date — never fall back to a year from your own training data. For any time with no stated timezone, assume ${SOURCE_TIMEZONE}. Compute every "timestamp" field as true milliseconds since epoch for that inferred date/time in ${SOURCE_TIMEZONE}.
 
 Return this exact shape:
 {

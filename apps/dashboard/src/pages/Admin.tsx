@@ -175,6 +175,11 @@ const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "publish", label: "Publish", hint: "Review + publish drafts" },
 ];
 
+/** Narrows a `?tab=` query value to {@link AdminTab} without an `as` cast. */
+function parseAdminTab(value: string | null): AdminTab | undefined {
+  return TABS.find((t) => t.id === value)?.id;
+}
+
 const ORG_TYPES: OrgType[] = [
   "club",
   "department",
@@ -183,6 +188,14 @@ const ORG_TYPES: OrgType[] = [
   "company",
   "other",
 ];
+
+/** Narrows a `<select>` value to {@link OrgType} without an `as` cast. */
+function parseOrgType(value: string): OrgType {
+  const match = ORG_TYPES.find((t) => t === value);
+  if (!match) throw new Error(`Unknown organization type: ${value}`);
+  return match;
+}
+
 /**
  * Selectable strategies. The two `cornell_lyris*` values are deliberately
  * absent: Cornell retired Lyris, so nothing new should ever be classified into
@@ -276,7 +289,7 @@ export default function Admin() {
   );
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
     const p = new URLSearchParams(window.location.search).get("tab");
-    return TABS.some((t) => t.id === p) ? (p as AdminTab) : "setup";
+    return parseAdminTab(p) ?? "setup";
   });
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(
     null,
@@ -405,12 +418,18 @@ export default function Admin() {
     }
   }
 
-  async function act(label: string, fn: () => Promise<unknown>) {
+  /** Returns whether `fn` succeeded, so a caller can gate follow-up state (e.g. clearing a draft) on that. */
+  async function act(
+    label: string,
+    fn: () => Promise<unknown>,
+  ): Promise<boolean> {
     try {
       await fn();
       showToast(label);
+      return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Action failed.", false);
+      return false;
     }
   }
 
@@ -602,11 +621,11 @@ export default function Admin() {
                 rejectCandidate({ token, candidateId: id }),
               )
             }
-            onAssignSource={(listservId, orgId) =>
-              act("Source assigned.", () =>
+            onAssignSource={async (listservId, orgId) => {
+              await act("Source assigned.", () =>
                 assignSourceOrg({ token, listservId, organizationId: orgId }),
-              )
-            }
+              );
+            }}
             onCreateAndAssignSource={(listservId, name, type, sourceEmail) =>
               createOrgWithGuard(name, type, sourceEmail, async (orgId) => {
                 await act(`${name} created and assigned.`, () =>
@@ -645,11 +664,11 @@ export default function Admin() {
             onIgnoreSender={(senderEmail) =>
               act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
             }
-            onUnignoreSource={(listservId) =>
-              act("Source reactivated.", () =>
+            onUnignoreSource={async (listservId) => {
+              await act("Source reactivated.", () =>
                 unignoreSource({ token, listservId }),
-              )
-            }
+              );
+            }}
             onCreateOrg={(name, type) =>
               createOrgWithGuard(name, type, undefined, () => {
                 showToast(`${name} created.`);
@@ -704,10 +723,13 @@ export default function Admin() {
             onSendJoin={async (e) => {
               e.preventDefault();
               if (!joinDraft) return;
-              await act("Join email sent.", () =>
+              // Only clear the composed draft on success — on a transient
+              // Gmail error the admin would otherwise lose everything they
+              // typed and have to reconstruct it from scratch.
+              const sent = await act("Join email sent.", () =>
                 sendJoinEmail({ token, ...joinDraft }),
               );
-              setJoinDraft(null);
+              if (sent) setJoinDraft(null);
             }}
             onSubscribe={async (id) => {
               // The action resolves with the failure reason rather than
@@ -1094,7 +1116,10 @@ function SourcesTab({
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSource: (listservId: Id<"listservs">, orgId: Id<"orgs">) => void;
+  onAssignSource: (
+    listservId: Id<"listservs">,
+    orgId: Id<"orgs">,
+  ) => void | Promise<void>;
   onCreateAndAssignSource: (
     listservId: Id<"listservs">,
     name: string,
@@ -1110,7 +1135,7 @@ function SourcesTab({
     sourceType: NonNullable<Listserv["sourceType"]>,
   ) => void;
   onIgnoreSender: (senderEmail: string) => void;
-  onUnignoreSource: (listservId: Id<"listservs">) => void;
+  onUnignoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
@@ -1317,9 +1342,12 @@ function SourcesTab({
                 source={src}
                 organizations={organizations}
                 onReactivate={() => onUnignoreSource(src._id)}
-                onAssign={(orgId) => {
-                  onUnignoreSource(src._id);
-                  onAssignSource(src._id, orgId);
+                onAssign={async (orgId) => {
+                  // Sequenced on purpose: firing both without awaiting races
+                  // two separate mutations against the same row, and assign
+                  // completing first would have unignore's patch overwrite it.
+                  await onUnignoreSource(src._id);
+                  await onAssignSource(src._id, orgId);
                 }}
               />
             ))}
@@ -1434,7 +1462,7 @@ function IgnoredSourceRow({
   source: Listserv;
   organizations: Organization[];
   onReactivate: () => void;
-  onAssign: (orgId: Id<"orgs">) => void;
+  onAssign: (orgId: Id<"orgs">) => void | Promise<void>;
 }) {
   const [assigning, setAssigning] = useState(false);
   return (
@@ -1815,7 +1843,7 @@ function OrgRow({
                 <div className="w-36">
                   <select
                     value={type}
-                    onChange={(e) => setType(e.target.value as OrgType)}
+                    onChange={(e) => setType(parseOrgType(e.target.value))}
                     className={input()}
                   >
                     {ORG_TYPES.map((t) => (
@@ -2203,7 +2231,7 @@ function UnassignedRow({
             Type
             <select
               value={orgType}
-              onChange={(e) => setOrgType(e.target.value as OrgType)}
+              onChange={(e) => setOrgType(parseOrgType(e.target.value))}
               className={input()}
             >
               {ORG_TYPES.map((t) => (
@@ -2318,7 +2346,7 @@ function CreateOrgForm({
         Type
         <select
           value={type}
-          onChange={(e) => setType(e.target.value as OrgType)}
+          onChange={(e) => setType(parseOrgType(e.target.value))}
           className={input()}
         >
           {ORG_TYPES.map((t) => (

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 import { isLegacyLyrisAddress, isSimplelistsAddress } from "./lib/cornellLists";
+import { orgDocValidator, listservDocValidator } from "./lib/docValidators";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -22,19 +23,63 @@ type OrgType =
   | "company"
   | "other";
 
+/**
+ * Upper bound on the never-matched-message scan below. Every message here
+ * has no `listservId` at all, so this set is far smaller than the full
+ * `listservMessages` table — bounding it is still required by the repo's
+ * no-unbounded-`.collect()` rule, but a genuine backlog past this size would
+ * be a real problem worth surfacing on its own, not just silently truncating.
+ */
+const UNASSIGNED_MESSAGE_SCAN_LIMIT = 2000;
+
+const SOURCE_TYPES = v.union(
+  v.literal("simplelists"),
+  v.literal("lyris"),
+  v.literal("campus_groups"),
+  v.literal("newsletter"),
+  v.literal("direct_email"),
+  v.literal("unknown"),
+);
+
+const SUGGESTION_VALIDATOR = v.object({
+  organizationName: v.string(),
+  organizationType: ORG_TYPES,
+  sourceName: v.string(),
+  sourceType: SOURCE_TYPES,
+});
+
 export const overview = query({
   args: { token: v.string() },
+  returns: v.object({
+    organizations: v.array(orgDocValidator),
+    listservs: v.array(listservDocValidator),
+    unassignedSenders: v.array(
+      v.object({
+        senderEmail: v.string(),
+        count: v.number(),
+        latestReceivedAt: v.number(),
+        sampleSubjects: v.array(v.string()),
+        suggestion: SUGGESTION_VALIDATOR,
+      }),
+    ),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
     const [organizations, listservs, messages] = await Promise.all([
-      ctx.db.query("orgs").order("asc").collect(),
-      ctx.db.query("listservs").order("asc").collect(),
+      ctx.db.query("orgs").order("asc").take(ORG_SCAN_LIMIT),
+      ctx.db.query("listservs").order("asc").take(LISTSERV_SCAN_LIMIT),
+      // Indexed on `listservId === undefined` rather than "the most recent
+      // 500 messages" — a sender that only ever sent old mail, buried under
+      // 500+ more recent messages from known sources, used to be permanently
+      // invisible in the Sources tab. A message only lacks a `listservId` at
+      // all when ingestion could not match it to any known source, which is
+      // exactly "unassigned" — recency doesn't change that.
       ctx.db
         .query("listservMessages")
-        .withIndex("by_received_at")
+        .withIndex("by_listserv", (q) => q.eq("listservId", undefined))
         .order("desc")
-        .take(500),
+        .take(UNASSIGNED_MESSAGE_SCAN_LIMIT),
     ]);
 
     const sourceEmails = new Set(
@@ -174,6 +219,7 @@ export const updateOrganization = mutation({
     isVerified: v.optional(v.boolean()),
     loopSummary: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -216,12 +262,14 @@ export const updateOrganization = mutation({
     }
 
     await ctx.db.patch(args.organizationId, patch);
+    return null;
   },
 });
 
 /** Generate a short-lived upload URL for org images (avatar or cover). */
 export const generateOrgImageUploadUrl = mutation({
   args: { token: v.string() },
+  returns: v.string(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     return await ctx.storage.generateUploadUrl();
@@ -250,6 +298,10 @@ export const assignSender = mutation({
     // omits organizationId and asks this mutation to create one itself.
     confirmedNewOrg: v.optional(v.boolean()),
   },
+  returns: v.object({
+    organizationId: v.id("orgs"),
+    listservId: v.id("listservs"),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
 
@@ -294,11 +346,12 @@ export const assignSender = mutation({
       : await ctx.db.insert("listservs", { ...sourceFields, createdAt: now });
     if (existing) await ctx.db.patch(existing._id, sourceFields);
 
-    const messages = await ctx.db.query("listservMessages").collect();
+    const messages = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_sender_email", (q) => q.eq("senderEmail", senderEmail))
+      .collect();
     for (const message of messages) {
-      if (message.senderEmail.toLowerCase() === senderEmail) {
-        await ctx.db.patch(message._id, { listservId, organizationId });
-      }
+      await ctx.db.patch(message._id, { listservId, organizationId });
     }
 
     return { organizationId, listservId };
@@ -310,6 +363,7 @@ export const ignoreSender = mutation({
     token: v.string(),
     senderEmail: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const senderEmail = normalizeEmail(args.senderEmail);
@@ -323,7 +377,7 @@ export const ignoreSender = mutation({
         status: "paused",
         updatedAt: Date.now(),
       });
-      return;
+      return null;
     }
 
     // For inbox-only senders, create a minimal tombstone row so the sender
@@ -343,6 +397,7 @@ export const ignoreSender = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    return null;
   },
 });
 
@@ -351,12 +406,14 @@ export const unignoreSource = mutation({
     token: v.string(),
     listservId: v.id("listservs"),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
       status: "joining",
       updatedAt: Date.now(),
     });
+    return null;
   },
 });
 
@@ -366,6 +423,7 @@ export const assignSourceOrganization = mutation({
     listservId: v.id("listservs"),
     organizationId: v.id("orgs"),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.listservId, {
@@ -380,12 +438,15 @@ export const assignSourceOrganization = mutation({
     for (const message of messages) {
       await ctx.db.patch(message._id, { organizationId: args.organizationId });
     }
+    return null;
   },
 });
 
 /**
- * Upper bound on the `senderEmails` scan below. The table holds fewer than a
- * hundred rows today; this exists so the query stays bounded if that changes.
+ * Upper bound on unindexed `listservs` scans in this file (the `overview`
+ * dashboard read, the `senderEmails` scan below, and the fuzzy-match scan in
+ * {@link similarOrganizations}). The table holds fewer than a hundred rows
+ * today; this exists so those queries stay bounded if that changes.
  */
 const LISTSERV_SCAN_LIMIT = 500;
 
@@ -416,8 +477,10 @@ async function findListservByAnyAddress(ctx: MutationCtx, email: string) {
 }
 
 /**
- * Upper bound on the org/listserv scans below, mirroring
- * {@link LISTSERV_SCAN_LIMIT}: the tables hold well under this today.
+ * Upper bound on unindexed `orgs` scans in this file (the `overview`
+ * dashboard read and the fuzzy-match scan in {@link similarOrganizations}),
+ * mirroring {@link LISTSERV_SCAN_LIMIT}: the table holds well under this
+ * today.
  */
 const ORG_SCAN_LIMIT = 500;
 

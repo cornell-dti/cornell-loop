@@ -12,7 +12,7 @@ import {
   simplelistsAddressForList,
 } from "./lib/cornellLists";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { ActionCtx, MutationCtx } from "./_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -145,6 +145,14 @@ export const pollListservInbox = internalAction({
       key: HISTORY_STATE_KEY,
     });
 
+    // Hoisted so a failure partway through still reports how far the run
+    // actually got — recording `fetched: 0` on every failed run made it
+    // impossible to tell "Gmail auth failed before fetching anything" from
+    // "fetched 400 messages, then the store step blew up" in the run history.
+    let fetchedCount = 0;
+    let unseenCount = 0;
+    let stored = 0;
+
     try {
       const accessToken = await refreshAccessToken(ctx);
       const state = (await ctx.runQuery(internal.ingestion.getIngestionState, {
@@ -154,6 +162,7 @@ export const pollListservInbox = internalAction({
       const fetched: FetchedMessageIds = state?.value
         ? await fetchMessagesSinceHistory(accessToken, state.value)
         : await fetchRecentMessages(accessToken);
+      fetchedCount = fetched.messageIds.length;
 
       const unseenIds = (await ctx.runQuery(
         internal.ingestion.filterUnseenMessages,
@@ -161,8 +170,8 @@ export const pollListservInbox = internalAction({
           gmailMessageIds: fetched.messageIds,
         },
       )) as string[];
+      unseenCount = unseenIds.length;
 
-      let stored = 0;
       if (unseenIds.length > 0) {
         const [messages, listservs] = (await Promise.all([
           batchFetchMessages(unseenIds, accessToken),
@@ -215,8 +224,8 @@ export const pollListservInbox = internalAction({
       }
 
       const result = {
-        fetched: fetched.messageIds.length,
-        unseen: unseenIds.length,
+        fetched: fetchedCount,
+        unseen: unseenCount,
         stored,
       };
 
@@ -231,9 +240,9 @@ export const pollListservInbox = internalAction({
       await ctx.runMutation(internal.ingestion.finishIngestionRun, {
         runId,
         status: "failed",
-        fetched: 0,
-        unseen: 0,
-        stored: 0,
+        fetched: fetchedCount,
+        unseen: unseenCount,
+        stored,
         error: formatError(error),
       });
       await ctx.runMutation(internal.ingestion.markIngestionFailed, {
@@ -255,38 +264,53 @@ export const getIngestionState = internalQuery({
   },
 });
 
+/** Reads both matchable statuses via `by_status` instead of scanning the whole table and filtering in memory. */
+async function matchableListservRows(ctx: QueryCtx) {
+  const [active, joining] = await Promise.all([
+    ctx.db
+      .query("listservs")
+      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .take(MATCHABLE_LISTSERV_LIMIT),
+    ctx.db
+      .query("listservs")
+      .withIndex("by_status", (q) => q.eq("status", "joining"))
+      .take(MATCHABLE_LISTSERV_LIMIT),
+  ]);
+  return [...active, ...joining];
+}
+
+/** Upper bound per status in {@link matchableListservRows}; well above the table's real size today. */
+const MATCHABLE_LISTSERV_LIMIT = 1000;
+
 export const getMatchableListservs = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const listservs = await ctx.db.query("listservs").collect();
-    return listservs
-      .filter(
-        (listserv) =>
-          listserv.status === "active" || listserv.status === "joining",
-      )
-      .map((listserv) => ({
-        _id: listserv._id,
-        organizationId: listserv.organizationId,
-        listEmail: listserv.listEmail,
-        senderEmails: listserv.senderEmails,
-      }));
+    const listservs = await matchableListservRows(ctx);
+    return listservs.map((listserv) => ({
+      _id: listserv._id,
+      organizationId: listserv.organizationId,
+      listEmail: listserv.listEmail,
+      senderEmails: listserv.senderEmails,
+    }));
   },
 });
 
 export const filterUnseenMessages = internalQuery({
   args: { gmailMessageIds: v.array(v.string()) },
   handler: async (ctx, args) => {
-    const unseen: string[] = [];
+    // Convex has no "WHERE id IN (...)" — but the per-ID lookups are
+    // independent, so firing them concurrently rather than one at a time in
+    // a `for` loop turns N sequential round trips into N parallel ones.
+    const existing = await Promise.all(
+      args.gmailMessageIds.map((id) =>
+        ctx.db
+          .query("listservMessages")
+          .withIndex("by_gmail_message_id", (q) => q.eq("gmailMessageId", id))
+          .unique(),
+      ),
+    );
 
-    for (const id of args.gmailMessageIds) {
-      const existing = await ctx.db
-        .query("listservMessages")
-        .withIndex("by_gmail_message_id", (q) => q.eq("gmailMessageId", id))
-        .unique();
-      if (!existing) unseen.push(id);
-    }
-
-    return unseen;
+    return args.gmailMessageIds.filter((_, index) => !existing[index]);
   },
 });
 
@@ -544,18 +568,13 @@ export const rematchUnassignedMessages = internalMutation({
     const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
 
     const listservs: MatchableListserv[] = (
-      await ctx.db.query("listservs").collect()
-    )
-      .filter(
-        (listserv) =>
-          listserv.status === "active" || listserv.status === "joining",
-      )
-      .map((listserv) => ({
-        _id: listserv._id,
-        organizationId: listserv.organizationId,
-        listEmail: listserv.listEmail,
-        senderEmails: listserv.senderEmails,
-      }));
+      await matchableListservRows(ctx)
+    ).map((listserv) => ({
+      _id: listserv._id,
+      organizationId: listserv.organizationId,
+      listEmail: listserv.listEmail,
+      senderEmails: listserv.senderEmails,
+    }));
 
     const messages = await ctx.db
       .query("listservMessages")
@@ -725,6 +744,18 @@ async function fetchMessagesSinceHistory(
   return { messageIds: [...new Set(ids)], historyId: latestHistoryId };
 }
 
+/**
+ * Restricts the first-run bootstrap to mail Gmail already categorizes as
+ * bulk/list traffic (its "Forums" and "Updates" tabs), rather than every
+ * message in the inbox. Without this, a fresh deployment's first poll
+ * ingests whatever personal mail happens to be sitting in the dedicated
+ * ingestion inbox alongside real listserv traffic. `fetchMessagesSinceHistory`
+ * does not need this: after the first run, ingestion only ever sees messages
+ * that arrived after that point, which is a much smaller and more relevant
+ * set to begin with.
+ */
+const BOOTSTRAP_QUERY = "category:forums OR category:updates";
+
 async function fetchRecentMessages(accessToken: string) {
   const ids: string[] = [];
   let pageToken: string | undefined;
@@ -732,6 +763,7 @@ async function fetchRecentMessages(accessToken: string) {
   do {
     const url = new URL(GMAIL_MESSAGES_URL);
     url.searchParams.set("maxResults", String(MESSAGES_PER_PAGE));
+    url.searchParams.set("q", BOOTSTRAP_QUERY);
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
     const response = await gmailFetch<GmailListResponse>(
