@@ -13,10 +13,18 @@ import {
   isCornellListAddress,
   isJoinConfirmationMail,
   isLegacyLyrisAddress,
-  isLegacyLyrisListAddress,
+  isSimplelistsAddress,
   listNameFromConfirmationSender,
+  managerAddressForList,
   simplelistsAddressForList,
+  subscribeUrlForList,
+  subscriptionListNameFrom,
+  SIMPLELISTS_ORIGIN,
 } from "./lib/cornellLists";
+import {
+  buildLyrisJoinDefaults,
+  lyrisDetectionReasons,
+} from "./lib/legacyLyris";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 
@@ -25,6 +33,9 @@ declare const process: { env: Record<string, string | undefined> };
 const GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GMAIL_SEND_URL =
   "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
+/** Name submitted on the Simplelists subscribe form alongside the inbox address. */
+const SUBSCRIBER_DISPLAY_NAME = "Cornell Loop";
 
 type CandidateInput = {
   email: string;
@@ -68,7 +79,16 @@ type GmailConnectionSnapshot = {
   refreshToken: string;
 };
 
+type SubscribeResult = {
+  ok: boolean;
+  httpStatus?: number;
+  subscribeUrl: string;
+  error?: string;
+};
+
 type JoinStrategy =
+  | "cornell_simplelists"
+  | "cornell_simplelists_owner_contact"
   | "cornell_lyris"
   | "cornell_lyris_owner_contact"
   | "campus_groups"
@@ -84,9 +104,24 @@ type JoinDetection = {
   joinSubject?: string;
   joinBody?: string;
   joinInstructions?: string;
+  subscribeUrl?: string;
   joinConfidence: number;
   joinDetectionReasons: string[];
   joinDetectedAt: number;
+};
+
+/**
+ * {@link JoinDetection} with every optional key required-but-nullable, so
+ * spreading it into a `ctx.db.patch` clears fields the new strategy does not
+ * set instead of leaving the previous strategy's values behind.
+ */
+type JoinDetectionPatch = JoinDetection & {
+  joinRecipient: string | undefined;
+  ownerRecipient: string | undefined;
+  joinSubject: string | undefined;
+  joinBody: string | undefined;
+  joinInstructions: string | undefined;
+  subscribeUrl: string | undefined;
 };
 
 export const dashboard = query({
@@ -394,6 +429,7 @@ export const sendJoinEmail = action({
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
         listservId: args.listservId,
         status: "sent",
+        method: "email",
         recipient,
         subject,
         body,
@@ -405,12 +441,119 @@ export const sendJoinEmail = action({
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
         listservId: args.listservId,
         status: "failed",
+        method: "email",
         recipient,
         subject,
         body,
         error: formatError(error),
       });
       throw error;
+    }
+  },
+});
+
+/**
+ * Subscribes the ingestion inbox to a Simplelists list through the list's
+ * public web form, which is the only join path Simplelists supports.
+ *
+ * This is a convenience, never the only path: on any failure the Join tab
+ * still renders the raw subscribe URL so an admin can click through by hand.
+ * Lists configured to require approval degrade gracefully — Simplelists
+ * notifies their managers instead of subscribing us immediately, which still
+ * shows up here as a successful POST.
+ */
+export const submitSimplelistsSubscribe = action({
+  args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.object({
+    ok: v.boolean(),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.string(),
+    error: v.optional(v.string()),
+  }),
+  handler: async (ctx, args): Promise<SubscribeResult> => {
+    requireAdminToken(args.token);
+
+    const listserv = await ctx.runQuery(
+      internal.listservAdmin.getListservForAdmin,
+      { listservId: args.listservId },
+    );
+    if (!listserv) throw new Error("Listserv not found.");
+
+    const listName = subscriptionListNameFrom(listserv.listEmail);
+    const subscribeUrl =
+      listserv.subscribeUrl ??
+      (listName ? subscribeUrlForList(listName) : null);
+    const listAddress = listName ? simplelistsAddressForList(listName) : null;
+
+    if (!listName || !subscribeUrl || !listAddress) {
+      throw new Error(
+        `${listserv.listEmail} is not a Simplelists list address, so it has no subscribe form.`,
+      );
+    }
+
+    const connection = await getGmailConnection(ctx);
+
+    try {
+      const { sessionCookie, csrfToken, listField } =
+        await fetchSubscribeForm(subscribeUrl);
+
+      const form = new URLSearchParams({
+        csrf_token: csrfToken,
+        name: SUBSCRIBER_DISPLAY_NAME,
+        email: connection.email,
+        list: listField ?? listAddress,
+        action: "subscribe",
+      });
+
+      const response = await fetch(`${SIMPLELISTS_ORIGIN}/subscribe/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // Convex's fetch does not manage cookies, so the session captured
+          // from the GET is echoed back by hand. The csrf_token is bound to
+          // it, so dropping this makes the POST fail CSRF validation.
+          Cookie: sessionCookie,
+          Referer: subscribeUrl,
+        },
+        body: form.toString(),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Subscribe POST failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+        );
+      }
+
+      await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
+        listservId: args.listservId,
+        status: "sent",
+        method: "web_form",
+        httpStatus: response.status,
+        subscribeUrl,
+        recipient: listAddress,
+      });
+
+      return { ok: true, httpStatus: response.status, subscribeUrl };
+    } catch (error) {
+      const message = formatError(error);
+      await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
+        listservId: args.listservId,
+        status: "failed",
+        method: "web_form",
+        httpStatus: httpStatusFrom(error),
+        subscribeUrl,
+        recipient: listAddress,
+        error: message,
+      });
+
+      // Deliberately not rethrown: the UI needs to render the fallback link
+      // alongside the reason, and a thrown action would surface only a toast.
+      return {
+        ok: false,
+        httpStatus: httpStatusFrom(error),
+        subscribeUrl,
+        error: message,
+      };
     }
   },
 });
@@ -434,6 +577,10 @@ export const updateJoinStrategy = mutation({
     token: v.string(),
     listservId: v.id("listservs"),
     joinStrategy: v.union(
+      v.literal("cornell_simplelists"),
+      v.literal("cornell_simplelists_owner_contact"),
+      // Lyris values stay accepted so an admin can still correct a legacy row,
+      // but they are no longer offered for new selections in the UI.
       v.literal("cornell_lyris"),
       v.literal("cornell_lyris_owner_contact"),
       v.literal("campus_groups"),
@@ -680,29 +827,46 @@ export const recordJoinAttempt = internalMutation({
   args: {
     listservId: v.id("listservs"),
     status: v.union(v.literal("sent"), v.literal("failed")),
-    recipient: v.string(),
-    subject: v.string(),
-    body: v.string(),
+    method: v.optional(v.union(v.literal("email"), v.literal("web_form"))),
+    recipient: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
     gmailMessageId: v.optional(v.string()),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const now = Date.now();
+    const method = args.method ?? "email";
     await ctx.db.insert("joinAttempts", {
       listservId: args.listservId,
       status: args.status,
+      method,
       recipient: args.recipient,
       subject: args.subject,
       body: args.body,
       gmailMessageId: args.gmailMessageId,
+      httpStatus: args.httpStatus,
+      subscribeUrl: args.subscribeUrl,
       error: args.error,
       createdAt: now,
     });
 
+    // A successful web subscribe does not join us — Simplelists replies with a
+    // confirmation mail that ingestion has to see, so the row waits on that
+    // rather than reporting an e-mail we never sent.
     await ctx.db.patch(args.listservId, {
-      joinStatus: args.status === "sent" ? "join_email_sent" : "failed",
+      joinStatus:
+        args.status === "failed"
+          ? "failed"
+          : method === "web_form"
+            ? "awaiting_confirmation"
+            : "join_email_sent",
       updatedAt: now,
     });
+    return null;
   },
 });
 
@@ -876,25 +1040,40 @@ function scoreCandidate(
 function detectJoinStrategy(
   listEmail: string,
   senderEmails: string[],
-): JoinDetection {
+): JoinDetectionPatch {
   const allEmails = [listEmail, ...senderEmails].map(normalizeEmail);
   const primary = normalizeEmail(listEmail);
   const [local = "", domain = ""] = primary.split("@");
 
-  // Only the retired Lyris domains get the e-mail-command join flow. Current
-  // Simplelists addresses fall through to the generic branches below until
-  // their own web-subscribe strategy lands.
+  // Simplelists is checked first so a real lists.cornell.edu address can never
+  // fall through to the generic `endsWith("cornell.edu")` branch below, which
+  // would classify it `direct_org_email` and offer to *email* the list asking
+  // to be added. None of the existing non-Cornell-list rows reach this branch,
+  // so ordering it first leaves their classification untouched.
+  const simplelistsAddress = allEmails.find(isSimplelistsAddress);
+  if (simplelistsAddress) {
+    const viaSender = simplelistsAddress !== primary;
+    return buildJoinDefaults(
+      "cornell_simplelists",
+      simplelistsAddress,
+      inferDisplayName(simplelistsAddress),
+      [
+        viaSender
+          ? "Sender uses the Cornell Simplelists domain"
+          : "Cornell Simplelists list address",
+        "Official flow: subscribe through the list's web form",
+      ],
+    );
+  }
+
+  // Only the retired Lyris domains get the e-mail-command join flow, and only
+  // for rows that already live on those domains. See lib/legacyLyris.ts.
   if (isLegacyLyrisAddress(primary)) {
     return buildJoinDefaults(
       "cornell_lyris",
       primary,
       inferDisplayName(primary),
-      [
-        isLegacyLyrisListAddress(primary)
-          ? "Cornell Lyris list address"
-          : "Cornell list domain",
-        "Official flow: send subject 'join' to listname-request@cornell.edu",
-      ],
+      lyrisDetectionReasons(primary, false),
     );
   }
 
@@ -904,12 +1083,7 @@ function detectJoinStrategy(
       "cornell_lyris",
       lyrisSender,
       inferDisplayName(lyrisSender),
-      [
-        isLegacyLyrisListAddress(lyrisSender)
-          ? "Sender alias looks like Cornell Lyris"
-          : "Sender uses Cornell list domain",
-        "Official flow: send subject 'join' to listname-request@cornell.edu",
-      ],
+      lyrisDetectionReasons(lyrisSender, true),
     );
   }
 
@@ -949,7 +1123,31 @@ function detectJoinStrategy(
   ]);
 }
 
+/**
+ * Every optional field is spelled out so a `ctx.db.patch` of this object
+ * *clears* whatever the previous strategy stored rather than leaving it
+ * behind. That matters most for `cornell_simplelists`: a stale `joinRecipient`
+ * inherited from a `direct_org_email` classification would make the Join tab
+ * offer an email composer for a list that cannot be joined by email at all.
+ */
 function buildJoinDefaults(
+  joinStrategy: JoinStrategy,
+  listEmail: string,
+  name: string,
+  reasons?: string[],
+): JoinDetectionPatch {
+  return {
+    joinRecipient: undefined,
+    ownerRecipient: undefined,
+    joinSubject: undefined,
+    joinBody: undefined,
+    joinInstructions: undefined,
+    subscribeUrl: undefined,
+    ...resolveJoinDefaults(joinStrategy, listEmail, name, reasons),
+  };
+}
+
+function resolveJoinDefaults(
   joinStrategy: JoinStrategy,
   listEmail: string,
   name: string,
@@ -959,38 +1157,54 @@ function buildJoinDefaults(
   const [local = ""] = email.split("@");
   const now = Date.now();
 
-  if (joinStrategy === "cornell_lyris") {
-    const listName = local.replace(/^owner-/, "");
-    const looksCanonical = listName.endsWith("-l");
+  if (joinStrategy === "cornell_simplelists") {
+    const listName = subscriptionListNameFrom(email);
+    const subscribeUrl = listName ? subscribeUrlForList(listName) : null;
+    const managerAddress = listName ? managerAddressForList(listName) : null;
     return {
       joinStrategy,
-      joinRecipient: `${listName}-request@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions:
-        "Cornell Lyris lists are joined by sending a blank email with subject 'join' to listname-request@cornell.edu from the receiving inbox.",
-      joinConfidence: looksCanonical ? 95 : 75,
-      joinDetectionReasons: reasons ?? ["Cornell Lyris list address"],
+      // No joinRecipient/joinSubject/joinBody: Simplelists cannot be joined by
+      // email, so leaving them unset is what stops the UI offering a composer.
+      ownerRecipient: managerAddress ?? undefined,
+      subscribeUrl: subscribeUrl ?? undefined,
+      joinInstructions: subscribeUrl
+        ? "Cornell Simplelists lists are joined through the web form — email commands are not supported. Submit the subscribe form, then confirm from the email Simplelists sends back."
+        : "This looks like a Simplelists address but its list name could not be derived, so no subscribe URL is available. Find the list on lists.cornell.edu and subscribe by hand.",
+      joinConfidence: subscribeUrl ? 95 : 40,
+      joinDetectionReasons: reasons ?? ["Cornell Simplelists list address"],
       joinDetectedAt: now,
     };
   }
 
-  if (joinStrategy === "cornell_lyris_owner_contact") {
-    const listName = local.replace(/^owner-/, "").replace(/-request$/, "");
+  if (joinStrategy === "cornell_simplelists_owner_contact") {
+    const listName = subscriptionListNameFrom(email);
+    const managerAddress = listName ? managerAddressForList(listName) : null;
     return {
       joinStrategy,
-      joinRecipient: `owner-${listName}@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: `Request to join ${listName}`,
-      joinBody: ownerContactBody(listName),
+      joinRecipient: managerAddress ?? undefined,
+      ownerRecipient: managerAddress ?? undefined,
+      joinSubject: listName
+        ? `Request to join ${listName}`
+        : "Request to join mailing list",
+      joinBody: managerContactBody(listName ?? name),
+      subscribeUrl: listName
+        ? (subscribeUrlForList(listName) ?? undefined)
+        : undefined,
       joinInstructions:
-        "Use this if the list is private/closed or the normal join request fails.",
-      joinConfidence: 75,
-      joinDetectionReasons: reasons ?? ["Owner contact fallback"],
+        "Use this when the list is closed or requires approval, so the web subscribe form will not add us directly. This emails the list's human manager.",
+      joinConfidence: managerAddress ? 75 : 30,
+      joinDetectionReasons: reasons ?? ["Simplelists manager contact fallback"],
       joinDetectedAt: now,
     };
   }
+
+  const lyrisDefaults = buildLyrisJoinDefaults(
+    joinStrategy,
+    local,
+    reasons,
+    now,
+  );
+  if (lyrisDefaults) return { joinStrategy, ...lyrisDefaults };
 
   if (joinStrategy === "campus_groups") {
     return {
@@ -1048,7 +1262,7 @@ function isNewsletterDomain(domain: string) {
   );
 }
 
-function ownerContactBody(listName: string) {
+function managerContactBody(listName: string) {
   return `Hello,\n\nCould you please add dtiincubator@gmail.com to ${listName}?\n\nThis inbox is used by Cornell Loop to aggregate public Cornell student organization announcements for Cornell students.\n\nThank you.`;
 }
 
@@ -1189,4 +1403,119 @@ function formatError(error: unknown) {
   if (error instanceof Error) return error.message.slice(0, 500);
   if (typeof error === "string") return error.slice(0, 500);
   return "Unknown error.";
+}
+
+/**
+ * An HTTP failure from the Simplelists subscribe flow, carrying the status so
+ * the recorded attempt can distinguish "list does not exist" (404) from a
+ * transient upstream error.
+ */
+class SubscribeHttpError extends Error {
+  readonly httpStatus: number;
+
+  constructor(httpStatus: number, message: string) {
+    super(message);
+    this.name = "SubscribeHttpError";
+    this.httpStatus = httpStatus;
+  }
+}
+
+function httpStatusFrom(error: unknown) {
+  return error instanceof SubscribeHttpError ? error.httpStatus : undefined;
+}
+
+/**
+ * GETs a list's subscribe page to pick up the session cookie and the
+ * session-bound CSRF token the POST requires.
+ *
+ * A 404 here is meaningful rather than incidental: Simplelists serves the page
+ * only for lists that exist and accept self-subscribe, so the URL doubles as a
+ * validity probe.
+ */
+async function fetchSubscribeForm(subscribeUrl: string) {
+  const response = await fetch(subscribeUrl, { redirect: "follow" });
+
+  if (response.status === 404) {
+    throw new SubscribeHttpError(
+      404,
+      "Simplelists returned 404 for this subscribe page — the list does not exist or does not allow self-subscribe. Contact the list manager instead.",
+    );
+  }
+  if (!response.ok) {
+    throw new SubscribeHttpError(
+      response.status,
+      `Could not load the subscribe form (${response.status}).`,
+    );
+  }
+
+  const html = await response.text();
+  const form = subscribeFormFrom(html);
+  const csrfToken = inputValueFrom(form, "csrf_token");
+  if (!csrfToken) {
+    throw new Error(
+      "Loaded the subscribe form but found no csrf_token field; the Simplelists form markup has probably changed.",
+    );
+  }
+
+  const sessionCookie = sessionCookieFrom(response);
+  if (!sessionCookie) {
+    throw new Error(
+      "Simplelists did not set a session cookie on the subscribe page, so the CSRF token cannot be used.",
+    );
+  }
+
+  // The form carries the list address in its own casing (`WICC-L@…`, not
+  // `wicc-l@…`). It is submitted verbatim rather than rebuilt from the
+  // lowercased list name, so this cannot break if Simplelists ever compares it
+  // case-sensitively.
+  return {
+    sessionCookie,
+    csrfToken,
+    listField: inputValueFrom(form, "list"),
+  };
+}
+
+/**
+ * The subscribe form's markup. The page also contains an unrelated `/subs/`
+ * form, so the fields are read from this block rather than the whole document.
+ */
+function subscribeFormFrom(html: string) {
+  const match = html.match(
+    /<form[^>]+action=["'][^"']*\/subscribe\/["'][^>]*>([\s\S]*?)<\/form>/i,
+  );
+  return match?.[1] ?? html;
+}
+
+function inputValueFrom(html: string, field: string) {
+  const name = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match =
+    html.match(
+      new RegExp(
+        `<input[^>]+name=["']${name}["'][^>]+value=["']([^"']*)["']`,
+        "i",
+      ),
+    ) ??
+    html.match(
+      new RegExp(
+        `<input[^>]+value=["']([^"']*)["'][^>]+name=["']${name}["']`,
+        "i",
+      ),
+    );
+  return match?.[1] ?? null;
+}
+
+/**
+ * Rebuilds a `name=value` Cookie header from the response's `Set-Cookie`,
+ * dropping attributes (`Path`, `HttpOnly`, …) that must not be echoed back.
+ */
+function sessionCookieFrom(response: Response) {
+  const raw = response.headers.get("set-cookie");
+  if (!raw) return null;
+
+  const pairs = raw
+    .split(/,(?=[^;,]+=)/)
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter((pair): pair is string => Boolean(pair) && pair.includes("="));
+
+  return pairs.length > 0 ? pairs.join("; ") : null;
 }

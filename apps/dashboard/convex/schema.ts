@@ -136,6 +136,8 @@ export default defineSchema({
     organizationId: v.optional(v.id("orgs")),
     sourceType: v.optional(
       v.union(
+        v.literal("simplelists"),
+        // Cornell retired Lyris in 2026. Kept so existing rows still validate.
         v.literal("lyris"),
         v.literal("campus_groups"),
         v.literal("newsletter"),
@@ -165,6 +167,12 @@ export default defineSchema({
     ),
     joinStrategy: v.optional(
       v.union(
+        v.literal("cornell_simplelists"),
+        // Targets <LIST>-manager@lists.cornell.edu for closed or
+        // approval-required lists, where self-subscribe is unavailable.
+        v.literal("cornell_simplelists_owner_contact"),
+        // Lyris strategies are retained so existing rows still validate; no
+        // new row is ever classified into them. See lib/legacyLyris.ts.
         v.literal("cornell_lyris"),
         v.literal("cornell_lyris_owner_contact"),
         v.literal("campus_groups"),
@@ -178,6 +186,10 @@ export default defineSchema({
     ownerRecipient: v.optional(v.string()),
     joinSubject: v.optional(v.string()),
     joinBody: v.optional(v.string()),
+    // Public Simplelists subscribe page for this list. Populated by detection
+    // for lists.cornell.edu rows; the admin UI always renders it as a
+    // clickable fallback when the auto-POST fails.
+    subscribeUrl: v.optional(v.string()),
     joinInstructions: v.optional(v.string()),
     joinConfidence: v.optional(v.number()),
     joinDetectionReasons: v.optional(v.array(v.string())),
@@ -271,10 +283,15 @@ export default defineSchema({
   joinAttempts: defineTable({
     listservId: v.id("listservs"),
     status: v.union(v.literal("sent"), v.literal("failed")),
-    recipient: v.string(),
-    subject: v.string(),
-    body: v.string(),
+    // Web-form attempts have no recipient/subject/body, so the three
+    // email-shaped fields are optional. Existing rows all carry them.
+    recipient: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
     gmailMessageId: v.optional(v.string()),
+    method: v.optional(v.union(v.literal("email"), v.literal("web_form"))),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
   })
