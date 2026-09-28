@@ -26,7 +26,7 @@
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -47,12 +47,16 @@ import type {
   Organization,
 } from "@app/ui";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -116,7 +120,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Start timestamp if present, else deadline timestamp, else null. */
-function getEventTimestamp(event: Doc<"events">): number | null {
+function getEventTimestamp(event: PublicEvent): number | null {
   const start = event.dates.find(
     (d) => d.type === "start" || d.type === "single",
   );
@@ -272,12 +276,68 @@ export function Org() {
 
   const followMutation = useMutation(api.follows.follow);
   const unfollowMutation = useMutation(api.follows.unfollow);
+  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
+  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
+  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
+
+  // Follow state for the org cards inside the post feed (hover-card
+  // Follow/Unfollow button) — distinct from `optimisticFollowing` below,
+  // which is the header's own Follow button for *this* org page.
+  const followedOrgIds = useMemo(
+    () => followedOrgs?.map((org) => org._id),
+    [followedOrgs],
+  );
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
 
   // Optimistic local toggle. We seed from the server result and let the
   // mutation propagate; on next query refresh the server value wins.
   const [optimisticFollowing, setOptimisticFollowing] = useState<
     boolean | null
   >(null);
+
+  // Optimistic bookmark overrides for posts in this org's feed — mirrors the
+  // Home page pattern (flip immediately, roll back on mutation failure).
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
+    ReadonlyMap<Id<"events">, boolean>
+  >(() => new Map());
+  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
+
+  const handleBookmarkToggle = useCallback(
+    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
+      const next = !currentlyBookmarked;
+      setOptimisticBookmarks((prev) => {
+        const m = new Map(prev);
+        m.set(eventId, next);
+        return m;
+      });
+      const promise = next
+        ? bookmarkMutation({ eventId })
+        : unbookmarkMutation({ eventId });
+      void promise.catch(() => {
+        setOptimisticBookmarks((prev) => {
+          const m = new Map(prev);
+          m.delete(eventId);
+          return m;
+        });
+      });
+    },
+    [bookmarkMutation, unbookmarkMutation],
+  );
+
+  const handleRsvp = useCallback(
+    (eventId: Id<"events">) => {
+      if (inFlightRsvps.current.has(eventId)) return;
+      inFlightRsvps.current.add(eventId);
+      void setRsvpMutation({ eventId, status: "going" })
+        .catch(() => {
+          // No visible state to roll back beyond freeing the dedupe slot.
+        })
+        .finally(() => {
+          inFlightRsvps.current.delete(eventId);
+        });
+    },
+    [setRsvpMutation],
+  );
 
   const [tagFilter, setTagFilter] = useState("all");
   const [timeFilter, setTimeFilter] = useState("all");
@@ -318,14 +378,55 @@ export function Org() {
         const windowMs = timeFilter === "week" ? WEEK_MS : MONTH_MS;
         return timestamp >= now && timestamp <= now + windowMs;
       })
-      .map(eventToPost);
-  }, [eventsQuery, tagFilter, timeFilter, now]);
+      .map((hydrated) => {
+        const base = eventToPost(hydrated);
+        const organizations = stampFollowState(
+          base.organizations,
+          hydrated.orgs,
+          followedOrgIdSet,
+          toggleFollow,
+        );
+        const optimisticBookmark = optimisticBookmarks.get(hydrated.event._id);
+        const bookmarked =
+          optimisticBookmark !== undefined
+            ? optimisticBookmark
+            : hydrated.isBookmarked;
+        return {
+          ...base,
+          organizations,
+          bookmarked,
+          onBookmark: () =>
+            handleBookmarkToggle(hydrated.event._id, bookmarked),
+          onRsvp: () => handleRsvp(hydrated.event._id),
+        };
+      });
+  }, [
+    eventsQuery,
+    tagFilter,
+    timeFilter,
+    now,
+    followedOrgIdSet,
+    toggleFollow,
+    optimisticBookmarks,
+    handleBookmarkToggle,
+    handleRsvp,
+  ]);
 
   const clubs: Club[] = useMemo(
     () => orgsToClubs(followedOrgs),
     [followedOrgs],
   );
   const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   // Loading / not-found gating. `orgQuery === undefined` is the loading state.
   if (slug === undefined) {
@@ -604,6 +705,7 @@ export function Org() {
         rsvpGroups={rsvpGroups}
         clubs={clubs}
         onClubClick={handleClubClick}
+        onToggleFollow={handleClubToggleFollow}
         className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>

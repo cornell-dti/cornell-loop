@@ -18,7 +18,14 @@
  * src/styles/tokens.css — nothing is hardcoded.
  */
 
-import { useState, type ComponentPropsWithoutRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { Tag } from "../Tags";
 import type { TagColor } from "../Tags";
 import { Calendar, ExternalLink, MapPin } from "lucide-react";
@@ -49,6 +56,19 @@ export interface DashboardEventCardProps extends ComponentPropsWithoutRef<"artic
   /** When true the description starts clamped to 2 lines with a "Show more" toggle. Defaults to true. */
   truncateDescription?: boolean;
   tags?: TagItem[];
+  /**
+   * Label for the primary action button (e.g. "RSVP", "Apply", "Register",
+   * "Donate"). When omitted (e.g. an "info" event with no clear CTA per the
+   * schema), the button is hidden entirely instead of showing a meaningless
+   * generic "RSVP".
+   */
+  rsvpLabel?: string;
+  /**
+   * When set, clicking the primary action button also opens this URL in a
+   * new tab (in addition to firing `onRsvp`, so it's still tracked in
+   * "Your RSVPs"). When omitted, the button only fires `onRsvp`.
+   */
+  rsvpUrl?: string;
   onRsvp?: () => void;
   onShare?: () => void;
   /**
@@ -71,6 +91,8 @@ export function DashboardEventCard({
   description,
   truncateDescription = true,
   tags = [],
+  rsvpLabel,
+  rsvpUrl,
   onRsvp,
   onShare,
   bookmarked: bookmarkedProp = false,
@@ -84,6 +106,42 @@ export function DashboardEventCard({
 
   const [expanded, setExpanded] = useState(false);
   const isClamped = truncateDescription && !expanded;
+
+  const handleRsvpClick = useCallback(() => {
+    if (rsvpUrl) {
+      window.open(rsvpUrl, "_blank", "noopener,noreferrer");
+    }
+    onRsvp?.();
+  }, [rsvpUrl, onRsvp]);
+
+  // Detect whether the (clamped) description actually overflows 2 lines —
+  // only then is there anything for "Show more" to reveal. Only measures
+  // while clamped: once expanded, the clip is gone (scrollHeight would
+  // trivially equal clientHeight), so re-measuring then would incorrectly
+  // hide the "Show less" toggle. Re-measures on mount, description changes,
+  // and card-width resizes.
+  const descriptionRef = useRef<HTMLParagraphElement>(null);
+  const [canExpand, setCanExpand] = useState(false);
+  useLayoutEffect(() => {
+    if (!truncateDescription || !isClamped) return;
+    const el = descriptionRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      setCanExpand(el.scrollHeight > el.clientHeight + 1);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [truncateDescription, isClamped, description]);
+
+  // If truncation is turned off entirely (caller passes truncateDescription
+  // = false), there's nothing to expand — keep the toggle hidden.
+  useEffect(() => {
+    if (!truncateDescription) setCanExpand(false);
+  }, [truncateDescription]);
 
   return (
     <article
@@ -140,25 +198,27 @@ export function DashboardEventCard({
               iconClassName="size-[var(--space-5)]"
             />
 
-            <button
-              type="button"
-              onClick={onRsvp}
-              className={[
-                "inline-flex shrink-0 items-center justify-center",
-                "px-[var(--space-3)] py-[var(--space-1)]",
-                "rounded-[var(--radius-card)]",
-                "border border-[var(--color-border)]",
-                "bg-[var(--color-surface)]",
-                BODY2_CLASSES,
-                "text-[color:var(--color-black)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              RSVP
-            </button>
+            {rsvpLabel && (
+              <button
+                type="button"
+                onClick={handleRsvpClick}
+                className={[
+                  "inline-flex shrink-0 items-center justify-center",
+                  "px-[var(--space-3)] py-[var(--space-1)]",
+                  "rounded-[var(--radius-card)]",
+                  "border border-[var(--color-border)]",
+                  "bg-[var(--color-surface)]",
+                  BODY2_CLASSES,
+                  "text-[color:var(--color-black)]",
+                  "cursor-pointer whitespace-nowrap",
+                  "hover:bg-[var(--color-surface-subtle)]",
+                  "transition-colors duration-150",
+                ].join(" ")}
+                style={{ fontVariationSettings: "'opsz' 14" }}
+              >
+                {rsvpLabel}
+              </button>
+            )}
           </div>
         </div>
 
@@ -182,28 +242,31 @@ export function DashboardEventCard({
             </span>
           </div>
 
-          <div className="flex shrink-0 items-center gap-[var(--space-2)]">
-            <MapPin
-              aria-hidden="true"
-              size={16}
-              className="shrink-0 text-[color:var(--color-neutral-700)]"
-            />
-            <span
-              className={
-                BODY2_CLASSES +
-                " whitespace-nowrap text-[color:var(--color-neutral-700)]"
-              }
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {location}
-            </span>
-          </div>
+          {location && (
+            <div className="flex shrink-0 items-center gap-[var(--space-2)]">
+              <MapPin
+                aria-hidden="true"
+                size={16}
+                className="shrink-0 text-[color:var(--color-neutral-700)]"
+              />
+              <span
+                className={
+                  BODY2_CLASSES +
+                  " whitespace-nowrap text-[color:var(--color-neutral-700)]"
+                }
+                style={{ fontVariationSettings: "'opsz' 14" }}
+              >
+                {location}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── Section 2: description + show-more ── */}
       <div className="flex flex-col gap-[var(--space-2)]">
         <p
+          ref={descriptionRef}
           className={[
             BODY2_CLASSES,
             "text-[color:var(--color-neutral-700)]",
@@ -216,7 +279,7 @@ export function DashboardEventCard({
           {description}
         </p>
 
-        {truncateDescription && (
+        {canExpand && (
           <button
             type="button"
             onClick={() => setExpanded((prev) => !prev)}
