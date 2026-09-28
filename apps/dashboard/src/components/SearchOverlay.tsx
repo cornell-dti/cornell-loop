@@ -124,7 +124,7 @@ export function SearchOverlay({
   onActiveIndexChange,
 }: SearchOverlayProps) {
   const isTyping = query.trim().length > 0;
-  const filtered = isTyping ? filterSuggestions(query, suggestions) : [];
+  const filtered = isTyping ? filterSuggestions(suggestions) : [];
 
   // Scroll the highlighted row into view when keyboard navigation moves it.
   const listRef = useRef<HTMLDivElement>(null);

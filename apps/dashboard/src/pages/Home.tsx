@@ -29,7 +29,7 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { SideBar } from "@app/ui";
 import type { SideBarItemId } from "@app/ui";
 import { Tag } from "@app/ui";
@@ -37,31 +37,31 @@ import { SearchBar } from "@app/ui";
 import { DashboardPost } from "@app/ui";
 import type { DashboardPostProps, Organization } from "@app/ui";
 import { SearchPanel } from "@app/ui";
-import { Toggle } from "@app/ui";
 import { Button } from "@app/ui";
 import type { RsvpGroup, Club } from "@app/ui";
-import { fallbackColorsForName } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
   type HydratedEvent,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
 import { SearchOverlay } from "../components/SearchOverlay";
 import {
   overlayLabelAt,
   overlayRowCount,
 } from "../components/searchOverlayUtils";
 import type { RecentSearch, SearchSuggestion } from "../data/sampleSearch";
-import {
-  SAMPLE_RECENT_SEARCHES,
-  SAMPLE_SUGGESTIONS,
-  SAMPLE_ORG_RESULTS,
-  SAMPLE_RESULT_POSTS,
-} from "../data/sampleSearch";
-import type { SearchOrgResult } from "../data/sampleSearch";
+import { loadRecentSearches, saveRecentSearches } from "../lib/recentSearches";
+
+const MIN_QUERY_LENGTH = 2;
+// Debounce typed-query search calls so every keystroke doesn't fire a
+// round trip — matches the perceived responsiveness of a typical "live
+// search" without hammering the backend.
+const SUGGESTION_DEBOUNCE_MS = 250;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -96,21 +96,25 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   onSearchClear?: () => void;
-  /**
-   * When set, Home boots into the "results" state with this query already
-   * pre-filled in the SearchBar — used by the /search?q=… route so a
-   * deep-link can land directly on results.
-   */
+  /** Pre-fills the SearchBar with this query on mount. */
   initialQuery?: string;
-  /** Past queries shown in the empty-state dropdown. */
+  /**
+   * Past queries shown in the empty-state dropdown. Defaults to the
+   * user's real recent searches from `localStorage` (see
+   * `../lib/recentSearches`) — pass this to override for tests/stories.
+   */
   recentSearches?: RecentSearch[];
-  /** Suggestion pool filtered while the user types. */
+  /**
+   * Suggestion pool shown while the user types. Defaults to live
+   * `api.events.searchEvents` / `api.orgs.searchOrgs` results for the
+   * (debounced) query — pass this to override for tests/stories.
+   */
   searchSuggestions?: SearchSuggestion[];
-  /** Org results shown above the post feed in results state. */
-  orgResults?: SearchOrgResult[];
-  /** Posts shown in the feed when in results state. */
-  resultPosts?: DashboardPostProps[];
-  /** Called when the user commits a query (Enter or selecting a suggestion). */
+  /**
+   * Called when the user commits a query (Enter or selecting a
+   * suggestion/recent). Home always defers to the full `/search` results
+   * page rather than rendering its own results state inline.
+   */
   onSearchSubmit?: (query: string) => void;
 
   // ── Right panel (SearchPanel) ──
@@ -128,6 +132,11 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
 }
 
 // ─── Default data ─────────────────────────────────────────────────────────────
+
+// Stable empty-array reference so `posts` doesn't change identity on every
+// render when neither `postsOverride` nor `queriedPosts` is set — otherwise
+// the `filteredPosts` useMemo below would recompute unnecessarily.
+const EMPTY_POSTS: DashboardPostProps[] = [];
 
 const DEFAULT_FEED_TAGS: FeedTagItem[] = [
   { label: "Recruitment" },
@@ -153,13 +162,6 @@ const DEFAULT_FEED_TAGS: FeedTagItem[] = [
  *   │  Profile   │                          │                │
  *   └────────────┴──────────────────────────┴────────────────┘
  */
-type SearchScope = "top" | "events" | "orgs";
-
-const SEARCH_SCOPE_OPTIONS: { value: SearchScope; label: string }[] = [
-  { value: "top", label: "Top" },
-  { value: "events", label: "Events" },
-  { value: "orgs", label: "Orgs" },
-];
 
 export function Home(props: HomeProps) {
   return (
@@ -180,10 +182,8 @@ function HomeInner({
   onSearchChange,
   onSearchClear,
   initialQuery,
-  recentSearches = SAMPLE_RECENT_SEARCHES,
-  searchSuggestions = SAMPLE_SUGGESTIONS,
-  orgResults = SAMPLE_ORG_RESULTS,
-  resultPosts = SAMPLE_RESULT_POSTS,
+  recentSearches: recentSearchesOverride,
+  searchSuggestions: searchSuggestionsOverride,
   onSearchSubmit,
   rsvpGroups: rsvpGroupsOverride,
   clubs: clubsOverride,
@@ -209,10 +209,7 @@ function HomeInner({
   const bookmarkMutation = useMutation(api.bookmarks.bookmark);
   const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
   const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const followedOrgIdSet = useMemo<ReadonlySet<Id<"orgs">>>(() => {
-    if (!followedOrgIds) return new Set<Id<"orgs">>();
-    return new Set<Id<"orgs">>(followedOrgIds);
-  }, [followedOrgIds]);
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
 
   // Optimistic bookmark state. Each entry overrides the server `isBookmarked`
   // value for that event id until the mutation resolves. Successful resolves
@@ -272,17 +269,16 @@ function HomeInner({
     if (!feedResult) return undefined;
     return feedResult.page.map((row: HydratedEvent) => {
       const base = eventToPost(row);
-      // Stamp `following` per-org from the user's follow set so the
-      // Following badge renders correctly. Wire bookmark + RSVP click
-      // handlers keyed by the underlying event id.
-      const organizations = base.organizations.map((org, i) => {
-        const matched = row.orgs[i];
-        return {
-          ...org,
-          following:
-            matched !== undefined ? followedOrgIdSet.has(matched._id) : false,
-        };
-      });
+      // Stamp `following` + `onToggleFollow` per-org from the user's follow
+      // set so both the Following badge and the hover-card Follow/Unfollow
+      // button work. Wire bookmark + RSVP click handlers keyed by the
+      // underlying event id.
+      const organizations = stampFollowState(
+        base.organizations,
+        row.orgs,
+        followedOrgIdSet,
+        toggleFollow,
+      );
       const optimisticBookmark = optimisticBookmarks.get(row.event._id);
       const bookmarked =
         optimisticBookmark !== undefined
@@ -302,6 +298,7 @@ function HomeInner({
     handleBookmarkToggle,
     handleRsvp,
     optimisticBookmarks,
+    toggleFollow,
   ]);
 
   const queriedRsvpGroups = useMemo(
@@ -310,8 +307,20 @@ function HomeInner({
   );
   const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
 
+  // "Your Clubs" rows are always currently-followed orgs, so unfollowing is
+  // the only direction — resolve the club's slug (`Club.id`) back to its
+  // real `Id<"orgs">` via the already-loaded `followedOrgs` list.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
+
   // Caller overrides take priority (used by /search and any tests).
-  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  const posts: DashboardPostProps[] =
+    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -339,20 +348,31 @@ function HomeInner({
   const isControlled = searchValue !== undefined;
   const query = isControlled ? searchValue : internalQuery;
 
-  const [focused, setFocused] = useState<boolean>(false);
-  // "results" mode is committed via Enter or selecting a suggestion. It
-  // replaces the tag filter bar with a Top/Events/Orgs Toggle and shows
-  // the org-result card + matching posts.
-  const [showResults, setShowResults] = useState<boolean>(
-    Boolean(initialQuery),
+  // Selected filter tag — clicking a tag filters the feed to posts carrying
+  // that tag; clicking the active tag again clears the filter.
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const handleTagClick = useCallback(
+    (label: string) => {
+      setSelectedTag((prev) => (prev === label ? null : label));
+      onTagClick?.(label);
+    },
+    [onTagClick],
   );
-  const [scope, setScope] = useState<SearchScope>("top");
+
+  const [focused, setFocused] = useState<boolean>(false);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
-  // Local mutable copy of recents so the × buttons can prune. Seeded once
-  // from props — for prototype data we don't need to re-sync if the parent
-  // hands us a new array, and avoiding a sync effect dodges the
+  // Local mutable copy of recents so the × buttons can prune, seeded once
+  // from real localStorage history (or the caller's override, for
+  // tests/stories) — avoiding a sync effect dodges the
   // react-hooks/set-state-in-effect lint.
-  const [recents, setRecents] = useState<RecentSearch[]>(recentSearches);
+  const [recents, setRecents] = useState<RecentSearch[]>(
+    () => recentSearchesOverride ?? loadRecentSearches(),
+  );
+  // Persist every recents change (adds via commitQuery, removals via the
+  // overlay's × / "Clear all") — no-ops if the caller passed an override.
+  useEffect(() => {
+    if (recentSearchesOverride === undefined) saveRecentSearches(recents);
+  }, [recents, recentSearchesOverride]);
 
   // Close the dropdown on outside click. We can't rely on input blur alone
   // because clicking a row needs to fire its onMouseDown first.
@@ -376,23 +396,19 @@ function HomeInner({
     (next: string) => {
       if (!isControlled) setInternalQuery(next);
       onSearchChange?.(next);
-      // Typing always exits the committed-results state — typing a new
-      // query restores the live-suggestions dropdown.
-      if (showResults) setShowResults(false);
       // Reset the keyboard highlight whenever the query changes — this is
       // the only call site that actually changes the list contents, so the
       // reset belongs here (avoids a setState-in-effect lint error).
       setActiveIndex(-1);
       setFocused(true);
     },
-    [isControlled, onSearchChange, showResults],
+    [isControlled, onSearchChange],
   );
 
   const handleClear = useCallback(() => {
     if (!isControlled) setInternalQuery("");
     onSearchChange?.("");
     onSearchClear?.();
-    setShowResults(false);
   }, [isControlled, onSearchChange, onSearchClear]);
 
   const commitQuery = useCallback(
@@ -402,7 +418,6 @@ function HomeInner({
       if (!isControlled) setInternalQuery(trimmed);
       onSearchChange?.(trimmed);
       onSearchSubmit?.(trimmed);
-      setShowResults(true);
       setFocused(false);
       // Promote committed query into recents (front of list, dedup).
       setRecents((prev) => {
@@ -419,6 +434,52 @@ function HomeInner({
     },
     [isControlled, onSearchChange, onSearchSubmit],
   );
+
+  // Debounce the typed query before firing live search — a keystroke every
+  // few ms shouldn't each fire a round trip. Mirrors Search.tsx's
+  // MIN_QUERY_LENGTH gate.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const id = window.setTimeout(
+      () => setDebouncedQuery(query.trim()),
+      SUGGESTION_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(id);
+  }, [query]);
+  const suggestionsQueryActive =
+    searchSuggestionsOverride === undefined &&
+    debouncedQuery.length >= MIN_QUERY_LENGTH;
+
+  const suggestedEvents = useQuery(
+    api.events.searchEvents,
+    suggestionsQueryActive ? { q: debouncedQuery } : "skip",
+  );
+  const suggestedOrgs = useQuery(
+    api.orgs.searchOrgs,
+    suggestionsQueryActive ? { q: debouncedQuery } : "skip",
+  );
+
+  const queriedSuggestions = useMemo<SearchSuggestion[]>(() => {
+    if (!suggestionsQueryActive) return [];
+    const eventSuggestions: SearchSuggestion[] = (suggestedEvents ?? []).map(
+      (hydrated) => ({
+        id: hydrated.event._id,
+        label: hydrated.event.title,
+        kind: "event",
+        meta: hydrated.orgs.map((org) => org.name).join(", ") || undefined,
+      }),
+    );
+    const orgSuggestions: SearchSuggestion[] = (suggestedOrgs ?? []).map(
+      (org) => ({
+        id: org._id,
+        label: org.name,
+        kind: "org",
+      }),
+    );
+    return [...eventSuggestions, ...orgSuggestions].slice(0, 8);
+  }, [suggestionsQueryActive, suggestedEvents, suggestedOrgs]);
+
+  const searchSuggestions = searchSuggestionsOverride ?? queriedSuggestions;
 
   // Keyboard navigation on the input — ↑/↓/Enter/Esc.
   const handleKeyDown = useCallback(
@@ -455,13 +516,16 @@ function HomeInner({
     [activeIndex, commitQuery, focused, query, recents, searchSuggestions],
   );
 
-  // Which posts to render in the feed: results posts when committed, else
-  // the everyday SAMPLE_POSTS supplied via the `posts` prop.
-  const feedPosts = showResults ? resultPosts : posts;
-  // Org result card visibility — only when scope shows orgs (Top/Orgs).
-  const showOrgCards = showResults && scope !== "events";
-  // Event filter — Events scope hides org card; Orgs scope hides post list.
-  const showPosts = !showResults || scope !== "orgs";
+  // Feed posts — narrowed to the selected filter tag, when one is active.
+  // Committing a query navigates to /search (via onSearchSubmit) rather
+  // than replacing the feed inline, so this is the only post list Home ever
+  // renders.
+  const feedPosts = useMemo(() => {
+    if (!selectedTag) return posts;
+    return posts.filter((post) =>
+      post.tags?.some((tag) => tag.label === selectedTag),
+    );
+  }, [posts, selectedTag]);
 
   return (
     <div
@@ -498,11 +562,12 @@ function HomeInner({
         ].join(" ")}
         aria-label="Feed"
       >
-        {/* ── Feed header: search bar + tag filter bar (or scope toggle) ── */}
+        {/* ── Feed header: search bar + tag filter bar ── */}
         {/*
          * Figma node 506:8718: SearchBar sits above the tag filter bar within
-         * the main feed, gap 16px. When the user submits a query (Figma
-         * 515:2413), the tag bar is replaced by a Top/Events/Orgs Toggle.
+         * the main feed, gap 16px. Committing a query (Figma 515:2413)
+         * navigates to the full /search results page via `onSearchSubmit`
+         * rather than replacing this bar inline.
          */}
         <div
           ref={wrapperRef}
@@ -522,9 +587,10 @@ function HomeInner({
             className="w-full shrink-0"
           />
 
-          {/* Dropdown overlay — only visible when input is focused and the
-              user has not yet committed a query. */}
-          {focused && !showResults && (
+          {/* Dropdown overlay — only visible while the input is focused
+              (committing a query navigates away to /search, so there's no
+              in-page "results" state to guard against here). */}
+          {focused && (
             <div
               id="search-overlay"
               className="absolute top-[calc(100%+var(--space-2))] right-[var(--space-8)] left-[var(--space-8)] z-30"
@@ -544,48 +610,31 @@ function HomeInner({
             </div>
           )}
 
-          {/*
-           * State machine: the row beneath the SearchBar is either the tag
-           * filter bar (default) or the Top/Events/Orgs Toggle (results).
-           */}
-          {!showResults && (
-            <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-              {feedTags.map((tag) => (
-                <Tag
-                  key={tag.label}
-                  color="neutral"
-                  onClick={() => onTagClick?.(tag.label)}
-                  className="shrink-0 cursor-pointer"
-                  style={{ fontVariationSettings: "'opsz' 14" }}
-                >
-                  {tag.label}
-                </Tag>
-              ))}
-
-              {/* "+" tag — opens tag picker (Figma node 263:3552) */}
+          {/* Tag filter bar */}
+          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
+            {feedTags.map((tag) => (
               <Tag
-                color="neutral"
-                onClick={onAddTag}
+                key={tag.label}
+                color={selectedTag === tag.label ? "blue" : "neutral"}
+                onClick={() => handleTagClick(tag.label)}
+                aria-pressed={selectedTag === tag.label}
                 className="shrink-0 cursor-pointer"
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >
-                +
+                {tag.label}
               </Tag>
-            </div>
-          )}
+            ))}
 
-          {showResults && (
-            <Toggle
-              options={SEARCH_SCOPE_OPTIONS}
-              value={scope}
-              onChange={(v) => {
-                if (v === "top" || v === "events" || v === "orgs") setScope(v);
-              }}
-              size="default"
-              className="self-stretch"
-              aria-label="Filter search results"
-            />
-          )}
+            {/* "+" tag — opens tag picker (Figma node 263:3552) */}
+            <Tag
+              color="neutral"
+              onClick={onAddTag}
+              className="shrink-0 cursor-pointer"
+              style={{ fontVariationSettings: "'opsz' 14" }}
+            >
+              +
+            </Tag>
+          </div>
         </div>
 
         {/* Horizontal divider — Figma node 263:3557: 1px, --color-border */}
@@ -595,32 +644,21 @@ function HomeInner({
           aria-hidden="true"
         />
 
-        {/* ── Org result cards (results state, Top + Orgs scope only) ── */}
-        {showOrgCards && orgResults.length > 0 && (
-          <div className="flex flex-col gap-[var(--space-3)] px-[var(--space-8)]">
-            {orgResults.map((org) => (
-              <OrgResultCard key={org.id} org={org} />
-            ))}
-          </div>
-        )}
-
         {/* ── Post list ── */}
         {/*
          * Each post is rendered as a DashboardPost (org header + event card).
          * Figma (node 506:8718): pb 32px, px 32px, gap 20px between posts.
          */}
-        {showPosts && (
-          <div className="flex flex-col gap-[var(--space-5)] px-[var(--space-8)] pb-[var(--space-8)]">
-            {!showResults && feedLoading && <FeedLoadingState />}
-            {feedPosts.map((post, i) => (
-              <DashboardPost
-                key={i}
-                {...post}
-                onOrgClick={handleOrgClickInternal}
-              />
-            ))}
-          </div>
-        )}
+        <div className="flex flex-col gap-[var(--space-5)] px-[var(--space-8)] pb-[var(--space-8)]">
+          {feedLoading && <FeedLoadingState />}
+          {feedPosts.map((post, i) => (
+            <DashboardPost
+              key={i}
+              {...post}
+              onOrgClick={handleOrgClickInternal}
+            />
+          ))}
+        </div>
       </main>
 
       {/*
@@ -643,6 +681,7 @@ function HomeInner({
           rsvpGroups={rsvpGroups}
           clubs={clubs}
           onClubClick={onClubClick}
+          onToggleFollow={handleClubToggleFollow}
           className="h-full shrink-0 overflow-visible"
         />
       )}
@@ -805,142 +844,5 @@ function SidebarEmptyState() {
         </Link>
       </div>
     </aside>
-  );
-}
-
-// ─── OrgResultCard ────────────────────────────────────────────────────────────
-//
-// Mirrors the org result card from Figma node 515:2413 — avatar + name on the
-// top row, "Follow" button on the right, description, then a tag row.
-// Lives here (rather than in shared/ui) because it composes existing primitives
-// (Tag, Button, Avatar fallback) and is only used by the search experience.
-
-function OrgResultCard({ org }: { org: SearchOrgResult }) {
-  const fallback = fallbackColorsForName(org.name);
-  const [following, setFollowing] = useState<boolean>(org.following);
-  const [pending, setPending] = useState<boolean>(false);
-  const convex = useConvex();
-  const followMutation = useMutation(api.follows.follow);
-  const unfollowMutation = useMutation(api.follows.unfollow);
-
-  const handleFollowToggle = useCallback(async () => {
-    if (pending) return;
-    const previous = following;
-    const next = !previous;
-    // Optimistic flip first.
-    setFollowing(next);
-    setPending(true);
-    try {
-      // SAMPLE_ORG_RESULTS use a slug-style id, not a real Convex Id<"orgs">.
-      // Resolve the slug to a real org id, then call the mutation.
-      const result = await convex.query(api.orgs.getBySlug, { slug: org.id });
-      const resolved = result.org;
-      if (resolved === null) {
-        throw new Error(`Org not found for slug "${org.id}"`);
-      }
-      const orgId: Id<"orgs"> = resolved._id;
-      if (next) {
-        await followMutation({ orgId });
-      } else {
-        await unfollowMutation({ orgId });
-      }
-    } catch {
-      // Rollback on any failure (network, not-found, mutation error).
-      setFollowing(previous);
-    } finally {
-      setPending(false);
-    }
-  }, [convex, followMutation, following, org.id, pending, unfollowMutation]);
-
-  return (
-    <article
-      className={[
-        "flex flex-col gap-[var(--space-2)]",
-        "rounded-[var(--radius-card)]",
-        "bg-[var(--color-surface)]",
-        "border border-[var(--color-border)]",
-        "px-[var(--space-4)] py-[var(--space-3)]",
-      ].join(" ")}
-    >
-      {/* Header — avatar + name + Follow button */}
-      <div className="flex items-center gap-[var(--space-3)]">
-        <div
-          className="size-[var(--space-6)] shrink-0 overflow-hidden rounded-full"
-          aria-hidden="true"
-        >
-          {org.avatarUrl ? (
-            <img
-              src={org.avatarUrl}
-              alt=""
-              className="size-full object-cover"
-            />
-          ) : (
-            <span
-              className={[
-                "flex size-full items-center justify-center",
-                "font-[family-name:var(--font-body)] font-semibold",
-                "text-[length:var(--font-size-body3)]",
-              ].join(" ")}
-              style={{ backgroundColor: fallback.bg, color: fallback.fg }}
-            >
-              {org.name.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
-
-        <h3
-          className={[
-            "min-w-0 flex-1 truncate",
-            "font-[family-name:var(--font-body)] font-bold",
-            "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
-            "tracking-[var(--letter-spacing-body1)]",
-            "text-[color:var(--color-neutral-900)]",
-          ].join(" ")}
-          style={{ fontVariationSettings: "'opsz' 14" }}
-        >
-          {org.name}
-        </h3>
-
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            void handleFollowToggle();
-          }}
-          aria-pressed={following}
-          disabled={pending}
-        >
-          {following ? "Following" : "Follow"}
-        </Button>
-      </div>
-
-      {/* Description */}
-      <p
-        className={[
-          "font-[family-name:var(--font-body)] font-normal",
-          "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
-          "tracking-[var(--letter-spacing-body2)]",
-          "text-[color:var(--color-neutral-700)]",
-        ].join(" ")}
-        style={{ fontVariationSettings: "'opsz' 14" }}
-      >
-        {org.description}
-      </p>
-
-      {/* Tags */}
-      {org.tags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-          {org.tags.map((t) => (
-            <Tag
-              key={t.label}
-              color={t.color ?? "neutral"}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {t.label}
-            </Tag>
-          ))}
-        </div>
-      )}
-    </article>
   );
 }

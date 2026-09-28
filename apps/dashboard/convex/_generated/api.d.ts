@@ -21,6 +21,7 @@ import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as listservAdmin from "../listservAdmin.js";
+import type * as listservs from "../listservs.js";
 import type * as orgs from "../orgs.js";
 import type * as parser from "../parser.js";
 import type * as rsvps from "../rsvps.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   ingestion: typeof ingestion;
   "lib/auth": typeof lib_auth;
   listservAdmin: typeof listservAdmin;
+  listservs: typeof listservs;
   orgs: typeof orgs;
   parser: typeof parser;
   rsvps: typeof rsvps;

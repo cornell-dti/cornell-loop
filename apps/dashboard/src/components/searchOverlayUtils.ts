@@ -6,14 +6,18 @@
 
 import type { RecentSearch, SearchSuggestion } from "../data/sampleSearch";
 
-/** Substring + case-insensitive filter; the simplest "live search". */
+/**
+ * Caps the suggestion pool shown in the dropdown. The pool itself is
+ * already query-matched by the caller (real server search results, keyed
+ * to the current/debounced query) — this just bounds how many rows render,
+ * it does not re-filter by substring. Re-filtering here would be wrong: a
+ * server match can be relevant without the query literally appearing
+ * inside `label` (e.g. matched via description or org name).
+ */
 export function filterSuggestions(
-  q: string,
   pool: SearchSuggestion[],
 ): SearchSuggestion[] {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return [];
-  return pool.filter((s) => s.label.toLowerCase().includes(needle)).slice(0, 6);
+  return pool.slice(0, 6);
 }
 
 /**
@@ -27,7 +31,7 @@ export function overlayRowCount(
 ): number {
   return query.trim().length === 0
     ? recents.length
-    : filterSuggestions(query, suggestions).length;
+    : filterSuggestions(suggestions).length;
 }
 
 /**
@@ -42,5 +46,5 @@ export function overlayLabelAt(
 ): string | undefined {
   if (index < 0) return undefined;
   if (query.trim().length === 0) return recents[index]?.label;
-  return filterSuggestions(query, suggestions)[index]?.label;
+  return filterSuggestions(suggestions)[index]?.label;
 }

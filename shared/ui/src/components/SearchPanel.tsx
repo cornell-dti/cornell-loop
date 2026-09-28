@@ -89,6 +89,12 @@ export interface SearchPanelProps extends ComponentPropsWithoutRef<"aside"> {
   onClubClick?: (club: Club) => void;
   /** Called when an RSVP'd event row is clicked. */
   onRsvpClick?: (event: RsvpEvent) => void;
+  /**
+   * Called when the Follow/Unfollow button in a club's hover card is
+   * clicked. Clubs in "Your Clubs" are, by definition, already followed —
+   * this is how a user unfollows one directly from the sidebar.
+   */
+  onToggleFollow?: (club: Club) => void;
 }
 
 // ── SearchResultList types ────────────────────────────────────────────────────
@@ -218,7 +224,15 @@ function RsvpEventRow({
 
 // ─── ClubItem ─────────────────────────────────────────────────────────────────
 
-function ClubItem({ club, onClick }: { club: Club; onClick?: () => void }) {
+function ClubItem({
+  club,
+  onClick,
+  onToggleFollow,
+}: {
+  club: Club;
+  onClick?: () => void;
+  onToggleFollow?: () => void;
+}) {
   const count = club.notificationCount ?? 0;
   const fallback = fallbackColorsForName(club.name);
 
@@ -260,6 +274,7 @@ function ClubItem({ club, onClick }: { club: Club; onClick?: () => void }) {
     avatarUrl: club.avatarUrl,
     description: club.description,
     following: true,
+    onToggleFollow,
   };
 
   const interactive = Boolean(onClick);
@@ -359,6 +374,7 @@ export function SearchPanel({
   clubs = [],
   onClubClick,
   onRsvpClick,
+  onToggleFollow,
   className,
   ...rest
 }: SearchPanelProps) {
@@ -434,6 +450,9 @@ export function SearchPanel({
                 key={club.id}
                 club={club}
                 onClick={onClubClick ? () => onClubClick(club) : undefined}
+                onToggleFollow={
+                  onToggleFollow ? () => onToggleFollow(club) : undefined
+                }
               />
             ))}
           </div>

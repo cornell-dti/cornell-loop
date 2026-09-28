@@ -65,6 +65,8 @@ export interface DashboardPostProps {
   description: string;
   truncateDescription?: boolean;
   tags?: DashboardEventCardProps["tags"];
+  rsvpLabel?: DashboardEventCardProps["rsvpLabel"];
+  rsvpUrl?: DashboardEventCardProps["rsvpUrl"];
   onRsvp?: () => void;
   onShare?: () => void;
   bookmarked?: boolean;
@@ -95,6 +97,8 @@ export function DashboardPost({
   description,
   truncateDescription,
   tags,
+  rsvpLabel,
+  rsvpUrl,
   onRsvp,
   onShare,
   bookmarked,
@@ -109,6 +113,8 @@ export function DashboardPost({
     description,
     truncateDescription,
     tags,
+    rsvpLabel,
+    rsvpUrl,
     onRsvp,
     onShare,
     bookmarked,

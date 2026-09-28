@@ -26,7 +26,7 @@
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -35,9 +35,11 @@ import {
   SearchPanel,
   LoopSummary,
   DashboardPost,
+  Dropdown,
   Tag,
   Button,
 } from "@app/ui";
+import type { DropdownOption } from "@app/ui";
 import type {
   SideBarItemId,
   DashboardPostProps,
@@ -45,12 +47,16 @@ import type {
   Organization,
 } from "@app/ui";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -92,23 +98,6 @@ function MailIcon({ className }: { className?: string }) {
   );
 }
 
-function ChevronDownIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_REGULAR =
@@ -116,17 +105,29 @@ const BODY2_REGULAR =
   "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
-// ─── Tag/time placeholder cycles ─────────────────────────────────────────────
-// Phase 2F note: these chips cycle through display labels but do NOT yet
-// filter the underlying events query. Real filtering lands separately.
+// ─── Tag/time filter dropdowns ────────────────────────────────────────────────
 
-const TAG_FILTER_OPTIONS = ["All tags", "Tech", "Outdoors", "For you"] as const;
-const TIME_FILTER_OPTIONS = [
-  "All time",
-  "This week",
-  "This month",
-  "Past events",
-] as const;
+const ALL_TAGS_OPTION: DropdownOption = { value: "all", label: "All tags" };
+
+const TIME_FILTER_OPTIONS: DropdownOption[] = [
+  { value: "all", label: "All time" },
+  { value: "week", label: "This week" },
+  { value: "month", label: "This month" },
+  { value: "past", label: "Past events" },
+];
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Start timestamp if present, else deadline timestamp, else null. */
+function getEventTimestamp(event: PublicEvent): number | null {
+  const start = event.dates.find(
+    (d) => d.type === "start" || d.type === "single",
+  );
+  if (start) return start.timestamp;
+  const deadline = event.dates.find((d) => d.type === "deadline");
+  return deadline ? deadline.timestamp : null;
+}
 
 // ─── Sidebar nav ─────────────────────────────────────────────────────────────
 
@@ -275,6 +276,18 @@ export function Org() {
 
   const followMutation = useMutation(api.follows.follow);
   const unfollowMutation = useMutation(api.follows.unfollow);
+  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
+  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
+  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
+
+  // Follow state for the org cards inside the post feed (hover-card
+  // Follow/Unfollow button) — distinct from `optimisticFollowing` below,
+  // which is the header's own Follow button for *this* org page.
+  const followedOrgIds = useMemo(
+    () => followedOrgs?.map((org) => org._id),
+    [followedOrgs],
+  );
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
 
   // Optimistic local toggle. We seed from the server result and let the
   // mutation propagate; on next query refresh the server value wins.
@@ -282,21 +295,148 @@ export function Org() {
     boolean | null
   >(null);
 
-  // Cycling chip state — labels only, no real filtering applied yet.
-  const [tagFilterIndex, setTagFilterIndex] = useState(0);
-  const [timeFilterIndex, setTimeFilterIndex] = useState(0);
+  // Optimistic bookmark overrides for posts in this org's feed — mirrors the
+  // Home page pattern (flip immediately, roll back on mutation failure).
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
+    ReadonlyMap<Id<"events">, boolean>
+  >(() => new Map());
+  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
+
+  const handleBookmarkToggle = useCallback(
+    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
+      const next = !currentlyBookmarked;
+      setOptimisticBookmarks((prev) => {
+        const m = new Map(prev);
+        m.set(eventId, next);
+        return m;
+      });
+      const promise = next
+        ? bookmarkMutation({ eventId })
+        : unbookmarkMutation({ eventId });
+      void promise.catch(() => {
+        setOptimisticBookmarks((prev) => {
+          const m = new Map(prev);
+          m.delete(eventId);
+          return m;
+        });
+      });
+    },
+    [bookmarkMutation, unbookmarkMutation],
+  );
+
+  const handleRsvp = useCallback(
+    (eventId: Id<"events">) => {
+      if (inFlightRsvps.current.has(eventId)) return;
+      inFlightRsvps.current.add(eventId);
+      void setRsvpMutation({ eventId, status: "going" })
+        .catch(() => {
+          // No visible state to roll back beyond freeing the dedupe slot.
+        })
+        .finally(() => {
+          inFlightRsvps.current.delete(eventId);
+        });
+    },
+    [setRsvpMutation],
+  );
+
+  const [tagFilter, setTagFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all");
   const [feedSearchValue, setFeedSearchValue] = useState("");
+
+  // `now` is captured in the change handler (an event, not render) so the
+  // time-window filter below stays a pure function of state.
+  const [now, setNow] = useState(0);
+  const handleTimeFilterChange = (value: string) => {
+    setNow(Date.now());
+    setTimeFilter(value);
+  };
+
+  const tagOptions: DropdownOption[] = useMemo(() => {
+    if (!eventsQuery) return [ALL_TAGS_OPTION];
+    const uniqueTags = Array.from(
+      new Set(eventsQuery.page.flatMap((hydrated) => hydrated.event.tags)),
+    ).sort((a, b) => a.localeCompare(b));
+    return [
+      ALL_TAGS_OPTION,
+      ...uniqueTags.map((tag) => ({ value: tag, label: tag })),
+    ];
+  }, [eventsQuery]);
 
   const posts: DashboardPostProps[] = useMemo(() => {
     if (!eventsQuery) return [];
-    return eventsQuery.page.map(eventToPost);
-  }, [eventsQuery]);
+    const trimmedSearch = feedSearchValue.trim().toLowerCase();
+    return eventsQuery.page
+      .filter((hydrated) => {
+        if (tagFilter !== "all" && !hydrated.event.tags.includes(tagFilter)) {
+          return false;
+        }
+        if (timeFilter !== "all") {
+          const timestamp = getEventTimestamp(hydrated.event);
+          if (timestamp === null) return false;
+          if (timeFilter === "past") {
+            if (timestamp >= now) return false;
+          } else {
+            const windowMs = timeFilter === "week" ? WEEK_MS : MONTH_MS;
+            if (timestamp < now || timestamp > now + windowMs) return false;
+          }
+        }
+        if (trimmedSearch.length > 0) {
+          const haystack =
+            `${hydrated.event.title} ${hydrated.event.description}`.toLowerCase();
+          if (!haystack.includes(trimmedSearch)) return false;
+        }
+        return true;
+      })
+      .map((hydrated) => {
+        const base = eventToPost(hydrated);
+        const organizations = stampFollowState(
+          base.organizations,
+          hydrated.orgs,
+          followedOrgIdSet,
+          toggleFollow,
+        );
+        const optimisticBookmark = optimisticBookmarks.get(hydrated.event._id);
+        const bookmarked =
+          optimisticBookmark !== undefined
+            ? optimisticBookmark
+            : hydrated.isBookmarked;
+        return {
+          ...base,
+          organizations,
+          bookmarked,
+          onBookmark: () =>
+            handleBookmarkToggle(hydrated.event._id, bookmarked),
+          onRsvp: () => handleRsvp(hydrated.event._id),
+        };
+      });
+  }, [
+    eventsQuery,
+    tagFilter,
+    timeFilter,
+    feedSearchValue,
+    now,
+    followedOrgIdSet,
+    toggleFollow,
+    optimisticBookmarks,
+    handleBookmarkToggle,
+    handleRsvp,
+  ]);
 
   const clubs: Club[] = useMemo(
     () => orgsToClubs(followedOrgs),
     [followedOrgs],
   );
   const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   // Loading / not-found gating. `orgQuery === undefined` is the loading state.
   if (slug === undefined) {
@@ -332,9 +472,6 @@ export function Org() {
   const handleOrgClick = (postOrg: Organization) => {
     if (postOrg.id) navigate(`/orgs/${postOrg.id}`);
   };
-
-  const tagFilter = TAG_FILTER_OPTIONS[tagFilterIndex];
-  const timeFilter = TIME_FILTER_OPTIONS[timeFilterIndex];
 
   // Build the org tag chips. The schema-level tags are all "neutral"; we add
   // a synthetic "For you" primary chip when the user is following the org so
@@ -539,8 +676,7 @@ export function Org() {
 
         {/* ── Posts feed section ── */}
         <div className="flex flex-col gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-4)]">
-          {/* Filter bar: search input (flex-1) + tag filter + time filter.
-              Tag/time chips cycle a label only — real filtering not yet wired. */}
+          {/* Filter bar: search input (flex-1) + tag filter + time filter. */}
           <div className="flex items-center gap-[var(--space-4)]">
             <SearchBar
               value={feedSearchValue}
@@ -550,51 +686,19 @@ export function Org() {
               className="min-w-0 flex-1"
             />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTagFilterIndex((i) => (i + 1) % TAG_FILTER_OPTIONS.length)
-              }
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface)]",
-                "border border-[var(--color-border)]",
-                BODY2_REGULAR,
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {tagFilter}
-              <ChevronDownIcon className="size-[var(--space-6)] shrink-0" />
-            </button>
+            <Dropdown
+              value={tagFilter}
+              onChange={setTagFilter}
+              options={tagOptions}
+              className="w-[9.5rem] shrink-0"
+            />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTimeFilterIndex((i) => (i + 1) % TIME_FILTER_OPTIONS.length)
-              }
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface)]",
-                "border border-[var(--color-border)]",
-                BODY2_REGULAR,
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {timeFilter}
-              <ChevronDownIcon className="size-[var(--space-6)] shrink-0" />
-            </button>
+            <Dropdown
+              value={timeFilter}
+              onChange={handleTimeFilterChange}
+              options={TIME_FILTER_OPTIONS}
+              className="w-[9.5rem] shrink-0"
+            />
           </div>
 
           {/* Post list */}
@@ -611,6 +715,7 @@ export function Org() {
         rsvpGroups={rsvpGroups}
         clubs={clubs}
         onClubClick={handleClubClick}
+        onToggleFollow={handleClubToggleFollow}
         className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>

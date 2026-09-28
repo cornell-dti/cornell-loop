@@ -190,6 +190,12 @@ export default defineSchema({
     candidateId: v.optional(v.id("listservCandidates")),
     notes: v.optional(v.string()),
     lastReceivedAt: v.optional(v.number()),
+    // When an org has more than one non-paused listservs row (today, only
+    // Entrepreneurship — 61 mis-attributed personal-sender rows plus the 1
+    // real list), this marks which row is the org's canonical subscribe
+    // address. Purely additive; unset for every existing row until an admin
+    // sets it by hand (no admin UI for this yet).
+    isPrimary: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
