@@ -1,4 +1,8 @@
 import { v } from "convex/values";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { internal } from "./_generated/api";
 import {
   action,
@@ -297,6 +301,33 @@ export const dashboard = query({
       pendingConfirmations,
       clearedConfirmations: clearedConfirmationsFiltered,
     };
+  },
+});
+
+/**
+ * The full candidate review queue, paginated.
+ *
+ * `dashboard.candidates` is capped at 150 highest-confidence rows, which is the
+ * right default for the summary card but hid roughly 450 of the ~600 rows
+ * directory discovery seeds — the UI offered "Show all N" and could never get
+ * past the cap. Confidence order is preserved so the most promising candidates
+ * still come first; the rest are now reachable by paging rather than invisible.
+ */
+export const listCandidates = query({
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  // `paginate()` returns `splitCursor`/`pageStatus` alongside `page`,
+  // `isDone`, and `continueCursor` — a hand-rolled v.object() that omits
+  // them fails ReturnsValidationError on every call. Convex ships this
+  // factory precisely so the validator stays in sync with what
+  // `.paginate()` actually returns.
+  returns: paginationResultValidator(listservCandidateDocValidator),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await ctx.db
+      .query("listservCandidates")
+      .withIndex("by_status_and_confidence", (q) => q.eq("status", "candidate"))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -604,10 +635,14 @@ export const approveCandidate = mutation({
     if (!candidateRow) throw new Error("Candidate not found.");
 
     const listEmail = stripOwnerPrefix(candidateRow.email);
+    // `.first()`, not `.unique()`: `by_list_email` carries no uniqueness
+    // constraint, and duplicate rows are exactly the state this tooling exists
+    // to repair — so a unique lookup threw precisely when an admin was trying
+    // to approve a candidate for an already-duplicated list.
     const existing = await ctx.db
       .query("listservs")
       .withIndex("by_list_email", (q) => q.eq("listEmail", listEmail))
-      .unique();
+      .first();
 
     const now = Date.now();
     const joinDetection = detectJoinStrategy(listEmail, [
@@ -738,11 +773,34 @@ export const submitSimplelistsSubscribe = action({
   handler: async (ctx, args): Promise<SubscribeResult> => {
     requireAdminToken(args.token);
 
+    // This POSTs the real lists.cornell.edu form using the real connected
+    // mailbox — there is no sandbox to point at. Without an explicit opt-in,
+    // every deployment that happens to have Gmail connected can send genuine
+    // subscription requests to a live university service, which is how an
+    // accidental burst across the ~600 seeded lists would get us rate-limited
+    // or blocked by Cornell IT.
+    if (process.env.SIMPLELISTS_ALLOW_SUBSCRIBE !== "true") {
+      throw new Error(
+        "Automatic subscribing is disabled on this deployment. Set SIMPLELISTS_ALLOW_SUBSCRIBE=true to enable it, or use the subscribe link to join by hand.",
+      );
+    }
+
     const listserv = await ctx.runQuery(
       internal.listservAdmin.getListservForAdmin,
       { listservId: args.listservId },
     );
     if (!listserv) throw new Error("Listserv not found.");
+
+    // Re-subscribing an already-joined list sends the mailbox a second
+    // confirmation and dirties the confirmation queue for no gain.
+    if (
+      listserv.joinStatus === "joined" ||
+      listserv.joinStatus === "awaiting_confirmation"
+    ) {
+      throw new Error(
+        `${listserv.listEmail} is already ${listserv.joinStatus.replace(/_/g, " ")}. Nothing to submit.`,
+      );
+    }
 
     const listName = subscriptionListNameFrom(listserv.listEmail);
     const subscribeUrl =
@@ -1011,32 +1069,98 @@ export const updateListservEmail = mutation({
 });
 
 /**
- * Folds `duplicateId` into `targetId`: unions `senderEmails`, repoints every
- * `listservMessages` row, carries over `isPrimary` if the duplicate held it
- * and the target did not, keeps the later `lastReceivedAt`, then deletes the
- * duplicate.
+ * Rows repointed per `foldBatch` call.
  *
- * Scoped to one organization on purpose — a cross-org merge would silently
- * reassign a listserv's message history to a different org's page, which is
- * never what "merge this duplicate row" means. The Sources tab only ever
- * offers this within a single org's panel, and the same rule is enforced here
- * so it cannot be bypassed by calling the mutation directly.
+ * `listservMessages` documents carry the full `bodyText` and `bodyHtml` of
+ * every archived email, so the transaction size is driven by body length rather
+ * than row count. 200 keeps a batch comfortably inside Convex's limits even for
+ * a list with years of long HTML digests.
  */
-export const mergeListservs = mutation({
+const FOLD_BATCH_SIZE = 200;
+
+/**
+ * Folds duplicate `listservs` rows into one surviving row.
+ *
+ * Entrepreneurship is the motivating case: ~62 students each mailed
+ * `eship-l@lists.cornell.edu`, and the old sender-keyed Sources tab turned each
+ * of them into a row of its own. All 62 describe one list, so they collapse
+ * into one row whose `senderEmails` holds every student address.
+ *
+ * Batched through an action rather than done in one mutation because the
+ * previous implementation `.collect()`ed every message for the duplicate and
+ * patched them in a single transaction — which exceeds Convex's limits on
+ * exactly the high-volume rows that most need folding.
+ *
+ * Scoped to one organization on purpose: a cross-org fold would silently
+ * reassign a listserv's message history to a different org's page, which is
+ * never what "fold this duplicate" means.
+ */
+export const foldListservs = action({
   args: {
     token: v.string(),
     targetId: v.id("listservs"),
-    duplicateId: v.id("listservs"),
+    duplicateIds: v.array(v.id("listservs")),
   },
   returns: v.object({
-    senderEmailsCount: v.number(),
-    messagesRepointed: v.number(),
+    foldedCount: v.number(),
+    rowsRepointed: v.number(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<FoldResult> => {
     requireAdminToken(args.token);
 
+    let rowsRepointed = 0;
+    let foldedCount = 0;
+
+    for (const duplicateId of args.duplicateIds) {
+      // Scalars move first, so a failure part-way through the drain leaves the
+      // target already carrying the duplicate's addresses and subscribe URL
+      // rather than losing them. Re-running the fold then finishes the job.
+      await ctx.runMutation(internal.listservAdmin.absorbListservFields, {
+        targetId: args.targetId,
+        duplicateId,
+      });
+
+      for (;;) {
+        const batch = await ctx.runMutation(internal.listservAdmin.foldBatch, {
+          targetId: args.targetId,
+          duplicateId,
+        });
+        rowsRepointed += batch.repointed;
+        if (batch.done) break;
+      }
+
+      // Only after every child row has been repointed, so an interrupted fold
+      // never leaves a dangling `joinAttempts.listservId` — that field is
+      // required, so a dangling id is unrepresentable rather than merely ugly.
+      await ctx.runMutation(internal.listservAdmin.deleteFoldedListserv, {
+        duplicateId,
+      });
+      foldedCount += 1;
+    }
+
+    return { foldedCount, rowsRepointed };
+  },
+});
+
+type FoldResult = { foldedCount: number; rowsRepointed: number };
+
+/**
+ * Moves the duplicate's scalar fields onto the target, keeping whichever value
+ * is more informative rather than whichever row happens to survive.
+ *
+ * The `listEmail` rule matters most: folding the real list row into a
+ * personal-sender row would otherwise discard `eship-l@lists.cornell.edu` and
+ * leave the survivor identified by a student's address.
+ */
+export const absorbListservFields = internalMutation({
+  args: {
+    targetId: v.id("listservs"),
+    duplicateId: v.id("listservs"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
     if (args.targetId === args.duplicateId) {
-      throw new Error("Cannot merge a listserv into itself.");
+      throw new Error("Cannot fold a listserv into itself.");
     }
 
     const [target, duplicate] = await Promise.all([
@@ -1047,41 +1171,126 @@ export const mergeListservs = mutation({
     if (!duplicate) throw new Error("Duplicate listserv not found.");
     if (target.organizationId !== duplicate.organizationId) {
       throw new Error(
-        "Merge target and duplicate must belong to the same organization.",
+        "Fold target and duplicate must belong to the same organization.",
       );
     }
 
-    const senderEmails = [
-      ...new Set(
-        [...target.senderEmails, ...duplicate.senderEmails].map(normalizeEmail),
-      ),
-    ];
+    // A real Cornell list address always wins over a personal one. When both
+    // or neither qualify, the target keeps its own.
+    const targetIsList = isCornellListAddress(target.listEmail);
+    const duplicateIsList = isCornellListAddress(duplicate.listEmail);
+    const listEmail =
+      !targetIsList && duplicateIsList ? duplicate.listEmail : target.listEmail;
 
-    const now = Date.now();
     await ctx.db.patch(args.targetId, {
-      senderEmails,
+      listEmail: normalizeEmail(listEmail),
+      // Both rows' own addresses are folded in alongside the aliases, so no
+      // address the system has ever seen for this list is lost.
+      senderEmails: [
+        ...new Set(
+          [
+            ...target.senderEmails,
+            ...duplicate.senderEmails,
+            target.listEmail,
+            duplicate.listEmail,
+          ].map(normalizeEmail),
+        ),
+      ],
       lastReceivedAt: maxOptional(
         target.lastReceivedAt,
         duplicate.lastReceivedAt,
       ),
       isPrimary: target.isPrimary || duplicate.isPrimary || undefined,
-      updatedAt: now,
+      // Join and subscribe details are only taken when the target has none:
+      // the duplicate may be the row detection actually ran against.
+      subscribeUrl: target.subscribeUrl ?? duplicate.subscribeUrl,
+      joinStrategy: target.joinStrategy ?? duplicate.joinStrategy,
+      joinRecipient: target.joinRecipient ?? duplicate.joinRecipient,
+      ownerRecipient: target.ownerRecipient ?? duplicate.ownerRecipient,
+      joinSubject: target.joinSubject ?? duplicate.joinSubject,
+      joinBody: target.joinBody ?? duplicate.joinBody,
+      joinInstructions: target.joinInstructions ?? duplicate.joinInstructions,
+      joinConfidence: target.joinConfidence ?? duplicate.joinConfidence,
+      joinDetectionReasons:
+        target.joinDetectionReasons ?? duplicate.joinDetectionReasons,
+      joinDetectedAt: target.joinDetectedAt ?? duplicate.joinDetectedAt,
+      notes: mergeNotes(target.notes, duplicate.notes),
+      updatedAt: Date.now(),
     });
+    return null;
+  },
+});
 
-    const orphanedMessages = await ctx.db
+/** Keeps both rows' notes rather than letting the duplicate's disappear. */
+function mergeNotes(targetNotes?: string, duplicateNotes?: string) {
+  const parts = [targetNotes?.trim(), duplicateNotes?.trim()].filter(
+    (part): part is string => Boolean(part),
+  );
+  if (parts.length === 0) return undefined;
+  return [...new Set(parts)].join("\n\n");
+}
+
+/**
+ * Repoints one batch of the duplicate's child rows onto the target.
+ *
+ * Exactly three tables reference `listservs`: `listservMessages.listservId`,
+ * `joinAttempts.listservId` (required, so it must never dangle), and
+ * `events.listservId`. Draining `by_listserv` with `.take()` self-terminates —
+ * each repointed row leaves the index range this query reads.
+ */
+export const foldBatch = internalMutation({
+  args: {
+    targetId: v.id("listservs"),
+    duplicateId: v.id("listservs"),
+  },
+  returns: v.object({
+    repointed: v.number(),
+    done: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const messages = await ctx.db
       .query("listservMessages")
       .withIndex("by_listserv", (q) => q.eq("listservId", args.duplicateId))
-      .collect();
-    for (const message of orphanedMessages) {
+      .take(FOLD_BATCH_SIZE);
+    for (const message of messages) {
       await ctx.db.patch(message._id, { listservId: args.targetId });
     }
+    if (messages.length === FOLD_BATCH_SIZE) {
+      return { repointed: messages.length, done: false };
+    }
 
+    const attempts = await ctx.db
+      .query("joinAttempts")
+      .withIndex("by_listserv", (q) => q.eq("listservId", args.duplicateId))
+      .take(FOLD_BATCH_SIZE);
+    for (const attempt of attempts) {
+      await ctx.db.patch(attempt._id, { listservId: args.targetId });
+    }
+    if (attempts.length === FOLD_BATCH_SIZE) {
+      return { repointed: messages.length + attempts.length, done: false };
+    }
+
+    // Drafts and published events keep pointing at a row that still exists, so
+    // the admin page can still tell an admin which list an event came from.
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_listserv_id", (q) => q.eq("listservId", args.duplicateId))
+      .take(FOLD_BATCH_SIZE);
+    for (const event of events) {
+      await ctx.db.patch(event._id, { listservId: args.targetId });
+    }
+
+    const repointed = messages.length + attempts.length + events.length;
+    return { repointed, done: events.length < FOLD_BATCH_SIZE };
+  },
+});
+
+export const deleteFoldedListserv = internalMutation({
+  args: { duplicateId: v.id("listservs") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
     await ctx.db.delete(args.duplicateId);
-
-    return {
-      senderEmailsCount: senderEmails.length,
-      messagesRepointed: orphanedMessages.length,
-    };
+    return null;
   },
 });
 
