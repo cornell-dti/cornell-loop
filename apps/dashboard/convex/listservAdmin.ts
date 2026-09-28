@@ -25,7 +25,8 @@ import {
   buildLyrisJoinDefaults,
   lyrisDetectionReasons,
 } from "./lib/legacyLyris";
-import type { Id } from "./_generated/dataModel";
+import { UNKNOWN_LIST_REASON } from "./ingestion";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -240,6 +241,130 @@ export const dashboard = query({
       pendingConfirmations,
       clearedConfirmations: clearedConfirmationsFiltered,
     };
+  },
+});
+
+/**
+ * Read-only visibility into the org/listserv damage that is deliberately
+ * repaired by hand rather than by migration — see PR5's plan for why. Groups
+ * every `listservs` row by organization, flags rows that look like the
+ * `assignSender` senderEmails-clobbering bug fixed in PR1 (a single sender
+ * address on an org that has more than one row), and surfaces a Simplelists
+ * directory match by e-mail so PR4's descriptions reach rows that were never
+ * themselves sourced from the directory.
+ */
+export const reconciliationReport = query({
+  args: { token: v.string() },
+  returns: v.object({
+    orgs: v.array(
+      v.object({
+        organizationId: v.id("orgs"),
+        organizationName: v.string(),
+        hasDuplicates: v.boolean(),
+        rows: v.array(
+          v.object({
+            listservId: v.id("listservs"),
+            listEmail: v.string(),
+            senderEmailsCount: v.number(),
+            isPrimary: v.boolean(),
+            status: v.union(
+              v.literal("joining"),
+              v.literal("active"),
+              v.literal("paused"),
+              v.literal("failed"),
+            ),
+            possiblyTruncated: v.boolean(),
+            directoryDescription: v.optional(v.string()),
+            directorySubscribeUrl: v.optional(v.string()),
+          }),
+        ),
+      }),
+    ),
+    // Raised automatically when a Simplelists confirmation resolves a list
+    // name with no listservs row. listservCandidates carries no organizationId,
+    // so these cannot be attributed to an org here — an admin has to look at
+    // the address and decide.
+    unknownListCandidates: v.array(
+      v.object({
+        candidateId: v.id("listservCandidates"),
+        email: v.string(),
+        displayName: v.optional(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const [orgs, listservs, candidates] = await Promise.all([
+      ctx.db.query("orgs").collect(),
+      ctx.db.query("listservs").collect(),
+      ctx.db.query("listservCandidates").collect(),
+    ]);
+
+    const directoryByEmail = new Map<string, Doc<"listservCandidates">>();
+    for (const candidate of candidates) {
+      if (candidate.source === "simplelists_directory") {
+        directoryByEmail.set(normalizeEmail(candidate.email), candidate);
+      }
+    }
+
+    const rowsByOrg = new Map<Id<"orgs">, Doc<"listservs">[]>();
+    for (const listserv of listservs) {
+      if (!listserv.organizationId) continue;
+      const bucket = rowsByOrg.get(listserv.organizationId) ?? [];
+      bucket.push(listserv);
+      rowsByOrg.set(listserv.organizationId, bucket);
+    }
+
+    const orgReports = orgs.flatMap((org) => {
+      const rows = rowsByOrg.get(org._id) ?? [];
+      if (rows.length === 0) return [];
+
+      const hasDuplicates = rows.length > 1;
+      return [
+        {
+          organizationId: org._id,
+          organizationName: org.name,
+          hasDuplicates,
+          rows: rows.map((row) => {
+            const directoryMatch =
+              directoryByEmail.get(normalizeEmail(row.listEmail)) ??
+              row.senderEmails
+                .map((email) => directoryByEmail.get(normalizeEmail(email)))
+                .find((match) => match !== undefined);
+
+            return {
+              listservId: row._id,
+              listEmail: row.listEmail,
+              senderEmailsCount: row.senderEmails.length,
+              isPrimary: row.isPrimary === true,
+              status: row.status,
+              // A single sender address only looks like the PR1 clobbering
+              // bug when there is more than one row competing for the same
+              // org — a genuinely single-sender org is normal, not damage.
+              possiblyTruncated: hasDuplicates && row.senderEmails.length <= 1,
+              directoryDescription: directoryMatch?.directoryDescription,
+              directorySubscribeUrl: directoryMatch?.subscribeUrl,
+            };
+          }),
+        },
+      ];
+    });
+    orgReports.sort((a, b) => b.rows.length - a.rows.length);
+
+    const unknownListCandidates = candidates
+      .filter(
+        (candidate) =>
+          candidate.status === "candidate" &&
+          candidate.matchedReasons.includes(UNKNOWN_LIST_REASON),
+      )
+      .map((candidate) => ({
+        candidateId: candidate._id,
+        email: candidate.email,
+        displayName: candidate.displayName,
+      }));
+
+    return { orgs: orgReports, unknownListCandidates };
   },
 });
 
@@ -759,6 +884,160 @@ export const updateListservNotes = mutation({
     });
   },
 });
+
+export const updateListservEmail = mutation({
+  args: {
+    token: v.string(),
+    listservId: v.id("listservs"),
+    listEmail: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+
+    const listEmail = cleanRequired(args.listEmail, "List email");
+    const normalized = normalizeEmail(listEmail);
+
+    const collision = await ctx.db
+      .query("listservs")
+      .withIndex("by_list_email", (q) => q.eq("listEmail", normalized))
+      .first();
+    if (collision && collision._id !== args.listservId) {
+      throw new Error(
+        `${normalized} is already in use by "${collision.name}". Merge the two rows instead of renaming onto it.`,
+      );
+    }
+
+    await ctx.db.patch(args.listservId, {
+      listEmail: normalized,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Folds `duplicateId` into `targetId`: unions `senderEmails`, repoints every
+ * `listservMessages` row, carries over `isPrimary` if the duplicate held it
+ * and the target did not, keeps the later `lastReceivedAt`, then deletes the
+ * duplicate.
+ *
+ * Scoped to one organization on purpose — a cross-org merge would silently
+ * reassign a listserv's message history to a different org's page, which is
+ * never what "merge this duplicate row" means. The Sources tab only ever
+ * offers this within a single org's panel, and the same rule is enforced here
+ * so it cannot be bypassed by calling the mutation directly.
+ */
+export const mergeListservs = mutation({
+  args: {
+    token: v.string(),
+    targetId: v.id("listservs"),
+    duplicateId: v.id("listservs"),
+  },
+  returns: v.object({
+    senderEmailsCount: v.number(),
+    messagesRepointed: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    if (args.targetId === args.duplicateId) {
+      throw new Error("Cannot merge a listserv into itself.");
+    }
+
+    const [target, duplicate] = await Promise.all([
+      ctx.db.get(args.targetId),
+      ctx.db.get(args.duplicateId),
+    ]);
+    if (!target) throw new Error("Target listserv not found.");
+    if (!duplicate) throw new Error("Duplicate listserv not found.");
+    if (target.organizationId !== duplicate.organizationId) {
+      throw new Error(
+        "Merge target and duplicate must belong to the same organization.",
+      );
+    }
+
+    const senderEmails = [
+      ...new Set(
+        [...target.senderEmails, ...duplicate.senderEmails].map(normalizeEmail),
+      ),
+    ];
+
+    const now = Date.now();
+    await ctx.db.patch(args.targetId, {
+      senderEmails,
+      lastReceivedAt: maxOptional(
+        target.lastReceivedAt,
+        duplicate.lastReceivedAt,
+      ),
+      isPrimary: target.isPrimary || duplicate.isPrimary || undefined,
+      updatedAt: now,
+    });
+
+    const orphanedMessages = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_listserv", (q) => q.eq("listservId", args.duplicateId))
+      .collect();
+    for (const message of orphanedMessages) {
+      await ctx.db.patch(message._id, { listservId: args.targetId });
+    }
+
+    await ctx.db.delete(args.duplicateId);
+
+    return {
+      senderEmailsCount: senderEmails.length,
+      messagesRepointed: orphanedMessages.length,
+    };
+  },
+});
+
+/**
+ * Sets `isPrimary` on one row and clears it on every other row in the same
+ * org, so "at most one primary per org" holds after the mutation regardless
+ * of what the rows looked like before.
+ */
+export const setPrimaryListserv = mutation({
+  args: { token: v.string(), listservId: v.id("listservs") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+
+    const listserv = await ctx.db.get(args.listservId);
+    if (!listserv) throw new Error("Listserv not found.");
+    if (!listserv.organizationId) {
+      throw new Error(
+        "This listserv has no organization yet, so there is nothing to be primary among.",
+      );
+    }
+
+    const siblings = await ctx.db
+      .query("listservs")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", listserv.organizationId),
+      )
+      .collect();
+
+    const now = Date.now();
+    for (const sibling of siblings) {
+      const shouldBePrimary = sibling._id === args.listservId;
+      if (sibling.isPrimary === shouldBePrimary) continue;
+      await ctx.db.patch(sibling._id, {
+        isPrimary: shouldBePrimary || undefined,
+        updatedAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+function maxOptional(a: number | undefined, b: number | undefined) {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return Math.max(a, b);
+}
 
 export const clearConfirmation = mutation({
   args: { token: v.string(), messageId: v.id("listservMessages") },

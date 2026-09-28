@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
 import {
   useAction,
+  useConvex,
   useMutation,
   usePaginatedQuery,
   useQuery,
@@ -28,6 +29,15 @@ type Candidate = Doc<"listservCandidates">;
 const CANDIDATE_PREVIEW_COUNT = 25;
 
 type Listserv = Doc<"listservs">;
+
+/** Mirrors sourceAdmin.ts's `findSimilarOrganizations` return validator. */
+type SimilarOrgMatch = {
+  organizationId: Id<"orgs">;
+  name: string;
+  slug: string;
+  matchedOn: string[];
+};
+
 type IngestionState = Doc<"listservIngestionState">;
 type IngestionRun = Doc<"ingestionRuns">;
 // Full doc type — kept for reference but dashboard/overview queries return projected subsets.
@@ -346,6 +356,54 @@ export default function Admin() {
   const hideEvent = useMutation(api.parser.hideEvent);
   const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
   const requeueMessage = useMutation(api.parser.requeueMessage);
+  const updateListservEmail = useMutation(
+    api.listservAdmin.updateListservEmail,
+  );
+  const mergeListservs = useMutation(api.listservAdmin.mergeListservs);
+  const setPrimaryListserv = useMutation(api.listservAdmin.setPrimaryListserv);
+
+  // ── duplicate-org guard ──
+  // findSimilarOrganizations is a query, called imperatively (not via
+  // useQuery) because it only runs at the moment an admin asks to create an
+  // org, not reactively on every render.
+  const convex = useConvex();
+  const [pendingOrgCreation, setPendingOrgCreation] = useState<{
+    name: string;
+    type: OrgType;
+    matches: SimilarOrgMatch[];
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>;
+  } | null>(null);
+
+  /**
+   * Every "create org" entry point in this page routes through here instead
+   * of calling `createOrg` directly, so a near-duplicate name or a source
+   * address that already belongs to another org always surfaces a choice
+   * before a second org for the same real-world club gets created.
+   */
+  async function createOrgWithGuard(
+    name: string,
+    type: OrgType,
+    sourceEmail: string | undefined,
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>,
+  ) {
+    try {
+      const matches = await convex.query(
+        api.sourceAdmin.findSimilarOrganizations,
+        { token, name, sourceEmail },
+      );
+      if (matches.length === 0) {
+        const orgId = await createOrg({ token, name, type, sourceEmail });
+        await onCreated(orgId);
+        return;
+      }
+      setPendingOrgCreation({ name, type, matches, onCreated });
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Failed to check for duplicates.",
+        false,
+      );
+    }
+  }
 
   async function act(label: string, fn: () => Promise<unknown>) {
     try {
@@ -549,14 +607,15 @@ export default function Admin() {
                 assignSourceOrg({ token, listservId, organizationId: orgId }),
               )
             }
-            onCreateAndAssignSource={(listservId, name, type) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSourceOrg({
-                  token,
-                  listservId,
-                  organizationId: orgId,
-                });
+            onCreateAndAssignSource={(listservId, name, type, sourceEmail) =>
+              createOrgWithGuard(name, type, sourceEmail, async (orgId) => {
+                await act(`${name} created and assigned.`, () =>
+                  assignSourceOrg({
+                    token,
+                    listservId,
+                    organizationId: orgId,
+                  }),
+                );
               })
             }
             onAssignInboxSenderToOrg={(senderEmail, orgId) =>
@@ -571,15 +630,16 @@ export default function Admin() {
               sourceName,
               sourceType,
             ) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSender({
-                  token,
-                  senderEmail,
-                  organizationId: orgId,
-                  sourceName,
-                  sourceType,
-                });
+              createOrgWithGuard(name, type, senderEmail, async (orgId) => {
+                await act(`${name} created and assigned.`, () =>
+                  assignSender({
+                    token,
+                    senderEmail,
+                    organizationId: orgId,
+                    sourceName,
+                    sourceType,
+                  }),
+                );
               })
             }
             onIgnoreSender={(senderEmail) =>
@@ -591,7 +651,24 @@ export default function Admin() {
               )
             }
             onCreateOrg={(name, type) =>
-              act(`${name} created.`, () => createOrg({ token, name, type }))
+              createOrgWithGuard(name, type, undefined, () => {
+                showToast(`${name} created.`);
+              })
+            }
+            onUpdateListservEmail={(listservId, listEmail) =>
+              act("Listserv email updated.", () =>
+                updateListservEmail({ token, listservId, listEmail }),
+              )
+            }
+            onSetPrimaryListserv={(listservId) =>
+              act("Primary listserv set.", () =>
+                setPrimaryListserv({ token, listservId }),
+              )
+            }
+            onMergeListservs={(targetId, duplicateId) =>
+              act("Listservs merged.", () =>
+                mergeListservs({ token, targetId, duplicateId }),
+              )
             }
             onUpdateOrg={(orgId, payload) =>
               act("Organization updated.", () =>
@@ -734,6 +811,68 @@ export default function Admin() {
           />
         )}
       </div>
+
+      {/* Duplicate-org confirmation */}
+      {pendingOrgCreation && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] p-6 shadow-[var(--shadow-2)]">
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              "{pendingOrgCreation.name}" looks like it might already exist
+            </h2>
+            <div className="mt-3 grid gap-2">
+              {pendingOrgCreation.matches.map((match) => (
+                <div
+                  key={match.organizationId}
+                  className="rounded-xl border border-[var(--color-border)] px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold">{match.name}</span>
+                    <Btn
+                      primary
+                      onClick={async () => {
+                        const { onCreated } = pendingOrgCreation;
+                        setPendingOrgCreation(null);
+                        await onCreated(match.organizationId);
+                      }}
+                    >
+                      Attach here instead
+                    </Btn>
+                  </div>
+                  <p className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {match.matchedOn.join(" · ")}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Btn onClick={() => setPendingOrgCreation(null)}>Cancel</Btn>
+              <Btn
+                danger
+                onClick={async () => {
+                  const { name, type, onCreated } = pendingOrgCreation;
+                  setPendingOrgCreation(null);
+                  try {
+                    const orgId = await createOrg({
+                      token,
+                      name,
+                      type,
+                      confirmedNew: true,
+                    });
+                    await onCreated(orgId);
+                  } catch (e) {
+                    showToast(
+                      e instanceof Error ? e.message : "Failed to create org.",
+                      false,
+                    );
+                  }
+                }}
+              >
+                Create "{pendingOrgCreation.name}" anyway
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -945,6 +1084,9 @@ function SourcesTab({
   onCreateOrg,
   onUpdateOrg,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onMergeListservs,
 }: {
   candidates: Candidate[];
   listservs: Listserv[];
@@ -957,6 +1099,7 @@ function SourcesTab({
     listservId: Id<"listservs">,
     name: string,
     type: OrgType,
+    sourceEmail: string,
   ) => void;
   onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"orgs">) => void;
   onCreateAndAssignInboxSender: (
@@ -971,6 +1114,15 @@ function SourcesTab({
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onMergeListservs: (
+    targetId: Id<"listservs">,
+    duplicateId: Id<"listservs">,
+  ) => void;
 }) {
   const [showAllCandidates, setShowAllCandidates] = useState(false);
 
@@ -1081,7 +1233,12 @@ function SourcesTab({
                     onAssignSource(item.source._id, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignSource(item.source._id, name, type)
+                    onCreateAndAssignSource(
+                      item.source._id,
+                      name,
+                      type,
+                      item.source.listEmail,
+                    )
                   }
                   onIgnore={() => onIgnoreSender(item.source.listEmail)}
                 />
@@ -1178,17 +1335,24 @@ function SourcesTab({
         />
         {organizations.length > 0 && (
           <div className="mt-4 grid gap-2">
-            {organizations.map((org) => (
-              <OrgRow
-                key={org._id}
-                org={org}
-                sourceCount={
-                  listservs.filter((s) => s.organizationId === org._id).length
-                }
-                onUpdate={(payload) => onUpdateOrg(org._id, payload)}
-                onGenerateUploadUrl={onGenerateUploadUrl}
-              />
-            ))}
+            {organizations.map((org) => {
+              const orgListservs = listservs.filter(
+                (s) => s.organizationId === org._id,
+              );
+              return (
+                <OrgRow
+                  key={org._id}
+                  org={org}
+                  sourceCount={orgListservs.length}
+                  listservRows={orgListservs}
+                  onUpdate={(payload) => onUpdateOrg(org._id, payload)}
+                  onGenerateUploadUrl={onGenerateUploadUrl}
+                  onUpdateListservEmail={onUpdateListservEmail}
+                  onSetPrimaryListserv={onSetPrimaryListserv}
+                  onMergeListservs={onMergeListservs}
+                />
+              );
+            })}
           </div>
         )}
         <CreateOrgForm className="mt-4" onCreate={onCreateOrg} />
@@ -1462,13 +1626,27 @@ function ImageUploadField({
 function OrgRow({
   org,
   sourceCount,
+  listservRows,
   onUpdate,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onMergeListservs,
 }: {
   org: Organization;
   sourceCount: number;
+  listservRows: Listserv[];
   onUpdate: (payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onMergeListservs: (
+    targetId: Id<"listservs">,
+    duplicateId: Id<"listservs">,
+  ) => void;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -1774,9 +1952,144 @@ function OrgRow({
               </Btn>
               <Btn onClick={cancel}>Cancel</Btn>
             </div>
+
+            {/* Row 8: Listservs — edit address, pick primary, merge duplicates */}
+            <div className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-4">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Listservs ({listservRows.length})
+              </label>
+              <OrgListservsPanel
+                rows={listservRows}
+                onUpdateEmail={onUpdateListservEmail}
+                onSetPrimary={onSetPrimaryListserv}
+                onMerge={onMergeListservs}
+              />
+            </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Every `listservs` row for one org, editable in place. This is the "merge
+ * and fix an address" surface the plan describes — Entrepreneurship's 61
+ * mis-attributed personal-sender rows are cleaned up through exactly this
+ * panel, not through the Convex data browser.
+ */
+function OrgListservsPanel({
+  rows,
+  onUpdateEmail,
+  onSetPrimary,
+  onMerge,
+}: {
+  rows: Listserv[];
+  onUpdateEmail: (listservId: Id<"listservs">, listEmail: string) => void;
+  onSetPrimary: (listservId: Id<"listservs">) => void;
+  onMerge: (targetId: Id<"listservs">, duplicateId: Id<"listservs">) => void;
+}) {
+  const [emailDrafts, setEmailDrafts] = useState<
+    Record<string, string | undefined>
+  >({});
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+        No listserv rows yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      {rows.map((row) => {
+        const draft = emailDrafts[row._id] ?? row.listEmail;
+        const dirty = draft.trim().toLowerCase() !== row.listEmail;
+        const otherRows = rows.filter((other) => other._id !== row._id);
+
+        return (
+          <div
+            key={row._id}
+            className="grid gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:grid-cols-[auto_1fr_auto] sm:items-center"
+          >
+            <label className="flex items-center gap-1.5 text-[length:var(--font-size-body3)] whitespace-nowrap select-none">
+              <input
+                type="radio"
+                checked={row.isPrimary === true}
+                onChange={() => onSetPrimary(row._id)}
+                className="size-4 accent-[var(--color-primary-700)]"
+              />
+              Primary
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={draft}
+                onChange={(e) =>
+                  setEmailDrafts((d) => ({ ...d, [row._id]: e.target.value }))
+                }
+                className={input()}
+              />
+              <Btn
+                disabled={!dirty}
+                onClick={() => onUpdateEmail(row._id, draft)}
+              >
+                Save
+              </Btn>
+              <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {row.senderEmails.length} sender
+                {row.senderEmails.length !== 1 ? "s" : ""} · {row.status}
+              </span>
+            </div>
+            {otherRows.length > 0 ? (
+              <MergeControl row={row} otherRows={otherRows} onMerge={onMerge} />
+            ) : (
+              <span />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The merge half of one row: pick another row in the same org, fold this one into it. */
+function MergeControl({
+  row,
+  otherRows,
+  onMerge,
+}: {
+  row: Listserv;
+  otherRows: Listserv[];
+  onMerge: (targetId: Id<"listservs">, duplicateId: Id<"listservs">) => void;
+}) {
+  const [target, setTarget] = useState<string>("");
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        className={input()}
+      >
+        <option value="">Merge into…</option>
+        {otherRows.map((other) => (
+          <option key={other._id} value={other._id}>
+            {other.listEmail}
+          </option>
+        ))}
+      </select>
+      <Btn
+        danger
+        disabled={!target}
+        onClick={() => {
+          if (!target) return;
+          onMerge(target as Id<"listservs">, row._id);
+          setTarget("");
+        }}
+      >
+        Merge
+      </Btn>
     </div>
   );
 }
