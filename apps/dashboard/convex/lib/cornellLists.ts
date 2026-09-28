@@ -114,6 +114,30 @@ export function listNameFromConfirmationSender(senderEmail: string) {
   return listName;
 }
 
+/**
+ * The list a Simplelists address belongs to, unwrapping the administrative
+ * aliases Simplelists sends from.
+ *
+ * Production holds `acsu-l-account-manager@lists.cornell.edu` as a listservs
+ * row: that is the *confirmation sender* for `acsu-l`, not a list of its own.
+ * Taking its local part verbatim would build a subscribe URL for a list that
+ * does not exist, so the alias suffixes are stripped first.
+ */
+export function subscriptionListNameFrom(email: string) {
+  const fromConfirmation = listNameFromConfirmationSender(email);
+  if (fromConfirmation) return fromConfirmation;
+
+  const parts = splitAddress(email);
+  if (parts?.domain === SIMPLELISTS_DOMAIN) {
+    if (parts.local.endsWith(MANAGER_SUFFIX)) {
+      const listName = parts.local.slice(0, -MANAGER_SUFFIX.length);
+      if (listName && LIST_NAME_PATTERN.test(listName)) return listName;
+    }
+  }
+
+  return listNameFromAddress(email);
+}
+
 /** The posting address for a Simplelists list, or null for an invalid name. */
 export function simplelistsAddressForList(listName: string) {
   const name = lower(listName);

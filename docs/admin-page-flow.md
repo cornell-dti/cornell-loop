@@ -32,7 +32,8 @@ For local development, set the same env var in the local Convex environment befo
 
 1. `Setup`: connect Gmail and find candidate sources.
 2. `Sources`: approve sources and assign them to organizations.
-3. `Join`: subscribe the inbox to each source.
+3. `Join`: subscribe the inbox to each source — a web form for Cornell e-lists,
+   an email request for everything else.
 4. `Ingest`: pull email and clear subscription confirmations.
 5. `Publish`: parse messages, review drafts, and publish events.
 
@@ -99,16 +100,45 @@ Important fields:
 
 ## Join
 
-Use this tab to subscribe `dtiincubator@gmail.com` to each source.
+Use this tab to subscribe `dtiincubator@gmail.com` to each source. Which
+controls a row shows depends on its join method.
+
+### Cornell e-lists (`cornell simplelists`)
+
+Every current Cornell e-list lives on `lists.cornell.edu`, which is
+web-interface only — these lists cannot be joined by email at all, so the row
+shows no email composer.
+
+1. `Submit subscribe form`: posts the list's public subscribe form for you.
+2. The row records the attempt and moves to `awaiting confirmation`.
+3. Simplelists replies with a confirmation email. Handle it in `Ingest` →
+   `Confirmation queue`.
+
+The subscribe URL is always shown as a link above the button. If the submit
+fails — or the list requires manager approval — open that link and subscribe by
+hand; the reason is printed on the row.
+
+A closed or approval-only list should be switched to
+`cornell simplelists owner contact` in `Settings`, which emails the list's human
+manager at `<list>-manager@lists.cornell.edu` instead.
+
+### Everything else
 
 - `Prepare email`: creates a draft join email.
 - Review `To`, `Subject`, and `Body` before sending.
 - `Send`: sends from `dtiincubator@gmail.com`.
-- `Settings`: change join method or source status only if the default looks wrong.
 
-For Cornell Lyris lists, the default usually sends `join` to a `-request@cornell.edu` address.
+### Settings
 
-Recent join emails show whether the send succeeded. Joined sources move into `Joined sources`.
+- `Join method`: change only if the detected one looks wrong. The two
+  `cornell lyris` values are retired and no longer offered for new selections;
+  a row already carrying one still displays it.
+- `Source status`: `joining` / `active` / `paused` / `failed`.
+- `Re-detect`: re-runs detection over the row's addresses. Nothing reclassifies
+  on its own, so use this after fixing an address.
+
+`Recent join attempts` shows both web-form and email attempts, with the HTTP
+status or error for each. Joined sources move into `Joined sources`.
 
 ## Ingest
 
@@ -120,12 +150,17 @@ Use this tab to pull mail from Gmail and handle confirmations.
 
 ### Confirmation Queue
 
-Some listservs require a confirmation click.
+Every Simplelists subscribe requires a confirmation click, and some other
+listservs do too.
 
 1. Open the confirmation link.
 2. Complete the confirmation page.
 3. Return to admin.
 4. Click `Clear`.
+
+A confirmation link is only clickable when the mail server authenticated the
+sender for a Cornell domain. An unauthenticated one is shown as plain text —
+inspect it in Gmail before acting on it.
 
 Clearing a confirmation marks the matched source as joined and active.
 
@@ -167,12 +202,19 @@ Check title, date, location, description, and links before publishing.
 - Messages need assignment: go to `Sources` and assign the sender.
 - Confirmation link is missing: inspect the email manually in Gmail, then clear only after confirming.
 - Join email failed: check Gmail connection, then retry from `Join`.
+- Subscribe form failed with 404: the list does not exist or does not allow
+  self-subscribe. Switch the row to `cornell simplelists owner contact` and
+  email the list manager instead.
+- Subscribe form failed for another reason: open the subscribe link on the row
+  and complete the form by hand.
 - Parser failed: use `Retry` on the failed message or rerun the parser later.
 
 ## Safe Operating Rules
 
 - Do not publish without checking the event details.
 - Do not send join emails without reviewing the recipient and subject.
+- Do not email a `lists.cornell.edu` address asking to be added — Simplelists
+  ignores email commands. Use the subscribe form.
 - Do not create a new organization if the org already exists.
 - Ignore obvious spam, unsubscribe, bounce, and admin-only senders.
 - When unsure, leave the item unmodified and ask another team member.
