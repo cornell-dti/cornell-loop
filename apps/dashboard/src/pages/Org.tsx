@@ -364,19 +364,28 @@ export function Org() {
 
   const posts: DashboardPostProps[] = useMemo(() => {
     if (!eventsQuery) return [];
+    const trimmedSearch = feedSearchValue.trim().toLowerCase();
     return eventsQuery.page
       .filter((hydrated) => {
         if (tagFilter !== "all" && !hydrated.event.tags.includes(tagFilter)) {
           return false;
         }
-        if (timeFilter === "all") return true;
-
-        const timestamp = getEventTimestamp(hydrated.event);
-        if (timestamp === null) return false;
-        if (timeFilter === "past") return timestamp < now;
-
-        const windowMs = timeFilter === "week" ? WEEK_MS : MONTH_MS;
-        return timestamp >= now && timestamp <= now + windowMs;
+        if (timeFilter !== "all") {
+          const timestamp = getEventTimestamp(hydrated.event);
+          if (timestamp === null) return false;
+          if (timeFilter === "past") {
+            if (timestamp >= now) return false;
+          } else {
+            const windowMs = timeFilter === "week" ? WEEK_MS : MONTH_MS;
+            if (timestamp < now || timestamp > now + windowMs) return false;
+          }
+        }
+        if (trimmedSearch.length > 0) {
+          const haystack =
+            `${hydrated.event.title} ${hydrated.event.description}`.toLowerCase();
+          if (!haystack.includes(trimmedSearch)) return false;
+        }
+        return true;
       })
       .map((hydrated) => {
         const base = eventToPost(hydrated);
@@ -404,6 +413,7 @@ export function Org() {
     eventsQuery,
     tagFilter,
     timeFilter,
+    feedSearchValue,
     now,
     followedOrgIdSet,
     toggleFollow,
