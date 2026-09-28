@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import {
+  isCornellListAddress,
   isJoinConfirmationMail,
   listNameFromAddress,
   listNameFromConfirmationSender,
@@ -27,7 +28,19 @@ const GMAIL_BATCH_ENDPOINT = "https://www.googleapis.com/batch/gmail/v1";
 const HISTORY_STATE_KEY = "gmail_history_id";
 const MESSAGES_PER_PAGE = 100;
 const MAX_BOOTSTRAP_MESSAGES = 250;
+/**
+ * Upper bound on one steady-state poll. Anything beyond this is picked up by
+ * the next run ten minutes later, because `markIngestionSucceeded` advances the
+ * cursor only to the history id Gmail reported for the page we actually read.
+ */
+const MAX_HISTORY_MESSAGES = 250;
 const BATCH_SIZE = 50;
+/**
+ * Messages per `storeParsedMessages` call. Each carries its full `bodyText` and
+ * `bodyHtml`, and mutation arguments are size-limited, so the whole fetched set
+ * cannot be passed at once.
+ */
+const STORE_CHUNK_SIZE = 25;
 
 type GmailHeader = { name?: string; value?: string };
 
@@ -159,9 +172,10 @@ export const pollListservInbox = internalAction({
         key: HISTORY_STATE_KEY,
       })) as IngestionStateSnapshot | null;
 
-      const fetched: FetchedMessageIds = state?.value
-        ? await fetchMessagesSinceHistory(accessToken, state.value)
-        : await fetchRecentMessages(accessToken);
+      const fetched: FetchedMessageIds = await fetchMessageIds(
+        accessToken,
+        state?.value,
+      );
       fetchedCount = fetched.messageIds.length;
 
       const unseenIds = (await ctx.runQuery(
@@ -201,14 +215,17 @@ export const pollListservInbox = internalAction({
           );
         }
 
-        if (parsed.length > 0) {
+        // Chunked because every message carries its full text and HTML body,
+        // and the whole set used to be handed to one mutation as a single
+        // argument. Past the argument size limit that throws *after* the Gmail
+        // fetch but *before* the cursor advances, so the next run refetched the
+        // same oversized set and wedged permanently.
+        for (let i = 0; i < parsed.length; i += STORE_CHUNK_SIZE) {
           const result = await ctx.runMutation(
             internal.ingestion.storeParsedMessages,
-            {
-              messages: parsed,
-            },
+            { messages: parsed.slice(i, i + STORE_CHUNK_SIZE) },
           );
-          stored = result.stored;
+          stored += result.stored;
         }
       }
 
@@ -711,6 +728,36 @@ async function refreshAccessToken(ctx: ActionCtx) {
   return data.access_token;
 }
 
+/**
+ * Picks the incremental or bootstrap fetch, and recovers from an expired
+ * cursor.
+ *
+ * Gmail retains `startHistoryId` for about a week and then answers 404. That
+ * used to fail the run before `markIngestionSucceeded` could write, so the stale
+ * cursor was kept and every subsequent poll 404'd identically — ingestion
+ * stopped permanently and the only fix was editing the row by hand in the Convex
+ * dashboard. Falling back to the bootstrap fetch re-derives a fresh history id
+ * from the profile, which then overwrites the stale one. Already-seen messages
+ * are filtered by `by_gmail_message_id`, so the recovery run stores no
+ * duplicates; it is just larger than usual.
+ */
+async function fetchMessageIds(
+  accessToken: string,
+  historyId: string | undefined,
+): Promise<FetchedMessageIds> {
+  if (!historyId) return await fetchRecentMessages(accessToken);
+
+  try {
+    return await fetchMessagesSinceHistory(accessToken, historyId);
+  } catch (error) {
+    if (!(error instanceof GmailApiError) || error.status !== 404) throw error;
+    console.warn(
+      `Gmail history id ${historyId} has expired; falling back to a bootstrap fetch.`,
+    );
+    return await fetchRecentMessages(accessToken);
+  }
+}
+
 async function fetchMessagesSinceHistory(
   accessToken: string,
   historyId: string,
@@ -738,7 +785,12 @@ async function fetchMessagesSinceHistory(
       }
     }
 
-    pageToken = response.nextPageToken;
+    // Capped the same way the bootstrap path is. Without a bound, a gap in
+    // polling — a paused deploy, a run of failures, or a batch of newly joined
+    // lists all going live at once — returns thousands of ids in one run, and
+    // every downstream stage is sized off this array.
+    pageToken =
+      ids.length < MAX_HISTORY_MESSAGES ? response.nextPageToken : undefined;
   } while (pageToken);
 
   return { messageIds: [...new Set(ids)], historyId: latestHistoryId };
@@ -823,12 +875,24 @@ async function gmailFetch<T>(url: string, accessToken: string) {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Gmail API error ${response.status}: ${await response.text()}`,
-    );
+    throw new GmailApiError(response.status, await response.text());
   }
 
   return (await response.json()) as T;
+}
+
+/**
+ * Carries the HTTP status so callers can react to specific failures — notably
+ * the 404 Gmail returns for an expired `startHistoryId`.
+ */
+class GmailApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, body: string) {
+    super(`Gmail API error ${status}: ${body}`);
+    this.name = "GmailApiError";
+    this.status = status;
+  }
 }
 
 function parseBatchResponse(responseText: string) {
@@ -910,32 +974,65 @@ function matchListserv(
         (value) => value.toLowerCase() === listAddress,
       ),
     );
-    if (exact) {
-      return { listservId: exact._id, organizationId: exact.organizationId };
-    }
+    if (exact) return toMatch(exact);
     return { unknownListAddress: listAddress };
   }
 
-  const emailSignals = new Set([
-    email.senderEmail,
-    ...email.to,
-    ...email.cc,
-    ...extractEmails(headerValue(email.headers, "list-id")),
-    ...extractEmails(headerValue(email.headers, "list-unsubscribe")),
-    ...extractEmails(headerValue(email.headers, "delivered-to")),
-  ]);
+  // Recipients and the sender are kept apart, and recipients win.
+  //
+  // A student mailing `eship-l@lists.cornell.edu` is *from* a personal address
+  // and *to* the list. Folding both into one set meant whichever row happened
+  // to come first won, so once a per-student row existed the same list could
+  // attribute to a different row from one message to the next. The address a
+  // message was sent *to* is the authoritative statement of which list it
+  // belongs to; the From address is only a fallback for direct mail that names
+  // no list at all.
+  const recipientSignals = new Set(
+    [
+      ...email.to,
+      ...email.cc,
+      ...extractEmails(headerValue(email.headers, "list-id")),
+      ...extractEmails(headerValue(email.headers, "list-unsubscribe")),
+      ...extractEmails(headerValue(email.headers, "delivered-to")),
+    ].map((value) => value.toLowerCase()),
+  );
+  const senderSignal = email.senderEmail.toLowerCase();
 
-  for (const listserv of listservs) {
-    const candidates = [listserv.listEmail, ...listserv.senderEmails].map(
-      (value) => value.toLowerCase(),
-    );
-    if (candidates.some((candidate) => emailSignals.has(candidate))) {
-      return {
-        listservId: listserv._id,
-        organizationId: listserv.organizationId,
-      };
-    }
+  // `listEmail` ahead of `senderEmails`: an address recorded as a row's own
+  // list address is a stronger claim to the message than the same address
+  // showing up in some other row's observed-alias list.
+  const byRecipientListEmail = listservs.find((listserv) =>
+    recipientSignals.has(listserv.listEmail.toLowerCase()),
+  );
+  if (byRecipientListEmail) return toMatch(byRecipientListEmail);
+
+  const byRecipientAlias = listservs.find((listserv) =>
+    listserv.senderEmails.some((value) =>
+      recipientSignals.has(value.toLowerCase()),
+    ),
+  );
+  if (byRecipientAlias) return toMatch(byRecipientAlias);
+
+  // Mail addressed to a Cornell list we have no row for stays unassigned
+  // rather than falling through to the From address.
+  //
+  // `senderEmails` accumulates the personal addresses of everyone who posts to
+  // a list, so sender matching would otherwise attribute a student's mail to
+  // whichever list they last posted to — even when this message went somewhere
+  // else entirely. Leaving it unassigned surfaces the unknown list in the
+  // Sources tab, which is the outcome we want.
+  if (
+    [...recipientSignals].some((recipient) => isCornellListAddress(recipient))
+  ) {
+    return {};
   }
+
+  const bySender = listservs.find((listserv) =>
+    [listserv.listEmail, ...listserv.senderEmails].some(
+      (value) => value.toLowerCase() === senderSignal,
+    ),
+  );
+  if (bySender) return toMatch(bySender);
 
   // Retained for non-Cornell confirmations (Mailchimp, CampusGroups), which
   // have no deterministic list identifier to resolve against.
@@ -946,15 +1043,16 @@ function matchListserv(
         .map((value) => value.toLowerCase().split("@")[0])
         .filter(Boolean);
       if (localParts.some((local) => searchable.includes(local))) {
-        return {
-          listservId: listserv._id,
-          organizationId: listserv.organizationId,
-        };
+        return toMatch(listserv);
       }
     }
   }
 
   return {};
+}
+
+function toMatch(listserv: MatchableListserv): ListservMatch {
+  return { listservId: listserv._id, organizationId: listserv.organizationId };
 }
 
 function headerValue(

@@ -1,9 +1,15 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { requireAdminToken } from "./_shared/adminToken";
-import { isLegacyLyrisAddress, isSimplelistsAddress } from "./lib/cornellLists";
+import {
+  isLegacyLyrisAddress,
+  isSimplelistsAddress,
+  simplelistsAddressForList,
+  subscriptionListNameFrom,
+} from "./lib/cornellLists";
 import { orgDocValidator, listservDocValidator } from "./lib/docValidators";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 const ORG_TYPES = v.union(
@@ -24,13 +30,18 @@ type OrgType =
   | "other";
 
 /**
- * Upper bound on the never-matched-message scan below. Every message here
- * has no `listservId` at all, so this set is far smaller than the full
- * `listservMessages` table — bounding it is still required by the repo's
- * no-unbounded-`.collect()` rule, but a genuine backlog past this size would
- * be a real problem worth surfacing on its own, not just silently truncating.
+ * Upper bound on the never-matched-message scan below.
+ *
+ * Deliberately low, because `listservMessages` rows carry the full `bodyText`
+ * and `bodyHtml` of every email while this query only reads four scalar fields
+ * off them. At 2000 the read volume was megabytes per evaluation, and because
+ * `overview` is a reactive subscription that re-runs on every relevant write,
+ * exceeding Convex's per-query read limit would take the Sources tab down
+ * continuously rather than once.
+ *
+ * Truncation is reported rather than hidden — see `unassignedTruncated`.
  */
-const UNASSIGNED_MESSAGE_SCAN_LIMIT = 2000;
+const UNASSIGNED_MESSAGE_SCAN_LIMIT = 400;
 
 const SOURCE_TYPES = v.union(
   v.literal("simplelists"),
@@ -56,12 +67,24 @@ export const overview = query({
     unassignedSenders: v.array(
       v.object({
         senderEmail: v.string(),
+        // The Cornell list this group's mail was addressed to, when every
+        // message in it names one. Absent for direct mail, which stays
+        // grouped by its From address exactly as before.
+        listAddress: v.optional(v.string()),
+        // Every distinct From address folded into this group. One entry for a
+        // direct-mail group; one per person for a list group.
+        senderEmails: v.array(v.string()),
         count: v.number(),
         latestReceivedAt: v.number(),
         sampleSubjects: v.array(v.string()),
         suggestion: SUGGESTION_VALIDATOR,
       }),
     ),
+    // True when the unassigned scan hit its cap, so the groups below describe a
+    // slice rather than the whole backlog. Mirrors `reconciliationReport`'s
+    // `possiblyTruncated` — an admin must be able to tell "nothing left to
+    // assign" apart from "you are looking at the first 400 messages".
+    unassignedTruncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
@@ -87,10 +110,20 @@ export const overview = query({
         .flatMap((source) => [source.listEmail, ...source.senderEmails])
         .map((email) => email.toLowerCase()),
     );
-    const unassignedBySender = new Map<
+    // Grouped by the list a message was addressed *to*, falling back to the
+    // From address only for direct mail that names no list.
+    //
+    // Grouping by From address is what produced Entrepreneurship's 62
+    // `listservs` rows: ~62 students each mailed `eship-l@lists.cornell.edu`,
+    // each appeared here as its own unassigned sender, and each `assignSender`
+    // click inserted a row keyed on that student's personal address. All of
+    // that mail belongs to one list, so it is now one assignable unit.
+    const groups = new Map<
       string,
       {
         senderEmail: string;
+        listAddress?: string;
+        senderEmails: string[];
         count: number;
         latestReceivedAt: number;
         sampleSubjects: string[];
@@ -101,19 +134,29 @@ export const overview = query({
       const senderEmail = message.senderEmail.toLowerCase();
       if (!senderEmail || sourceEmails.has(senderEmail)) continue;
 
-      const existing = unassignedBySender.get(senderEmail);
+      const listAddress = listAddressForMessage(message);
+      const key = listAddress ?? senderEmail;
+
+      const existing = groups.get(key);
       if (existing) {
         existing.count += 1;
         existing.latestReceivedAt = Math.max(
           existing.latestReceivedAt,
           message.receivedAt,
         );
+        if (!existing.senderEmails.includes(senderEmail)) {
+          existing.senderEmails.push(senderEmail);
+        }
         if (message.subject && existing.sampleSubjects.length < 3) {
           existing.sampleSubjects.push(message.subject);
         }
       } else {
-        unassignedBySender.set(senderEmail, {
-          senderEmail,
+        groups.set(key, {
+          // For a list group this is the list address, so the row still has a
+          // single stable identity for the existing assign/ignore mutations.
+          senderEmail: key,
+          listAddress,
+          senderEmails: [senderEmail],
           count: 1,
           latestReceivedAt: message.receivedAt,
           sampleSubjects: message.subject ? [message.subject] : [],
@@ -121,16 +164,24 @@ export const overview = query({
       }
     }
 
-    const unassignedSenders = [...unassignedBySender.values()]
-      .map((sender) => ({
-        ...sender,
-        suggestion: suggestSource(sender.senderEmail),
+    const unassignedSenders = [...groups.values()]
+      .map((group) => ({
+        ...group,
+        // Keyed on the group identity, so a list group suggests the list's own
+        // name ("Eship Listserv") rather than whichever student happened to
+        // send the first message.
+        suggestion: suggestSource(group.senderEmail),
       }))
       .sort(
         (a, b) => b.count - a.count || b.latestReceivedAt - a.latestReceivedAt,
       );
 
-    return { organizations, listservs, unassignedSenders };
+    return {
+      organizations,
+      listservs,
+      unassignedSenders,
+      unassignedTruncated: messages.length === UNASSIGNED_MESSAGE_SCAN_LIMIT,
+    };
   },
 });
 
@@ -279,7 +330,17 @@ export const generateOrgImageUploadUrl = mutation({
 export const assignSender = mutation({
   args: {
     token: v.string(),
+    // The group's identity: a Cornell list address for list mail, or the From
+    // address for direct mail. Becomes the row's `listEmail`.
     senderEmail: v.string(),
+    // Every From address observed in the group. For a list group this is the
+    // ~62 students who post to it; they become aliases on the single row
+    // instead of 62 rows of their own.
+    senderEmails: v.optional(v.array(v.string())),
+    // Set when this group came from list mail. Scopes the message backfill to
+    // mail actually addressed to this list, so a student who posts to two
+    // lists does not drag their other list's mail along.
+    listAddress: v.optional(v.string()),
     organizationId: v.optional(v.id("orgs")),
     organizationName: v.optional(v.string()),
     organizationType: v.optional(ORG_TYPES),
@@ -320,9 +381,17 @@ export const assignSender = mutation({
 
     const existing = await findListservByAnyAddress(ctx, senderEmail);
     const now = Date.now();
+    const groupSenders = (args.senderEmails ?? []).map(normalizeEmail);
+    const sourceName = cleanOptional(args.sourceName) ?? suggestion.sourceName;
+
     const sourceFields = {
-      name: cleanOptional(args.sourceName) ?? suggestion.sourceName,
-      displayName: cleanOptional(args.sourceName) ?? suggestion.sourceName,
+      // Provenance is preserved rather than overwritten. Attaching an alias to
+      // a row that directory discovery found used to rewrite it to
+      // `source: "manual"`, force `joinStatus: "joined"` whether or not a join
+      // ever happened, and replace the directory's real name with a guess
+      // derived from an email local part.
+      name: existing?.name ?? sourceName,
+      displayName: existing?.displayName ?? sourceName,
       listEmail: existing?.listEmail ?? senderEmail,
       // Union rather than replace: senderEmails accumulates aliases observed
       // for this source, and overwriting it loses every one of them.
@@ -330,14 +399,19 @@ export const assignSender = mutation({
         ...new Set([
           ...(existing?.senderEmails ?? []).map(normalizeEmail),
           senderEmail,
+          ...groupSenders,
         ]),
       ],
       organizationId,
-      sourceType: args.sourceType ?? suggestion.sourceType,
+      sourceType:
+        existing?.sourceType ?? args.sourceType ?? suggestion.sourceType,
       status: "active" as const,
-      joinMethod: "unknown" as const,
-      joinStatus: "joined" as const,
-      source: "manual" as const,
+      joinMethod: existing?.joinMethod ?? ("unknown" as const),
+      // Mail is arriving, so we are demonstrably subscribed — but only claim
+      // that for a row we are creating here. An existing row's join history is
+      // more trustworthy than this inference.
+      joinStatus: existing?.joinStatus ?? ("joined" as const),
+      source: existing?.source ?? ("manual" as const),
       updatedAt: now,
     };
 
@@ -346,12 +420,15 @@ export const assignSender = mutation({
       : await ctx.db.insert("listservs", { ...sourceFields, createdAt: now });
     if (existing) await ctx.db.patch(existing._id, sourceFields);
 
-    const messages = await ctx.db
-      .query("listservMessages")
-      .withIndex("by_sender_email", (q) => q.eq("senderEmail", senderEmail))
-      .collect();
-    for (const message of messages) {
-      await ctx.db.patch(message._id, { listservId, organizationId });
+    // Every From address in the group, plus the identity itself for direct
+    // mail where they are the same thing.
+    const backfillAddresses = [...new Set([senderEmail, ...groupSenders])];
+    for (const address of backfillAddresses) {
+      await backfillMessagesForSender(ctx, address, {
+        listservId,
+        organizationId,
+        listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
+      });
     }
 
     return { organizationId, listservId };
@@ -431,13 +508,11 @@ export const assignSourceOrganization = mutation({
       updatedAt: Date.now(),
     });
 
-    const messages = await ctx.db
-      .query("listservMessages")
-      .withIndex("by_listserv", (q) => q.eq("listservId", args.listservId))
-      .collect();
-    for (const message of messages) {
-      await ctx.db.patch(message._id, { organizationId: args.organizationId });
-    }
+    await runListservOrgBackfillBatch(ctx, {
+      listservId: args.listservId,
+      organizationId: args.organizationId,
+      cursor: null,
+    });
     return null;
   },
 });
@@ -448,7 +523,16 @@ export const assignSourceOrganization = mutation({
  * {@link similarOrganizations}). The table holds fewer than a hundred rows
  * today; this exists so those queries stay bounded if that changes.
  */
-const LISTSERV_SCAN_LIMIT = 500;
+/**
+ * Raised from 500 because directory discovery seeds roughly 600 candidates, and
+ * approving them creates `listservs` rows. Past the cap this file fails
+ * silently and in three separate ways: `overview` truncates `sourceEmails` so
+ * already-assigned senders reappear as unassigned, `findListservByAnyAddress`
+ * misses an alias and inserts a duplicate row instead of patching, and the
+ * duplicate-org guard stops matching the orgs it exists to catch. Listserv rows
+ * carry no message bodies, so a larger bound is cheap.
+ */
+const LISTSERV_SCAN_LIMIT = 2000;
 
 /**
  * Find the source that owns an address, checking `senderEmails` as well as
@@ -686,6 +770,188 @@ async function getOrCreateOrg(
     orgStatus: "active",
     updatedAt: now,
   });
+}
+
+/**
+ * Messages patched per transaction by the two backfills below.
+ *
+ * `listservMessages` documents carry full email bodies, so a batch's cost is
+ * driven by body length. Both backfills used to `.collect()` the whole set and
+ * patch it in one transaction, which is unbounded in the size of a list's
+ * archive — fine for a new source, and a hard failure for a busy one.
+ */
+const BACKFILL_BATCH_SIZE = 200;
+
+/**
+ * Attributes a sender's not-yet-attributed mail to a listserv and org.
+ *
+ * Only touches messages with no `listservId`: a message that already resolved
+ * to some other source is correctly attributed there, and re-pointing it would
+ * silently move another list's history. When `listAddress` is set the backfill
+ * is further narrowed to mail addressed to that list, so assigning a student
+ * who posts to two lists does not drag the other list's mail along.
+ *
+ * The first page runs inline so a small source is fully assigned by the time
+ * the mutation returns; anything larger continues in scheduled batches.
+ */
+async function backfillMessagesForSender(
+  ctx: MutationCtx,
+  senderEmail: string,
+  target: {
+    listservId: Id<"listservs">;
+    organizationId: Id<"orgs">;
+    listAddress: string | null;
+  },
+) {
+  await runSenderBackfillBatch(ctx, {
+    senderEmail,
+    ...target,
+    cursor: null,
+  });
+}
+
+type SenderBackfillArgs = {
+  senderEmail: string;
+  listservId: Id<"listservs">;
+  organizationId: Id<"orgs">;
+  listAddress: string | null;
+  cursor: string | null;
+};
+
+async function runSenderBackfillBatch(
+  ctx: MutationCtx,
+  args: SenderBackfillArgs,
+) {
+  // Paginated rather than repeatedly `.take()`-ing the head of the index:
+  // patching a message does not remove it from `by_sender_email`, so a
+  // take-based drain would re-read the same rows forever.
+  const page = await ctx.db
+    .query("listservMessages")
+    .withIndex("by_sender_email", (q) => q.eq("senderEmail", args.senderEmail))
+    .paginate({ numItems: BACKFILL_BATCH_SIZE, cursor: args.cursor });
+
+  for (const message of page.page) {
+    if (message.listservId) continue;
+    if (
+      args.listAddress &&
+      listAddressForMessage(message) !== args.listAddress
+    ) {
+      continue;
+    }
+    await ctx.db.patch(message._id, {
+      listservId: args.listservId,
+      organizationId: args.organizationId,
+    });
+  }
+
+  if (!page.isDone) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.sourceAdmin.backfillSenderMessages,
+      { ...args, cursor: page.continueCursor },
+    );
+  }
+}
+
+export const backfillSenderMessages = internalMutation({
+  args: {
+    senderEmail: v.string(),
+    listservId: v.id("listservs"),
+    organizationId: v.id("orgs"),
+    listAddress: v.union(v.string(), v.null()),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await runSenderBackfillBatch(ctx, args);
+    return null;
+  },
+});
+
+async function runListservOrgBackfillBatch(
+  ctx: MutationCtx,
+  args: {
+    listservId: Id<"listservs">;
+    organizationId: Id<"orgs">;
+    cursor: string | null;
+  },
+) {
+  const page = await ctx.db
+    .query("listservMessages")
+    .withIndex("by_listserv", (q) => q.eq("listservId", args.listservId))
+    .paginate({ numItems: BACKFILL_BATCH_SIZE, cursor: args.cursor });
+
+  for (const message of page.page) {
+    if (message.organizationId === args.organizationId) continue;
+    await ctx.db.patch(message._id, { organizationId: args.organizationId });
+  }
+
+  if (!page.isDone) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.sourceAdmin.backfillListservOrganization,
+      { ...args, cursor: page.continueCursor },
+    );
+  }
+}
+
+export const backfillListservOrganization = internalMutation({
+  args: {
+    listservId: v.id("listservs"),
+    organizationId: v.id("orgs"),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await runListservOrgBackfillBatch(ctx, args);
+    return null;
+  },
+});
+
+/**
+ * The Cornell list address a message was sent to, or undefined when it names
+ * none.
+ *
+ * Looks at the same recipient signals `matchListserv` uses, in the same order,
+ * so the Sources tab groups mail exactly the way ingestion will attribute it
+ * once a row exists. `subscriptionListNameFrom` unwraps Simplelists' `-manager`
+ * and `-account-manager` aliases, so administrative mail about a list groups
+ * with the list itself rather than forming a second row.
+ */
+function listAddressForMessage(message: Doc<"listservMessages">) {
+  const recipients = [
+    ...message.to,
+    ...message.cc,
+    ...extractHeaderEmails(message.headers, "list-id"),
+    ...extractHeaderEmails(message.headers, "delivered-to"),
+  ];
+
+  for (const recipient of recipients) {
+    const listName = subscriptionListNameFrom(recipient);
+    if (!listName) continue;
+    const address = isLegacyLyrisAddress(recipient)
+      ? normalizeEmail(recipient)
+      : simplelistsAddressForList(listName);
+    if (address) return address;
+  }
+  return undefined;
+}
+
+const EMAIL_PATTERN = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
+/**
+ * `List-Id` carries a dotted pseudo-address (`<eship-l.lists.cornell.edu>`) as
+ * often as a real one, so addresses are pulled out by pattern rather than
+ * assuming the whole header value is one.
+ */
+function extractHeaderEmails(
+  headers: ReadonlyArray<{ name: string; value: string }>,
+  name: string,
+) {
+  return headers
+    .filter((header) => header.name.toLowerCase() === name)
+    .flatMap((header) => header.value.match(EMAIL_PATTERN) ?? [])
+    .map(normalizeEmail);
 }
 
 function suggestSource(senderEmail: string) {

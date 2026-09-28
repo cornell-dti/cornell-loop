@@ -10,6 +10,7 @@ import {
 import { api } from "../../convex/_generated/api";
 import {
   confirmationLinkFrom,
+  isCornellListAddress,
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -117,6 +118,8 @@ type OrgType =
 
 type UnassignedSender = {
   senderEmail: string;
+  listAddress?: string;
+  senderEmails: string[];
   count: number;
   latestReceivedAt: number;
   sampleSubjects: string[];
@@ -372,7 +375,7 @@ export default function Admin() {
   const updateListservEmail = useMutation(
     api.listservAdmin.updateListservEmail,
   );
-  const mergeListservs = useMutation(api.listservAdmin.mergeListservs);
+  const foldListservs = useAction(api.listservAdmin.foldListservs);
   const setPrimaryListserv = useMutation(api.listservAdmin.setPrimaryListserv);
 
   // ── duplicate-org guard ──
@@ -449,6 +452,7 @@ export default function Admin() {
   const organizations: Organization[] = sourceData?.organizations ?? [];
   const sourceListservs: Listserv[] = sourceData?.listservs ?? listservs;
   const unassigned: UnassignedSender[] = sourceData?.unassignedSenders ?? [];
+  const unassignedTruncated: boolean = sourceData?.unassignedTruncated ?? false;
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
   const drafts: EventDoc[] = parseData?.drafts ?? [];
@@ -468,6 +472,18 @@ export default function Admin() {
     api.parser.listReadyMessages,
     token ? { token } : "skip",
     { initialNumItems: 25 },
+  );
+
+  // The review queue, paginated for the same reason: `dashboard.candidates`
+  // stops at 150 and directory discovery seeds roughly 600.
+  const {
+    results: candidatePage,
+    status: candidateStatus,
+    loadMore: loadMoreCandidates,
+  } = usePaginatedQuery(
+    api.listservAdmin.listCandidates,
+    token ? { token } : "skip",
+    { initialNumItems: CANDIDATE_PREVIEW_COUNT },
   );
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
@@ -607,7 +623,12 @@ export default function Admin() {
 
         {activeTab === "sources" && (
           <SourcesTab
-            candidates={candidates}
+            candidates={candidatePage}
+            unassignedTruncated={unassignedTruncated}
+            candidateStatus={candidateStatus}
+            onLoadMoreCandidates={() =>
+              loadMoreCandidates(CANDIDATE_PREVIEW_COUNT)
+            }
             listservs={sourceListservs}
             organizations={organizations}
             unassigned={unassigned}
@@ -637,29 +658,36 @@ export default function Admin() {
                 );
               })
             }
-            onAssignInboxSenderToOrg={(senderEmail, orgId) =>
+            onAssignInboxSenderToOrg={(sender, orgId) =>
               act("Source assigned.", () =>
-                assignSender({ token, senderEmail, organizationId: orgId }),
+                assignSender({
+                  token,
+                  senderEmail: sender.senderEmail,
+                  senderEmails: sender.senderEmails,
+                  listAddress: sender.listAddress,
+                  organizationId: orgId,
+                }),
               )
             }
-            onCreateAndAssignInboxSender={(
-              senderEmail,
-              name,
-              type,
-              sourceName,
-              sourceType,
-            ) =>
-              createOrgWithGuard(name, type, senderEmail, async (orgId) => {
-                await act(`${name} created and assigned.`, () =>
-                  assignSender({
-                    token,
-                    senderEmail,
-                    organizationId: orgId,
-                    sourceName,
-                    sourceType,
-                  }),
-                );
-              })
+            onCreateAndAssignInboxSender={(sender, name, type) =>
+              createOrgWithGuard(
+                name,
+                type,
+                sender.senderEmail,
+                async (orgId) => {
+                  await act(`${name} created and assigned.`, () =>
+                    assignSender({
+                      token,
+                      senderEmail: sender.senderEmail,
+                      senderEmails: sender.senderEmails,
+                      listAddress: sender.listAddress,
+                      organizationId: orgId,
+                      sourceName: sender.suggestion.sourceName,
+                      sourceType: sender.suggestion.sourceType,
+                    }),
+                  );
+                },
+              )
             }
             onIgnoreSender={(senderEmail) =>
               act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
@@ -684,11 +712,25 @@ export default function Admin() {
                 setPrimaryListserv({ token, listservId }),
               )
             }
-            onMergeListservs={(targetId, duplicateId) =>
-              act("Listservs merged.", () =>
-                mergeListservs({ token, targetId, duplicateId }),
-              )
-            }
+            onFoldListservs={async (targetId, duplicateIds) => {
+              // Not routed through `act` because the toast reports the fold's
+              // actual blast radius, which only the result carries.
+              try {
+                const result = await foldListservs({
+                  token,
+                  targetId,
+                  duplicateIds,
+                });
+                showToast(
+                  `Folded ${result.foldedCount} row${result.foldedCount !== 1 ? "s" : ""}, repointed ${result.rowsRepointed} record${result.rowsRepointed !== 1 ? "s" : ""}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Fold failed.",
+                  false,
+                );
+              }
+            }}
             onUpdateOrg={(orgId, payload) =>
               act("Organization updated.", () =>
                 updateOrg({
@@ -1092,6 +1134,9 @@ function SetupTab({
 
 function SourcesTab({
   candidates,
+  candidateStatus,
+  onLoadMoreCandidates,
+  unassignedTruncated,
   listservs,
   organizations,
   unassigned,
@@ -1108,9 +1153,16 @@ function SourcesTab({
   onGenerateUploadUrl,
   onUpdateListservEmail,
   onSetPrimaryListserv,
-  onMergeListservs,
+  onFoldListservs,
 }: {
   candidates: Candidate[];
+  candidateStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreCandidates: () => void;
+  unassignedTruncated: boolean;
   listservs: Listserv[];
   organizations: Organization[];
   unassigned: UnassignedSender[];
@@ -1126,13 +1178,17 @@ function SourcesTab({
     type: OrgType,
     sourceEmail: string,
   ) => void;
-  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"orgs">) => void;
+  // The whole group rather than one address: a list group carries every From
+  // address that posted to it, and all of them have to reach `assignSender` so
+  // they land as aliases on one row instead of becoming rows of their own.
+  onAssignInboxSenderToOrg: (
+    sender: UnassignedSender,
+    orgId: Id<"orgs">,
+  ) => void;
   onCreateAndAssignInboxSender: (
-    senderEmail: string,
+    sender: UnassignedSender,
     name: string,
     type: OrgType,
-    sourceName: string,
-    sourceType: NonNullable<Listserv["sourceType"]>,
   ) => void;
   onIgnoreSender: (senderEmail: string) => void;
   onUnignoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
@@ -1144,26 +1200,22 @@ function SourcesTab({
     listEmail: string,
   ) => void;
   onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
-  onMergeListservs: (
+  onFoldListservs: (
     targetId: Id<"listservs">,
-    duplicateId: Id<"listservs">,
-  ) => void;
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
-  const [showAllCandidates, setShowAllCandidates] = useState(false);
-
   // Partition listservs into three buckets
   const unassignedSources = listservs.filter(
     (s) => !s.organizationId && s.status !== "paused",
   );
   const assignedSources = listservs.filter((s) => !!s.organizationId);
   const ignoredSources = listservs.filter((s) => s.status === "paused");
-  // Already highest-confidence-first from the dashboard query. Directory
-  // discovery contributes hundreds of low-confidence departmental lists, so
-  // only the top slice is rendered until an admin asks for the rest.
-  const pendingCandidates = candidates.filter((c) => c.status === "candidate");
-  const visibleCandidates = showAllCandidates
-    ? pendingCandidates
-    : pendingCandidates.slice(0, CANDIDATE_PREVIEW_COUNT);
+  // Already highest-confidence-first, and already only `status: "candidate"`,
+  // from the paginated `listCandidates` query. Directory discovery contributes
+  // hundreds of low-confidence departmental lists, so the rest are fetched on
+  // demand instead of being capped out of reach.
+  const pendingCandidates = candidates;
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
@@ -1211,11 +1263,13 @@ function SourcesTab({
       {pendingCandidates.length > 0 && (
         <Card>
           <CardHeader
-            title={`${pendingCandidates.length} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
+            // "N loaded" rather than "N awaiting review": the queue is paged,
+            // so this is how many have been fetched, not the whole backlog.
+            title={`${pendingCandidates.length}${candidateStatus === "Exhausted" ? "" : "+"} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
             subtitle="Addresses found by discovery, strongest first. Approve to create a source, or reject to dismiss."
           />
           <div className="mt-4 grid gap-2">
-            {visibleCandidates.map((c) => (
+            {pendingCandidates.map((c) => (
               <CandidateRow
                 key={c._id}
                 candidate={c}
@@ -1224,10 +1278,15 @@ function SourcesTab({
               />
             ))}
           </div>
-          {pendingCandidates.length > visibleCandidates.length && (
+          {candidateStatus !== "Exhausted" && (
             <div className="mt-3">
-              <Btn onClick={() => setShowAllCandidates(true)}>
-                Show all {pendingCandidates.length} candidates
+              <Btn
+                onClick={onLoadMoreCandidates}
+                disabled={candidateStatus !== "CanLoadMore"}
+              >
+                {candidateStatus === "LoadingMore"
+                  ? "Loading…"
+                  : `Load ${CANDIDATE_PREVIEW_COUNT} more candidates`}
               </Btn>
             </div>
           )}
@@ -1241,6 +1300,13 @@ function SourcesTab({
             title={`${unifiedItems.length} source${unifiedItems.length !== 1 ? "s" : ""} need an organization`}
             subtitle="Assign each source to an organization to enable parsing. Ignore sources you don't want to track."
           />
+          {unassignedTruncated && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[length:var(--font-size-body3)] text-amber-800">
+              Showing the most recent slice of unassigned mail only — there is
+              more behind it. Assign or ignore these, and the next batch will
+              appear.
+            </p>
+          )}
           <div className="mt-4 grid gap-2">
             {unifiedItems.map((item) =>
               item.kind === "known" ? (
@@ -1253,6 +1319,7 @@ function SourcesTab({
                   suggestedOrgType={"club"}
                   messageCount={undefined}
                   sampleSubjects={[]}
+                  groupedSenders={[]}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
                     onAssignSource(item.source._id, orgId)
@@ -1277,18 +1344,13 @@ function SourcesTab({
                   suggestedOrgType={item.sender.suggestion.organizationType}
                   messageCount={item.sender.count}
                   sampleSubjects={item.sender.sampleSubjects}
+                  groupedSenders={item.sender.senderEmails}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
-                    onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)
+                    onAssignInboxSenderToOrg(item.sender, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignInboxSender(
-                      item.sender.senderEmail,
-                      name,
-                      type,
-                      item.sender.suggestion.sourceName,
-                      item.sender.suggestion.sourceType,
-                    )
+                    onCreateAndAssignInboxSender(item.sender, name, type)
                   }
                   onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
                 />
@@ -1377,7 +1439,7 @@ function SourcesTab({
                   onGenerateUploadUrl={onGenerateUploadUrl}
                   onUpdateListservEmail={onUpdateListservEmail}
                   onSetPrimaryListserv={onSetPrimaryListserv}
-                  onMergeListservs={onMergeListservs}
+                  onFoldListservs={onFoldListservs}
                 />
               );
             })}
@@ -1659,7 +1721,7 @@ function OrgRow({
   onGenerateUploadUrl,
   onUpdateListservEmail,
   onSetPrimaryListserv,
-  onMergeListservs,
+  onFoldListservs,
 }: {
   org: Organization;
   sourceCount: number;
@@ -1671,10 +1733,10 @@ function OrgRow({
     listEmail: string,
   ) => void;
   onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
-  onMergeListservs: (
+  onFoldListservs: (
     targetId: Id<"listservs">,
-    duplicateId: Id<"listservs">,
-  ) => void;
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -1821,7 +1883,7 @@ function OrgRow({
 
       {/* Expanded edit form */}
       {editing && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           <div className="grid gap-4">
             {/* Row 1: Name + Type + Status */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
@@ -1990,7 +2052,7 @@ function OrgRow({
                 rows={listservRows}
                 onUpdateEmail={onUpdateListservEmail}
                 onSetPrimary={onSetPrimaryListserv}
-                onMerge={onMergeListservs}
+                onFold={onFoldListservs}
               />
             </div>
           </div>
@@ -2010,16 +2072,24 @@ function OrgListservsPanel({
   rows,
   onUpdateEmail,
   onSetPrimary,
-  onMerge,
+  onFold,
 }: {
   rows: Listserv[];
   onUpdateEmail: (listservId: Id<"listservs">, listEmail: string) => void;
   onSetPrimary: (listservId: Id<"listservs">) => void;
-  onMerge: (targetId: Id<"listservs">, duplicateId: Id<"listservs">) => void;
+  onFold: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   const [emailDrafts, setEmailDrafts] = useState<
     Record<string, string | undefined>
   >({});
+  const [pendingFold, setPendingFold] = useState<{
+    target: Listserv;
+    duplicates: Listserv[];
+  } | null>(null);
+  const [folding, setFolding] = useState(false);
 
   if (rows.length === 0) {
     return (
@@ -2029,8 +2099,59 @@ function OrgListservsPanel({
     );
   }
 
+  // The row that should survive a "fold everything" pass: the explicit primary
+  // if one is set, otherwise the only row whose address is a real Cornell list.
+  const foldTarget =
+    rows.find((row) => row.isPrimary === true) ??
+    rows.find((row) => isCornellListAddress(row.listEmail));
+
+  async function runFold() {
+    if (!pendingFold) return;
+    setFolding(true);
+    try {
+      await onFold(
+        pendingFold.target._id,
+        pendingFold.duplicates.map((row) => row._id),
+      );
+      setPendingFold(null);
+    } finally {
+      setFolding(false);
+    }
+  }
+
   return (
     <div className="grid gap-2">
+      {pendingFold && (
+        <FoldConfirmDialog
+          target={pendingFold.target}
+          duplicates={pendingFold.duplicates}
+          busy={folding}
+          onCancel={() => setPendingFold(null)}
+          onConfirm={runFold}
+        />
+      )}
+
+      {rows.length > 1 && foldTarget && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-3 py-2">
+          <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {rows.length} rows for this org. Folding keeps{" "}
+            <strong>{foldTarget.listEmail}</strong> and moves every other row's
+            mail onto it.
+          </span>
+          <Btn
+            onClick={() =>
+              setPendingFold({
+                target: foldTarget,
+                duplicates: rows.filter((row) => row._id !== foldTarget._id),
+              })
+            }
+          >
+            Fold {rows.length - 1} row{rows.length - 1 !== 1 ? "s" : ""} into
+            primary
+          </Btn>
+        </div>
+      )}
+
       {rows.map((row) => {
         const draft = emailDrafts[row._id] ?? row.listEmail;
         const dirty = draft.trim().toLowerCase() !== row.listEmail;
@@ -2070,7 +2191,13 @@ function OrgListservsPanel({
               </span>
             </div>
             {otherRows.length > 0 ? (
-              <MergeControl row={row} otherRows={otherRows} onMerge={onMerge} />
+              <MergeControl
+                row={row}
+                otherRows={otherRows}
+                onRequestFold={(target) =>
+                  setPendingFold({ target, duplicates: [row] })
+                }
+              />
             ) : (
               <span />
             )}
@@ -2081,26 +2208,30 @@ function OrgListservsPanel({
   );
 }
 
-/** The merge half of one row: pick another row in the same org, fold this one into it. */
+/** The fold half of one row: pick the row that should survive, fold this one into it. */
 function MergeControl({
   row,
   otherRows,
-  onMerge,
+  onRequestFold,
 }: {
   row: Listserv;
   otherRows: Listserv[];
-  onMerge: (targetId: Id<"listservs">, duplicateId: Id<"listservs">) => void;
+  onRequestFold: (target: Listserv) => void;
 }) {
-  const [target, setTarget] = useState<string>("");
+  const [targetId, setTargetId] = useState<string>("");
+  // Resolved against the real rows rather than cast from the select value, so
+  // the id reaching the mutation is one we know exists.
+  const target = otherRows.find((other) => other._id === targetId);
 
   return (
     <div className="flex items-center gap-2">
       <select
-        value={target}
-        onChange={(e) => setTarget(e.target.value)}
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        aria-label={`Fold ${row.listEmail} into another row`}
         className={input()}
       >
-        <option value="">Merge into…</option>
+        <option value="">Fold into…</option>
         {otherRows.map((other) => (
           <option key={other._id} value={other._id}>
             {other.listEmail}
@@ -2112,12 +2243,77 @@ function MergeControl({
         disabled={!target}
         onClick={() => {
           if (!target) return;
-          onMerge(target as Id<"listservs">, row._id);
-          setTarget("");
+          onRequestFold(target);
+          setTargetId("");
         }}
       >
-        Merge
+        Fold
       </Btn>
+    </div>
+  );
+}
+
+/**
+ * Names both sides of a fold before it runs. Deleting a listserv row is
+ * irreversible, and the direction is not obvious from a dropdown labelled
+ * "Fold into…", so the row that disappears is spelled out explicitly.
+ */
+function FoldConfirmDialog({
+  target,
+  duplicates,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  target: Listserv;
+  duplicates: Listserv[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const senderCount = new Set(
+    duplicates.flatMap((row) => [row.listEmail, ...row.senderEmails]),
+  ).size;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fold-confirm-title"
+    >
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h3
+          id="fold-confirm-title"
+          className="text-[length:var(--font-size-body1)] font-semibold"
+        >
+          Fold {duplicates.length} row{duplicates.length !== 1 ? "s" : ""} into{" "}
+          {target.listEmail}?
+        </h3>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Every message, join attempt, and event from{" "}
+          {duplicates.length === 1 ? "this row" : "these rows"} moves onto{" "}
+          <strong>{target.listEmail}</strong>, and {senderCount} sender address
+          {senderCount !== 1 ? "es" : ""} are kept on it. The folded row
+          {duplicates.length !== 1 ? "s are" : " is"} then deleted. This cannot
+          be undone.
+        </p>
+        <ul className="mt-3 grid gap-1 text-[length:var(--font-size-body3)]">
+          {duplicates.map((row) => (
+            <li key={row._id} className="truncate">
+              {row.listEmail}
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Btn onClick={onCancel} disabled={busy}>
+            Cancel
+          </Btn>
+          <Btn danger onClick={onConfirm} disabled={busy}>
+            {busy ? "Folding…" : "Fold and delete"}
+          </Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2132,6 +2328,7 @@ function UnassignedRow({
   suggestedOrgType,
   messageCount,
   sampleSubjects,
+  groupedSenders,
   organizations,
   onAssignToOrg,
   onCreateAndAssign,
@@ -2144,6 +2341,11 @@ function UnassignedRow({
   suggestedOrgType: OrgType;
   messageCount: number | undefined;
   sampleSubjects: string[];
+  /**
+   * The individual From addresses behind a list group. Empty for direct mail,
+   * where the group identity already *is* the sender.
+   */
+  groupedSenders: string[];
   organizations: Organization[];
   onAssignToOrg: (orgId: Id<"orgs">) => void;
   onCreateAndAssign: (name: string, type: OrgType) => void;
@@ -2167,6 +2369,21 @@ function UnassignedRow({
               ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
             {sampleSubjects[0] && ` · "${sampleSubjects[0]}"`}
           </div>
+          {groupedSenders.length > 1 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                {groupedSenders.length} people posted to this list — all become
+                one source
+              </summary>
+              <div className="mt-1 flex flex-col gap-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {groupedSenders.map((sender) => (
+                  <span key={sender} className="truncate">
+                    {sender}
+                  </span>
+                ))}
+              </div>
+            </details>
+          )}
           {mode === "idle" && (
             <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               Suggested org: <strong>{suggestedOrgName}</strong>
@@ -2383,7 +2600,7 @@ function JoinTab({
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
   onSendJoin: (e: FormEvent) => void;
-  onSubscribe: (id: Id<"listservs">) => void;
+  onSubscribe: (id: Id<"listservs">) => Promise<void>;
   onRedetect: (id: Id<"listservs">) => void;
   onStatusChange: (id: Id<"listservs">, status: Listserv["status"]) => void;
   onStrategyChange: (id: Id<"listservs">, strategy: JoinStrategy) => void;
@@ -2550,12 +2767,13 @@ function JoinRow({
   listserv: Listserv;
   attempts: JoinAttempt[];
   onPrepare: () => void;
-  onSubscribe: () => void;
+  onSubscribe: () => Promise<void>;
   onRedetect: () => void;
   onStatusChange: (status: Listserv["status"]) => void;
   onStrategyChange: (s: JoinStrategy) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
   const join = storedJoin(listserv);
   // Simplelists is web-interface only, so this row gets a subscribe button
   // rather than the email composer. The composer stays for every other
@@ -2615,10 +2833,20 @@ function JoinRow({
           {isSimplelists ? (
             <Btn
               primary
-              disabled={!listserv.subscribeUrl}
-              onClick={onSubscribe}
+              // Disabled while in flight: each click POSTs the real
+              // lists.cornell.edu form, so a double-click sends two genuine
+              // subscription requests and produces two confirmation emails.
+              disabled={!listserv.subscribeUrl || subscribing}
+              onClick={async () => {
+                setSubscribing(true);
+                try {
+                  await onSubscribe();
+                } finally {
+                  setSubscribing(false);
+                }
+              }}
             >
-              Submit subscribe form
+              {subscribing ? "Submitting…" : "Submit subscribe form"}
             </Btn>
           ) : (
             <Btn primary onClick={onPrepare}>
@@ -3392,7 +3620,7 @@ function DraftCard({
       </div>
 
       {editing && (
-        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           {/* Description + AI summary */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
