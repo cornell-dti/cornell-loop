@@ -1,6 +1,6 @@
 # Cornell Loop
 
-Last Updated: 09/27/2026
+Last Updated: 09/28/2026
 
 ## About:
 
@@ -16,10 +16,15 @@ Visit [onboarding docs](https://github.com/cornell-dti/cornell-loop/blob/main/do
 
 ### FA26:
 - Ashley Paik - Product Manager
+- Claudia Wong - Product Manager
 - Annie Chen - Technical Product Manager
 - Grace Huang - Product Marketing Manager
+- Saad Hashmi - Product Marketing Manager
 - Winnie Chan - Designer
+- Kaitlyn Ye - Designer
 - Nikhill Andrew - Developer
+- Nadia Choophungart - Developer
+- Labi Neha - Developer
 
 ### SP26:
 - Megan Yap - Product Manager
