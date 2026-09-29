@@ -15,6 +15,7 @@ Visit [onboarding docs](https://github.com/cornell-dti/cornell-loop/blob/main/do
 ## Contributors:
 
 ### FA26:
+
 - Ashley Paik - Product Manager
 - Claudia Wong - Product Manager
 - Annie Chen - Technical Product Manager
@@ -27,6 +28,7 @@ Visit [onboarding docs](https://github.com/cornell-dti/cornell-loop/blob/main/do
 - Labi Neha - Developer
 
 ### SP26:
+
 - Megan Yap - Product Manager
 - Annie Chen - Technical Product Manager
 - May Wu - Designer

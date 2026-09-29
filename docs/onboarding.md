@@ -57,5 +57,6 @@ In a chrome tab, go to chrome://extensions, on the top right corner toggle Devel
 Open Gmail or Google Calendar to see the extension.
 
 6. Ensure Convex backend secrets are set up in your dev deployment
+
 - Convex Dashboard -> Settings -> Environment Variables
-- TPM will provide the necessary variables and permissions. 
+- TPM will provide the necessary variables and permissions.
