@@ -9,6 +9,7 @@ import {
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 import type { Doc, Id } from "./_generated/dataModel";
+import { CANONICAL_TAGS, normalizeTags } from "./lib/tags";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -332,7 +333,7 @@ export const updateDraftEvent = mutation({
       dates: args.dates,
       location: args.location,
       links,
-      tags: args.tags,
+      tags: normalizeTags(args.tags),
       updatedAt: Date.now(),
     });
     return null;
@@ -756,6 +757,8 @@ Return this exact shape:
   }]
 }
 
+Tags: choose 0-3 tags for each item, copied exactly from this list and no others: ${CANONICAL_TAGS.join(", ")}.
+
 Rules: ignore unsubscribe text, confirmations, and admin/list-manager mail. Use timestamps in milliseconds since epoch. If no useful item exists, return items: [] and messageType "irrelevant" or "admin". Drafts are reviewed by admins, so shouldPublish must always be false.
 
 Email input:
@@ -809,11 +812,7 @@ function normalizeItem(item: ParsedItem, warnings: string[]): ParsedItem[] {
       links: normalizeLinks(item.links),
       contacts: normalizeContacts(item.contacts),
       tags: Array.isArray(item.tags)
-        ? item.tags
-            .map(String)
-            .map((tag) => tag.trim())
-            .filter(Boolean)
-            .slice(0, 12)
+        ? normalizeTags(item.tags.map(String))
         : [],
       targetAudience: normalizeAudience(item.targetAudience),
       perks: normalizePerks(item.perks),

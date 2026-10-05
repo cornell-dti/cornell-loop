@@ -6,8 +6,8 @@
  *
  * Tag-strip supports:
  *   • Click to toggle filter (OR match across active tags)
- *   • + to add a custom tag
- *   • Pencil → edit mode → × to delete a tag
+ *   • + to pin a tag from the canonical set
+ *   • Pencil → edit mode → × to unpin a tag
  *
  * On Google Calendar (pageContext === "gcal"):
  *   • Subheader "Hover on the events to preview time on your calendar" is shown
@@ -27,6 +27,8 @@ import { buildGCalUrl } from "../utils/calendarUtils";
 import { removeSlotPreview } from "../gcalHighlight";
 import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";
+import { useFilterTags } from "../data/useFilterTags";
+import type { CanonicalTag } from "@app/convex/lib/tags";
 
 // ── Typography ─────────────────────────────────────────────────────────────
 
@@ -47,14 +49,6 @@ const GCAL_SUBHEADER =
   "font-[family-name:var(--font-body)] font-normal " +
   "text-[length:var(--font-size-body2)] leading-[1.5] " +
   "text-[#5f5f5f]";
-
-const INITIAL_SORT_TAGS = [
-  "Internships",
-  "Early career",
-  "Tech",
-  "Mentorship",
-  "Just for fun",
-];
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -78,7 +72,7 @@ export default function BookmarkView({
   onPreviewSlot,
 }: BookmarkViewProps) {
   // ── Tag filter state ──────────────────────────────────────────────────
-  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const { tags: availableTags, addTag, removeTag } = useFilterTags();
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
   const handleTagToggle = (tag: string) => {
@@ -87,13 +81,13 @@ export default function BookmarkView({
     );
   };
 
-  const handleTagAdd = (tag: string) => {
-    setAvailableTags((prev) => [...prev, tag]);
+  const handleTagAdd = (tag: CanonicalTag) => {
+    addTag(tag);
     setActiveTags((prev) => [...prev, tag]);
   };
 
-  const handleTagRemove = (tag: string) => {
-    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+  const handleTagRemove = (tag: CanonicalTag) => {
+    removeTag(tag);
     setActiveTags((prev) => prev.filter((t) => t !== tag));
   };
 
