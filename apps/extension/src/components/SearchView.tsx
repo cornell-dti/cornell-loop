@@ -25,6 +25,8 @@ import {
 import { buildGCalUrl } from "../utils/calendarUtils";
 import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";
+import { useFilterTags } from "../data/useFilterTags";
+import type { CanonicalTag } from "@app/convex/lib/tags";
 
 // ── Shared typography ──────────────────────────────────────────────────────
 
@@ -45,14 +47,6 @@ const POPULAR_SEARCHES = [
   { rank: "#3", term: "Concert" },
   { rank: "#4", term: "Housing" },
   { rank: "#5", term: "A&S" },
-];
-
-const INITIAL_SORT_TAGS = [
-  "Internships",
-  "Early career",
-  "Tech",
-  "Mentorship",
-  "Just for fun",
 ];
 
 // ── SearchEmptyState ───────────────────────────────────────────────────────
@@ -134,7 +128,7 @@ function SearchResultsState({
 }: SearchResultsStateProps) {
   const results = useSearchResults(query);
 
-  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const { tags: availableTags, addTag, removeTag } = useFilterTags();
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
   const handleTagToggle = (tag: string) =>
@@ -142,13 +136,13 @@ function SearchResultsState({
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
 
-  const handleTagAdd = (tag: string) => {
-    setAvailableTags((prev) => [...prev, tag]);
+  const handleTagAdd = (tag: CanonicalTag) => {
+    addTag(tag);
     setActiveTags((prev) => [...prev, tag]);
   };
 
-  const handleTagRemove = (tag: string) => {
-    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+  const handleTagRemove = (tag: CanonicalTag) => {
+    removeTag(tag);
     setActiveTags((prev) => prev.filter((t) => t !== tag));
   };
 
