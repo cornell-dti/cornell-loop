@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
 import { isLegacyLyrisAddress, isSimplelistsAddress } from "./lib/cornellLists";
 import type { Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 const ORG_TYPES = v.union(
   v.literal("club"),
@@ -97,7 +97,16 @@ export const createOrganization = mutation({
     description: v.optional(v.string()),
     website: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    // Only used to widen the duplicate check to email/source addresses —
+    // never stored on the org.
+    sourceEmail: v.optional(v.string()),
+    // Required once findSimilarOrganizations has already returned a fuzzy
+    // match for this name/email and the admin chose "create new anyway".
+    // Without it, getOrCreateOrg throws instead of silently producing a
+    // second org for the same real-world club.
+    confirmedNew: v.optional(v.boolean()),
   },
+  returns: v.id("orgs"),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     return getOrCreateOrg(ctx, {
@@ -106,7 +115,44 @@ export const createOrganization = mutation({
       description: cleanOptional(args.description),
       website: cleanOptional(args.website),
       tags: args.tags ?? [],
+      sourceEmail: cleanOptional(args.sourceEmail),
+      confirmedNew: args.confirmedNew,
     });
+  },
+});
+
+const SIMILAR_ORG_MATCH_VALIDATOR = v.object({
+  organizationId: v.id("orgs"),
+  name: v.string(),
+  slug: v.string(),
+  matchedOn: v.array(v.string()),
+});
+
+export type SimilarOrgMatch = {
+  organizationId: Id<"orgs">;
+  name: string;
+  slug: string;
+  matchedOn: string[];
+};
+
+/**
+ * Read-only preflight for {@link createOrganization}. The Sources tab calls
+ * this before ever showing a "create org" button so the admin sees the
+ * choice up front; the mutation re-runs the same check server-side so it
+ * cannot be bypassed by a caller that skips the query. An exact slug match is
+ * never included — {@link getOrCreateOrg} already resolves it by attaching to
+ * that org, so it is not a duplicate risk worth interrupting the admin for.
+ */
+export const findSimilarOrganizations = query({
+  args: {
+    token: v.string(),
+    name: v.string(),
+    sourceEmail: v.optional(v.string()),
+  },
+  returns: v.array(SIMILAR_ORG_MATCH_VALIDATOR),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return similarOrganizations(ctx, args.name, args.sourceEmail);
   },
 });
 
@@ -200,6 +246,9 @@ export const assignSender = mutation({
         v.literal("unknown"),
       ),
     ),
+    // Same purpose as on createOrganization: only reached when the caller
+    // omits organizationId and asks this mutation to create one itself.
+    confirmedNewOrg: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
@@ -213,6 +262,8 @@ export const assignSender = mutation({
           cleanOptional(args.organizationName) ?? suggestion.organizationName,
         type: args.organizationType ?? suggestion.organizationType,
         tags: [],
+        sourceEmail: senderEmail,
+        confirmedNew: args.confirmedNewOrg,
       }));
 
     const existing = await findListservByAnyAddress(ctx, senderEmail);
@@ -364,6 +415,162 @@ async function findListservByAnyAddress(ctx: MutationCtx, email: string) {
   );
 }
 
+/**
+ * Upper bound on the org/listserv scans below, mirroring
+ * {@link LISTSERV_SCAN_LIMIT}: the tables hold well under this today.
+ */
+const ORG_SCAN_LIMIT = 500;
+
+/**
+ * Fuzzy-matches a candidate org name (and, optionally, the local part of a
+ * source address) against every existing org — by exact slug, by acronym in
+ * either direction (`"ACSU"` vs `"Association of Computer Science
+ * Undergraduates"`), by close spelling, and by a shared source-address local
+ * part on one of the org's existing `listservs` rows.
+ */
+async function similarOrganizations(
+  ctx: MutationCtx | QueryCtx,
+  name: string,
+  sourceEmail: string | undefined,
+): Promise<SimilarOrgMatch[]> {
+  const candidateName = name.trim();
+  if (!candidateName) return [];
+
+  const candidateSlug = slugify(candidateName);
+  const candidateNormalized = normalizeForMatch(candidateName);
+  const candidateAcronym = acronymOf(candidateName);
+  const candidateLocal = sourceEmail
+    ? stripAddressSuffixes(normalizeEmail(sourceEmail).split("@")[0] ?? "")
+    : "";
+
+  const [orgs, listservs] = await Promise.all([
+    ctx.db.query("orgs").take(ORG_SCAN_LIMIT),
+    ctx.db.query("listservs").take(LISTSERV_SCAN_LIMIT),
+  ]);
+
+  const listservsByOrg = new Map<Id<"orgs">, string[]>();
+  for (const row of listservs) {
+    if (!row.organizationId) continue;
+    const locals = [row.listEmail, ...row.senderEmails].map((address) =>
+      stripAddressSuffixes(normalizeEmail(address).split("@")[0] ?? ""),
+    );
+    const existingLocals = listservsByOrg.get(row.organizationId) ?? [];
+    listservsByOrg.set(row.organizationId, [...existingLocals, ...locals]);
+  }
+
+  const matches: SimilarOrgMatch[] = [];
+  for (const org of orgs) {
+    const reasons: string[] = [];
+    const orgSlug = org.slug;
+    const orgNormalized = normalizeForMatch(org.name);
+    const orgAcronym = acronymOf(org.name);
+
+    if (orgSlug === candidateSlug) {
+      // getOrCreateOrg already resolves this by attaching to the existing
+      // org before this function is ever called from there, and it is not a
+      // duplicate risk worth surfacing to the admin from
+      // findSimilarOrganizations either — it is the same org, not a
+      // different one that merely looks similar.
+      continue;
+    } else if (orgNormalized === candidateNormalized) {
+      reasons.push("name matches exactly under a different slug");
+    } else {
+      if (
+        candidateNormalized.length >= 2 &&
+        orgAcronym === candidateNormalized
+      ) {
+        reasons.push(
+          `"${candidateName}" looks like an acronym of "${org.name}"`,
+        );
+      }
+      if (orgNormalized.length >= 2 && candidateAcronym === orgNormalized) {
+        reasons.push(
+          `"${org.name}" looks like an acronym of "${candidateName}"`,
+        );
+      }
+      const spellingDistance = levenshteinDistance(
+        candidateNormalized,
+        orgNormalized,
+      );
+      const spellingThreshold = Math.max(
+        1,
+        Math.floor(
+          Math.min(candidateNormalized.length, orgNormalized.length) / 4,
+        ),
+      );
+      if (
+        candidateNormalized.length >= 4 &&
+        orgNormalized.length >= 4 &&
+        spellingDistance > 0 &&
+        spellingDistance <= spellingThreshold
+      ) {
+        reasons.push("name is a close spelling match");
+      }
+    }
+
+    if (candidateLocal) {
+      const orgLocals = listservsByOrg.get(org._id) ?? [];
+      if (orgLocals.includes(candidateLocal)) {
+        reasons.push(
+          `shares the "${candidateLocal}" source address with an existing listserv`,
+        );
+      }
+    }
+
+    if (reasons.length > 0) {
+      matches.push({
+        organizationId: org._id,
+        name: org.name,
+        slug: org.slug,
+        matchedOn: reasons,
+      });
+    }
+  }
+
+  return matches;
+}
+
+/** Lowercased, alphanumeric-only — for comparing names irrespective of punctuation/casing. */
+function normalizeForMatch(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** First letter of each word, e.g. "Association of CS Undergrads" -> "aocu". */
+function acronymOf(value: string) {
+  return value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((word) => word[0] ?? "")
+    .join("")
+    .toLowerCase();
+}
+
+/** Strips the address-role suffixes that decorate a list's local part without changing which list it is. */
+function stripAddressSuffixes(local: string) {
+  return local
+    .replace(/^owner-/, "")
+    .replace(/-(account-manager|manager|request|l|list)$/, "");
+}
+
+/** Classic edit-distance, computed with a rolling single row (no 2D array indexing to trip strict mode). */
+function levenshteinDistance(a: string, b: string): number {
+  let previousRow: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+
+  for (let i = 1; i <= a.length; i++) {
+    const currentRow: number[] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const insertion = (currentRow[j - 1] ?? Infinity) + 1;
+      const deletion = (previousRow[j] ?? Infinity) + 1;
+      const substitution = (previousRow[j - 1] ?? Infinity) + substitutionCost;
+      currentRow.push(Math.min(insertion, deletion, substitution));
+    }
+    previousRow = currentRow;
+  }
+
+  return previousRow[b.length] ?? Math.max(a.length, b.length);
+}
+
 async function getOrCreateOrg(
   ctx: MutationCtx,
   params: {
@@ -372,6 +579,8 @@ async function getOrCreateOrg(
     description?: string;
     website?: string;
     tags: string[];
+    sourceEmail?: string;
+    confirmedNew?: boolean;
   },
 ): Promise<Id<"orgs">> {
   const name = params.name.trim();
@@ -383,6 +592,24 @@ async function getOrCreateOrg(
     .withIndex("by_slug", (q) => q.eq("slug", slug))
     .unique();
   if (existing) return existing._id;
+
+  if (!params.confirmedNew) {
+    const matches = await similarOrganizations(ctx, name, params.sourceEmail);
+    // An exact slug match never reaches here — it was already returned
+    // above. Everything left is a *fuzzy* match (acronym, near-spelling, or
+    // a shared source address under a different name), which is exactly the
+    // case that would otherwise create a silent duplicate org, so it forces
+    // an explicit choice.
+    if (matches.length > 0) {
+      throw new Error(
+        `"${name}" looks similar to existing organization(s): ${matches
+          .map((match) => match.name)
+          .join(
+            ", ",
+          )}. Attach to one of those instead, or pass confirmedNew: true to create anyway.`,
+      );
+    }
+  }
 
   const now = Date.now();
   return ctx.db.insert("orgs", {

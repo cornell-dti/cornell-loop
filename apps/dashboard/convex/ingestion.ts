@@ -104,8 +104,12 @@ type IngestionRunResult = {
   stored: number;
 };
 
-/** Reason recorded on candidates raised from an unmatched confirmation. */
-const UNKNOWN_LIST_REASON = "confirmation received for unknown list";
+/**
+ * Reason recorded on candidates raised from an unmatched confirmation.
+ * Exported so the reconciliation report in listservAdmin.ts can identify
+ * these rows without duplicating the string.
+ */
+export const UNKNOWN_LIST_REASON = "confirmation received for unknown list";
 
 /**
  * A subscription confirmation is direct evidence the list exists and that we
