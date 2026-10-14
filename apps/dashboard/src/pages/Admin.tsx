@@ -9,7 +9,6 @@ import {
 import { api } from "../../convex/_generated/api";
 import {
   confirmationLinkFrom,
-  isLegacyLyrisAddress,
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -165,15 +164,60 @@ const ORG_TYPES: OrgType[] = [
   "company",
   "other",
 ];
+/**
+ * Selectable strategies. The two `cornell_lyris*` values are deliberately
+ * absent: Cornell retired Lyris, so nothing new should ever be classified into
+ * them. Existing Lyris rows still *render* their stored strategy — see
+ * {@link joinStrategyOptions}.
+ */
 const JOIN_STRATEGIES: JoinStrategy[] = [
-  "cornell_lyris",
-  "cornell_lyris_owner_contact",
+  "cornell_simplelists",
+  "cornell_simplelists_owner_contact",
   "campus_groups",
   "newsletter",
   "direct_org_email",
   "manual",
   "unknown",
 ];
+
+/**
+ * The picker options for one row: the selectable strategies, plus the row's
+ * own stored strategy when that is a retired one, so a legacy row does not
+ * silently display someone else's value.
+ */
+function joinStrategyOptions(current: JoinStrategy | undefined) {
+  if (current && !JOIN_STRATEGIES.includes(current)) {
+    return [current, ...JOIN_STRATEGIES];
+  }
+  return JOIN_STRATEGIES;
+}
+
+const ALL_JOIN_STRATEGIES: JoinStrategy[] = [
+  ...JOIN_STRATEGIES,
+  "cornell_lyris",
+  "cornell_lyris_owner_contact",
+];
+
+/** Narrows a `<select>` value to {@link JoinStrategy} without an `as` cast. */
+function parseJoinStrategy(value: string): JoinStrategy {
+  const match = ALL_JOIN_STRATEGIES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown join strategy: ${value}`);
+  return match;
+}
+
+const LISTSERV_STATUSES: Listserv["status"][] = [
+  "joining",
+  "active",
+  "paused",
+  "failed",
+];
+
+/** Narrows a `<select>` value to a listserv status without an `as` cast. */
+function parseListservStatus(value: string): Listserv["status"] {
+  const match = LISTSERV_STATUSES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown listserv status: ${value}`);
+  return match;
+}
 
 type EventTypeValue = EventDoc["eventType"];
 const EVENT_TYPES: EventTypeValue[] = [
@@ -260,6 +304,9 @@ export default function Admin() {
   );
   const runParseNow = useAction(api.parser.runParseNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
+  const submitSubscribe = useAction(
+    api.listservAdmin.submitSimplelistsSubscribe,
+  );
 
   const createOAuthNonce = useMutation(api.gmailOAuth.createOAuthNonce);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
@@ -278,6 +325,9 @@ export default function Admin() {
     api.listservAdmin.updateListservStatus,
   );
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
+  const recomputeJoinStrategy = useMutation(
+    api.listservAdmin.recomputeJoinStrategy,
+  );
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
   const publishEvents = useMutation(api.parser.publishEvents);
@@ -555,6 +605,34 @@ export default function Admin() {
               );
               setJoinDraft(null);
             }}
+            onSubscribe={async (id) => {
+              // The action resolves with the failure reason rather than
+              // throwing, so the toast has to read the result — the row keeps
+              // rendering the subscribe URL either way.
+              try {
+                const result = await submitSubscribe({
+                  token,
+                  listservId: id,
+                });
+                showToast(
+                  result.ok
+                    ? "Subscribe form submitted. Watch Ingest for the confirmation email."
+                    : (result.error ??
+                        "Subscribe failed. Use the subscribe link instead."),
+                  result.ok,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Subscribe failed.",
+                  false,
+                );
+              }
+            }}
+            onRedetect={(id) =>
+              act("Re-detected.", () =>
+                recomputeJoinStrategy({ token, listservId: id }),
+              )
+            }
             onStatusChange={(id, status) =>
               act("Status updated.", () =>
                 updateListservStatus({ token, listservId: id, status }),
@@ -1895,6 +1973,8 @@ function JoinTab({
   onPrepareJoin,
   onDraftChange,
   onSendJoin,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
   onStrategyChange,
 }: {
@@ -1905,6 +1985,8 @@ function JoinTab({
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
   onSendJoin: (e: FormEvent) => void;
+  onSubscribe: (id: Id<"listservs">) => void;
+  onRedetect: (id: Id<"listservs">) => void;
   onStatusChange: (id: Id<"listservs">, status: Listserv["status"]) => void;
   onStrategyChange: (id: Id<"listservs">, strategy: JoinStrategy) => void;
 }) {
@@ -1914,6 +1996,15 @@ function JoinTab({
 
   const pending = listservs.filter((l) => !isJoined(l));
   const joined = listservs.filter(isJoined);
+
+  // joinAttempts arrives newest-first from the dashboard query, so grouping
+  // preserves that order and `[0]` is each row's most recent attempt.
+  const attemptsByListserv = new Map<Id<"listservs">, JoinAttempt[]>();
+  for (const attempt of joinAttempts) {
+    const existing = attemptsByListserv.get(attempt.listservId);
+    if (existing) existing.push(attempt);
+    else attemptsByListserv.set(attempt.listservId, [attempt]);
+  }
 
   return (
     <div className="grid gap-6">
@@ -1970,14 +2061,17 @@ function JoinTab({
         <Card>
           <CardHeader
             title={`${pending.length} source${pending.length !== 1 ? "s" : ""} to join`}
-            subtitle="Prepare a join email, review it, then send."
+            subtitle="Simplelists lists are joined through their web form, then confirmed from the reply. Other sources use an email request."
           />
           <div className="mt-4 grid gap-3">
             {pending.map((l) => (
               <JoinRow
                 key={l._id}
                 listserv={l}
+                attempts={attemptsByListserv.get(l._id) ?? []}
                 onPrepare={() => onPrepareJoin(defaultJoinDraft(l))}
+                onSubscribe={() => onSubscribe(l._id)}
+                onRedetect={() => onRedetect(l._id)}
                 onStatusChange={(status) => onStatusChange(l._id, status)}
                 onStrategyChange={(s) => onStrategyChange(l._id, s)}
               />
@@ -1989,7 +2083,7 @@ function JoinTab({
       {/* Recent attempts */}
       {joinAttempts.length > 0 && (
         <Card>
-          <CardHeader title="Recent join emails sent" />
+          <CardHeader title="Recent join attempts" />
           <div className="mt-3 grid gap-2">
             {joinAttempts.map((a) => (
               <div
@@ -1997,9 +2091,14 @@ function JoinTab({
                 className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
               >
                 <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <span className="truncate font-semibold">{a.recipient}</span>
+                <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
+                <span className="truncate font-semibold">
+                  {a.recipient ?? a.subscribeUrl ?? "—"}
+                </span>
                 <span className="truncate text-[color:var(--color-text-muted)]">
-                  {a.subject}
+                  {a.error ??
+                    a.subject ??
+                    (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
                 </span>
                 <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
                   {fmtDate(a.createdAt)}
@@ -2043,17 +2142,28 @@ function JoinTab({
 
 function JoinRow({
   listserv,
+  attempts,
   onPrepare,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
   onStrategyChange,
 }: {
   listserv: Listserv;
+  attempts: JoinAttempt[];
   onPrepare: () => void;
+  onSubscribe: () => void;
+  onRedetect: () => void;
   onStatusChange: (status: Listserv["status"]) => void;
   onStrategyChange: (s: JoinStrategy) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const join = getEffectiveJoin(listserv);
+  const join = storedJoin(listserv);
+  // Simplelists is web-interface only, so this row gets a subscribe button
+  // rather than the email composer. The composer stays for every other
+  // strategy, including the retired Lyris rows that still carry a recipient.
+  const isSimplelists = join.joinStrategy === "cornell_simplelists";
+  const latestAttempt = attempts[0];
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -2069,13 +2179,54 @@ function JoinRow({
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {join.joinStrategy.replace(/_/g, " ")} · {join.joinConfidence}%
             confident
-            {join.joinRecipient && ` · sends to ${join.joinRecipient}`}
+            {isSimplelists
+              ? " · web subscribe form"
+              : join.joinRecipient && ` · sends to ${join.joinRecipient}`}
           </div>
+          {isSimplelists && listserv.subscribeUrl && (
+            <a
+              href={listserv.subscribeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-[length:var(--font-size-body3)] font-semibold break-all text-[color:var(--color-primary-700)] underline"
+            >
+              {listserv.subscribeUrl}
+            </a>
+          )}
+          {latestAttempt && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[length:var(--font-size-body3)]">
+              <StatusDot
+                status={latestAttempt.status === "sent" ? "green" : "red"}
+              />
+              <span className="text-[color:var(--color-text-muted)]">
+                last{" "}
+                {latestAttempt.method === "web_form" ? "subscribe" : "email"}{" "}
+                {latestAttempt.status}
+                {latestAttempt.httpStatus
+                  ? ` (HTTP ${latestAttempt.httpStatus})`
+                  : ""}{" "}
+                · {fmtDate(latestAttempt.createdAt)}
+              </span>
+              {latestAttempt.error && (
+                <span className="text-red-600">{latestAttempt.error}</span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Btn primary onClick={onPrepare}>
-            Prepare email
-          </Btn>
+          {isSimplelists ? (
+            <Btn
+              primary
+              disabled={!listserv.subscribeUrl}
+              onClick={onSubscribe}
+            >
+              Submit subscribe form
+            </Btn>
+          ) : (
+            <Btn primary onClick={onPrepare}>
+              Prepare email
+            </Btn>
+          )}
           <Btn onClick={() => setOpen(!open)}>Settings</Btn>
         </div>
       </div>
@@ -2085,10 +2236,12 @@ function JoinRow({
             Join method
             <select
               value={join.joinStrategy}
-              onChange={(e) => onStrategyChange(e.target.value as JoinStrategy)}
+              onChange={(e) =>
+                onStrategyChange(parseJoinStrategy(e.target.value))
+              }
               className={input()}
             >
-              {JOIN_STRATEGIES.map((s) => (
+              {joinStrategyOptions(listserv.joinStrategy).map((s) => (
                 <option key={s} value={s}>
                   {s.replace(/_/g, " ")}
                 </option>
@@ -2100,7 +2253,7 @@ function JoinRow({
             <select
               value={listserv.status}
               onChange={(e) =>
-                onStatusChange(e.target.value as Listserv["status"])
+                onStatusChange(parseListservStatus(e.target.value))
               }
               className={input()}
             >
@@ -2111,9 +2264,21 @@ function JoinRow({
               ))}
             </select>
           </label>
+          <div className="col-span-2 flex flex-wrap items-center gap-3">
+            <Btn onClick={onRedetect}>Re-detect</Btn>
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Re-runs detection on this row&apos;s addresses. Nothing
+              reclassifies on its own.
+            </span>
+          </div>
           {join.joinInstructions && (
             <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               {join.joinInstructions}
+            </p>
+          )}
+          {join.ownerRecipient && (
+            <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              List manager: {join.ownerRecipient}
             </p>
           )}
         </div>
@@ -3306,60 +3471,23 @@ function suggestFromEmail(email: string) {
 }
 
 function defaultJoinDraft(listserv: Listserv): JoinDraft {
-  const join = getEffectiveJoin(listserv);
   return {
     listservId: listserv._id,
-    recipient: join.joinRecipient ?? listserv.listEmail,
-    subject: join.joinSubject ?? `Request to join ${listserv.name}`,
-    body: join.joinBody ?? "",
+    recipient: listserv.joinRecipient ?? listserv.listEmail,
+    subject: listserv.joinSubject ?? `Request to join ${listserv.name}`,
+    body: listserv.joinBody ?? "",
   };
 }
 
-function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
-  const auto = detectJoinDefaults(listserv);
-  if (
-    auto.joinStrategy === "cornell_lyris" &&
-    (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")
-  ) {
-    return auto;
-  }
-  return {
-    joinStrategy: listserv.joinStrategy ?? auto.joinStrategy,
-    joinRecipient: listserv.joinRecipient ?? auto.joinRecipient,
-    ownerRecipient: listserv.ownerRecipient ?? auto.ownerRecipient,
-    joinSubject: listserv.joinSubject ?? auto.joinSubject,
-    joinBody: listserv.joinBody ?? auto.joinBody,
-    joinInstructions: listserv.joinInstructions ?? auto.joinInstructions,
-    joinConfidence: listserv.joinConfidence ?? auto.joinConfidence,
-    joinDetectionReasons:
-      listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
-  };
-}
-
-function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
-  const email = listserv.listEmail.toLowerCase();
-  const [local = ""] = email.split("@");
-  // Only the retired Lyris domains get the e-mail-command join flow, matching
-  // the backend exactly. Current Simplelists addresses are joined through the
-  // web form instead, so they must not be offered a dead `-request@` address.
-  if (isLegacyLyrisAddress(email)) {
-    const listName = local.replace(/^owner-/, "");
-    return {
-      joinStrategy: "cornell_lyris",
-      joinRecipient: `${listName}-request@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions:
-        "Cornell list: send subject 'join' to listname-request@cornell.edu with blank body.",
-      joinConfidence: listName.endsWith("-l") ? 95 : 75,
-      joinDetectionReasons: [
-        listName.endsWith("-l")
-          ? "Cornell Lyris list address"
-          : "Cornell list domain",
-      ],
-    };
-  }
+/**
+ * The stored detection, with display-only fallbacks.
+ *
+ * Detection itself lives entirely in `listservAdmin.detectJoinStrategy`. This
+ * used to re-derive a strategy client-side and could therefore *display* one
+ * that differed from what was saved; now it only reads what the backend wrote,
+ * so "Re-detect" is the single way a row's strategy changes.
+ */
+function storedJoin(listserv: Listserv): EffectiveJoin {
   return {
     joinStrategy: listserv.joinStrategy ?? "unknown",
     joinRecipient: listserv.joinRecipient,
@@ -3368,7 +3496,7 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
     joinBody: listserv.joinBody,
     joinInstructions:
       listserv.joinInstructions ??
-      "No reliable join flow detected. Review manually.",
+      "No join flow detected yet — run Re-detect, or review manually.",
     joinConfidence: listserv.joinConfidence ?? 20,
     joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };

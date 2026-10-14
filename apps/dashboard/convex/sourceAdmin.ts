@@ -192,6 +192,7 @@ export const assignSender = mutation({
     sourceName: v.optional(v.string()),
     sourceType: v.optional(
       v.union(
+        v.literal("simplelists"),
         v.literal("lyris"),
         v.literal("campus_groups"),
         v.literal("newsletter"),
@@ -414,14 +415,12 @@ function suggestSource(senderEmail: string) {
     };
   }
 
-  // Current Simplelists lists are unambiguously club listservs, but there is
-  // no `simplelists` sourceType yet, so they keep the generic one.
   if (isSimplelistsAddress(senderEmail)) {
     return {
       organizationName,
       organizationType: "club" as const,
       sourceName: `${organizationName} Listserv`,
-      sourceType: "direct_email" as const,
+      sourceType: "simplelists" as const,
     };
   }
 
