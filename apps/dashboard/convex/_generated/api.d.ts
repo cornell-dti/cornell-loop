@@ -21,6 +21,7 @@ import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_cornellLists from "../lib/cornellLists.js";
+import type * as lib_docValidators from "../lib/docValidators.js";
 import type * as lib_legacyLyris from "../lib/legacyLyris.js";
 import type * as listservAdmin from "../listservAdmin.js";
 import type * as listservs from "../listservs.js";
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   ingestion: typeof ingestion;
   "lib/auth": typeof lib_auth;
   "lib/cornellLists": typeof lib_cornellLists;
+  "lib/docValidators": typeof lib_docValidators;
   "lib/legacyLyris": typeof lib_legacyLyris;
   listservAdmin: typeof listservAdmin;
   listservs: typeof listservs;
