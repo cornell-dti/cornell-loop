@@ -110,6 +110,9 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     source: v.union(
       v.literal("d1_discovery"),
+      // The official lists.cornell.edu index. Authoritative about which lists
+      // exist, but silent about whether students actually read them.
+      v.literal("simplelists_directory"),
       v.literal("manual"),
       v.literal("import"),
     ),
@@ -121,12 +124,20 @@ export default defineSchema({
     confidence: v.number(),
     popularity: v.optional(v.number()),
     matchedReasons: v.array(v.string()),
+    // The directory's human-written blurb. Far more informative than
+    // inferDisplayName's local-part mangling, so it is kept verbatim.
+    directoryDescription: v.optional(v.string()),
+    subscribeUrl: v.optional(v.string()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_email", ["email"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    // Directory discovery adds ~600 low-confidence rows. Reading the review
+    // queue by creation time would bury every D1 candidate behind them, so the
+    // dashboard reads highest-confidence-first within a status instead.
+    .index("by_status_and_confidence", ["status", "confidence"]),
 
   listservs: defineTable({
     name: v.string(),
@@ -194,8 +205,11 @@ export default defineSchema({
     joinConfidence: v.optional(v.number()),
     joinDetectionReasons: v.optional(v.array(v.string())),
     joinDetectedAt: v.optional(v.number()),
+    // approveCandidate copies the candidate's source onto the row it creates,
+    // so this union has to stay a superset of listservCandidates.source.
     source: v.union(
       v.literal("d1_discovery"),
+      v.literal("simplelists_directory"),
       v.literal("manual"),
       v.literal("import"),
     ),
@@ -266,7 +280,10 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   discoveryRuns: defineTable({
-    source: v.literal("initial_sender_dataset"),
+    source: v.union(
+      v.literal("initial_sender_dataset"),
+      v.literal("simplelists_directory"),
+    ),
     status: v.union(
       v.literal("running"),
       v.literal("completed"),
