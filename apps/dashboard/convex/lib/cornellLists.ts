@@ -46,6 +46,17 @@ const MANAGER_SUFFIX = "-manager";
  */
 const LIST_NAME_PATTERN = /^[a-z0-9._-]+$/;
 
+/**
+ * True for a value that is safe to treat as a list name — see
+ * {@link LIST_NAME_PATTERN}. Exported so other modules that derive a list
+ * name through their own means (e.g. the legacy Lyris local-part stripping in
+ * `legacyLyris.ts`) can validate it before building a recipient address,
+ * instead of trusting an admin-editable string verbatim.
+ */
+export function isValidListName(value: string) {
+  return LIST_NAME_PATTERN.test(value);
+}
+
 /** The subset of a message this module needs to classify subscription mail. */
 export type ListMail = {
   senderEmail: string;
@@ -91,13 +102,22 @@ export function isCornellListAddress(email: string) {
 }
 
 /**
- * The list name for a Cornell list address, or null when the address is not on
- * a Cornell list domain or its local part falls outside {@link LIST_NAME_PATTERN}.
+ * The list name for a Cornell list address, or null when the address is not a
+ * list address or its local part falls outside {@link LIST_NAME_PATTERN}.
+ *
+ * On Lyris domains this requires {@link isLegacyLyrisListAddress}, not just
+ * {@link isLegacyLyrisAddress}, so administrative aliases that happen to live
+ * on a Lyris domain (`owner-foo@…`, `foo-request@…`, `postmaster@…`) are never
+ * mistaken for the list `foo` itself — see the detection logic in
+ * `legacyLyris.ts`, which already draws this distinction.
  */
 export function listNameFromAddress(email: string) {
   const parts = splitAddress(email);
-  if (!parts || !isCornellListAddress(email)) return null;
-  return LIST_NAME_PATTERN.test(parts.local) ? parts.local : null;
+  if (!parts) return null;
+  if (!isSimplelistsAddress(email) && !isLegacyLyrisListAddress(email)) {
+    return null;
+  }
+  return isValidListName(parts.local) ? parts.local : null;
 }
 
 /**

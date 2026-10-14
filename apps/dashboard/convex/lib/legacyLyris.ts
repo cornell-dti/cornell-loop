@@ -18,7 +18,7 @@
  * Pure module: no `convex/server`, no `_generated/*`, no Node APIs.
  */
 
-import { isLegacyLyrisListAddress } from "./cornellLists";
+import { isLegacyLyrisListAddress, isValidListName } from "./cornellLists";
 
 /** The join-request address for a Lyris list: `<LIST>-request@cornell.edu`. */
 export function lyrisJoinRecipient(listName: string) {
@@ -30,14 +30,24 @@ export function lyrisOwnerRecipient(listName: string) {
   return `owner-${listName}@cornell.edu`;
 }
 
-/** Strips the `owner-` prefix Lyris used for administrative aliases. */
+/**
+ * Strips the `owner-` prefix Lyris used for administrative aliases, or null
+ * when what's left isn't a safe list name. `local` comes from an
+ * admin-editable `listEmail` field with no charset restriction of its own, so
+ * it must be validated here before the caller builds a recipient address or
+ * message text out of it.
+ */
 export function lyrisListNameFrom(local: string) {
-  return local.replace(/^owner-/, "");
+  const listName = local.replace(/^owner-/, "");
+  return isValidListName(listName) ? listName : null;
 }
 
 /** As {@link lyrisListNameFrom}, also dropping a trailing `-request`. */
 export function lyrisOwnerContactListNameFrom(local: string) {
-  return lyrisListNameFrom(local).replace(/-request$/, "");
+  const listName = lyrisListNameFrom(local);
+  if (!listName) return null;
+  const stripped = listName.replace(/-request$/, "");
+  return isValidListName(stripped) ? stripped : null;
 }
 
 export function lyrisOwnerContactBody(listName: string) {
@@ -69,6 +79,15 @@ const LYRIS_OWNER_CONTACT_INSTRUCTIONS =
   "Retired platform. Used when a Lyris list was private/closed or the normal join request failed.";
 
 /**
+ * Shown when the stored `listEmail`'s local part doesn't survive name
+ * extraction — e.g. an admin edited it to something outside the list-name
+ * charset. Mirrors the Simplelists "could not be derived" fallback instead of
+ * silently building a malformed recipient address.
+ */
+const LYRIS_INVALID_NAME_INSTRUCTIONS =
+  "This looks like a retired Lyris address, but a list name could not be safely derived from it. Check the list email for typos or unexpected characters.";
+
+/**
  * The stored join fields for the two Lyris strategies, or null for any other
  * strategy. Returning null keeps the caller's branching explicit rather than
  * having this module guess at non-Lyris defaults.
@@ -82,12 +101,14 @@ export function buildLyrisJoinDefaults(
   if (joinStrategy === "cornell_lyris") {
     const listName = lyrisListNameFrom(local);
     return {
-      joinRecipient: lyrisJoinRecipient(listName),
-      ownerRecipient: lyrisOwnerRecipient(listName),
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions: LYRIS_JOIN_INSTRUCTIONS,
-      joinConfidence: listName.endsWith("-l") ? 95 : 75,
+      joinRecipient: listName ? lyrisJoinRecipient(listName) : undefined,
+      ownerRecipient: listName ? lyrisOwnerRecipient(listName) : undefined,
+      joinSubject: listName ? "join" : undefined,
+      joinBody: listName ? "" : undefined,
+      joinInstructions: listName
+        ? LYRIS_JOIN_INSTRUCTIONS
+        : LYRIS_INVALID_NAME_INSTRUCTIONS,
+      joinConfidence: listName ? (listName.endsWith("-l") ? 95 : 75) : 20,
       joinDetectionReasons: reasons ?? ["Cornell Lyris list address"],
       joinDetectedAt: now,
     };
@@ -96,12 +117,14 @@ export function buildLyrisJoinDefaults(
   if (joinStrategy === "cornell_lyris_owner_contact") {
     const listName = lyrisOwnerContactListNameFrom(local);
     return {
-      joinRecipient: lyrisOwnerRecipient(listName),
-      ownerRecipient: lyrisOwnerRecipient(listName),
-      joinSubject: `Request to join ${listName}`,
-      joinBody: lyrisOwnerContactBody(listName),
-      joinInstructions: LYRIS_OWNER_CONTACT_INSTRUCTIONS,
-      joinConfidence: 75,
+      joinRecipient: listName ? lyrisOwnerRecipient(listName) : undefined,
+      ownerRecipient: listName ? lyrisOwnerRecipient(listName) : undefined,
+      joinSubject: listName ? `Request to join ${listName}` : undefined,
+      joinBody: listName ? lyrisOwnerContactBody(listName) : undefined,
+      joinInstructions: listName
+        ? LYRIS_OWNER_CONTACT_INSTRUCTIONS
+        : LYRIS_INVALID_NAME_INSTRUCTIONS,
+      joinConfidence: listName ? 75 : 20,
       joinDetectionReasons: reasons ?? ["Owner contact fallback"],
       joinDetectedAt: now,
     };
