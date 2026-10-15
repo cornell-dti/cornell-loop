@@ -1,5 +1,8 @@
 import { v } from "convex/values";
-import { paginationOptsValidator } from "convex/server";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { internal } from "./_generated/api";
 import {
   action,
@@ -564,11 +567,12 @@ export const overview = query({
  */
 export const listReadyMessages = query({
   args: { token: v.string(), paginationOpts: paginationOptsValidator },
-  returns: v.object({
-    page: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
-    isDone: v.boolean(),
-    continueCursor: v.string(),
-  }),
+  // `paginate()` returns `splitCursor`/`pageStatus` alongside `page`,
+  // `isDone`, and `continueCursor` — a hand-rolled v.object() that omits
+  // them fails ReturnsValidationError on every call. Convex ships this
+  // factory precisely so the validator stays in sync with what
+  // `.paginate()` actually returns.
+  returns: paginationResultValidator(PARSE_MESSAGE_PROJECTION_VALIDATOR),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     const result = await ctx.db

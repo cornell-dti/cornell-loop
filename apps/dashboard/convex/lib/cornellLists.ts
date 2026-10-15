@@ -46,6 +46,17 @@ const MANAGER_SUFFIX = "-manager";
  */
 const LIST_NAME_PATTERN = /^[a-z0-9._-]+$/;
 
+/**
+ * True for a value that is safe to treat as a list name — see
+ * {@link LIST_NAME_PATTERN}. Exported so other modules that derive a list
+ * name through their own means (e.g. the legacy Lyris local-part stripping in
+ * `legacyLyris.ts`) can validate it before building a recipient address,
+ * instead of trusting an admin-editable string verbatim.
+ */
+export function isValidListName(value: string) {
+  return LIST_NAME_PATTERN.test(value);
+}
+
 /** The subset of a message this module needs to classify subscription mail. */
 export type ListMail = {
   senderEmail: string;
@@ -91,13 +102,22 @@ export function isCornellListAddress(email: string) {
 }
 
 /**
- * The list name for a Cornell list address, or null when the address is not on
- * a Cornell list domain or its local part falls outside {@link LIST_NAME_PATTERN}.
+ * The list name for a Cornell list address, or null when the address is not a
+ * list address or its local part falls outside {@link LIST_NAME_PATTERN}.
+ *
+ * On Lyris domains this requires {@link isLegacyLyrisListAddress}, not just
+ * {@link isLegacyLyrisAddress}, so administrative aliases that happen to live
+ * on a Lyris domain (`owner-foo@…`, `foo-request@…`, `postmaster@…`) are never
+ * mistaken for the list `foo` itself — see the detection logic in
+ * `legacyLyris.ts`, which already draws this distinction.
  */
 export function listNameFromAddress(email: string) {
   const parts = splitAddress(email);
-  if (!parts || !isCornellListAddress(email)) return null;
-  return LIST_NAME_PATTERN.test(parts.local) ? parts.local : null;
+  if (!parts) return null;
+  if (!isSimplelistsAddress(email) && !isLegacyLyrisListAddress(email)) {
+    return null;
+  }
+  return isValidListName(parts.local) ? parts.local : null;
 }
 
 /**
@@ -229,16 +249,21 @@ export function isSimplelistsJoinConfirmation(mail: ListMail) {
 }
 
 /**
- * The pre-Simplelists heuristic, kept verbatim so Lyris rows and non-Cornell
- * senders (Mailchimp, CampusGroups) keep matching exactly as before.
+ * The pre-Simplelists heuristic for Lyris rows and non-Cornell senders
+ * (Mailchimp, CampusGroups).
+ *
+ * Scoped to the subject. The old version searched the body too, with patterns
+ * loose enough that an ordinary announcement reading "confirm your spot and
+ * join us Friday" matched — which both hid it from the parser via
+ * {@link isListAdminNoise} and could push an unjoined list into
+ * `awaiting_confirmation`. Real confirmations always say so in the subject.
  */
 function isLegacyJoinConfirmation(mail: ListMail) {
   const sender = lower(mail.senderEmail);
-  const text = `${mail.subject}\n${mail.bodyText}`.toLowerCase();
   return (
     sender.startsWith("lyris-confirm-") ||
-    /confirm your subscription|confirm.*subscribe|confirmation.*subscription|confirm.*join/.test(
-      text,
+    /confirm\w*\s+(?:your\s+)?subscri|subscription\s+confirm|confirmation\s+of\s+subscri/.test(
+      lower(mail.subject),
     )
   );
 }
@@ -277,25 +302,44 @@ export function isListAdminNoise(mail: ListMail) {
  * treated as unauthenticated, because the confirmation link is a one-click
  * account action and an attacker who can spoof the sender would otherwise get
  * an admin-endorsed button for an arbitrary URL.
+ *
+ * Only Gmail's *own* header is trusted, and only the topmost one. Anyone can
+ * put `Authentication-Results: mx.google.com; dmarc=pass header.from=cornell.edu`
+ * in a message they send; Gmail prepends its real verdict above any such
+ * forgery on delivery, so the first `mx.google.com` header is the only one that
+ * reflects what the receiving server actually checked.
+ *
+ * Each clause is also evaluated whole. Joining every header together and
+ * testing `dmarc=pass` against one string while reading `header.from=` from
+ * another let a forged pass be paired with Gmail's real Cornell domain.
  */
 export function hasAuthenticatedCornellSender(
   headers: ReadonlyArray<{ name: string; value: string }>,
 ) {
-  const results = headers
+  const trusted = headers
     .filter((header) => header.name.toLowerCase() === "authentication-results")
-    .map((header) => header.value.toLowerCase())
-    .join("\n");
-  if (!results) return false;
+    .map((header) => header.value.toLowerCase().trimStart())
+    .find((value) => value.startsWith(`${AUTHSERV_ID};`));
+  if (!trusted) return false;
 
-  const dmarcPass =
-    /\bdmarc=pass\b/.test(results) &&
-    isCornellAuthDomain(results.match(/header\.from=([^\s;()]+)/)?.[1]);
-  const dkimPass =
-    /\bdkim=pass\b/.test(results) &&
-    isCornellAuthDomain(results.match(/header\.(?:i=@?|d=)([^\s;()]+)/)?.[1]);
-
-  return dmarcPass || dkimPass;
+  return trusted.split(";").some((clause) => {
+    if (/\bdmarc=pass\b/.test(clause)) {
+      return isCornellAuthDomain(clause.match(/header\.from=([^\s;()]+)/)?.[1]);
+    }
+    if (/\bdkim=pass\b/.test(clause)) {
+      return isCornellAuthDomain(
+        clause.match(/header\.(?:i=@?|d=)([^\s;()]+)/)?.[1],
+      );
+    }
+    return false;
+  });
 }
+
+/**
+ * The receiving server's own identifier, as it labels its
+ * `Authentication-Results` headers. We ingest through Gmail only.
+ */
+const AUTHSERV_ID = "mx.google.com";
 
 /** Exact-suffix check so `notcornell.edu` and `cornell.edu.evil.test` fail. */
 function isCornellAuthDomain(value: string | undefined) {
