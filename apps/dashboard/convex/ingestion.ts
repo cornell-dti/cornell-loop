@@ -575,11 +575,16 @@ async function recordUnknownListCandidate(ctx: MutationCtx, address: string) {
  * alone.
  */
 export const rematchUnassignedMessages = internalMutation({
-  args: { limit: v.optional(v.number()) },
+  args: {
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
   returns: v.object({
     scanned: v.number(),
     matched: v.number(),
     candidatesRaised: v.number(),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
@@ -593,10 +598,16 @@ export const rematchUnassignedMessages = internalMutation({
       senderEmails: listserv.senderEmails,
     }));
 
-    const messages = await ctx.db
+    // Paginated rather than `.take()`-ing the head of the index. Two kinds of
+    // message never leave the `organizationId === undefined` range: ones that
+    // still match nothing, and ones whose matched listserv has no org of its
+    // own. Once `limit` of those exist, a take-based scan re-reads the same
+    // rows on every run and older unassigned mail is never reached.
+    const page = await ctx.db
       .query("listservMessages")
       .withIndex("by_organization", (q) => q.eq("organizationId", undefined))
-      .take(limit);
+      .paginate({ numItems: limit, cursor: args.cursor ?? null });
+    const messages = page.page;
 
     let matched = 0;
     let candidatesRaised = 0;
@@ -618,15 +629,30 @@ export const rematchUnassignedMessages = internalMutation({
       }
 
       if (!match.listservId) continue;
+      if (
+        message.listservId === match.listservId &&
+        message.organizationId === match.organizationId
+      ) {
+        continue;
+      }
 
       await ctx.db.patch(message._id, {
         listservId: match.listservId,
         organizationId: match.organizationId,
       });
-      matched += 1;
+      // Only an org attribution takes a message out of this scan, so counting
+      // org-less matches as "matched" would report progress that the next run
+      // has to make all over again.
+      if (match.organizationId) matched += 1;
     }
 
-    return { scanned: messages.length, matched, candidatesRaised };
+    return {
+      scanned: messages.length,
+      matched,
+      candidatesRaised,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
   },
 });
 

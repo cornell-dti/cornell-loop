@@ -474,6 +474,10 @@ export default function Admin() {
     { initialNumItems: 25 },
   );
 
+  // Stable identity: PublishTab drives this from an effect, and a fresh arrow
+  // on every render would re-fire it before the in-flight page lands.
+  const onLoadMoreReady = useCallback(() => loadMoreReady(25), [loadMoreReady]);
+
   // The review queue, paginated for the same reason: `dashboard.candidates`
   // stops at 150 and directory discovery seeds roughly 600.
   const {
@@ -689,8 +693,10 @@ export default function Admin() {
                 },
               )
             }
-            onIgnoreSender={(senderEmail) =>
-              act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
+            onIgnoreSender={(senderEmail, group) =>
+              act("Sender ignored.", () =>
+                ignoreSender({ token, senderEmail, ...group }),
+              )
             }
             onUnignoreSource={async (listservId) => {
               await act("Source reactivated.", () =>
@@ -841,7 +847,7 @@ export default function Admin() {
             ignoredMessages={ignoredMessages}
             readyMessages={readyMessages}
             readyStatus={readyStatus}
-            onLoadMoreReady={() => loadMoreReady(25)}
+            onLoadMoreReady={onLoadMoreReady}
             needsAssignment={needsAssignment}
             onRunParse={() =>
               act("Parse complete.", () => runParseNow({ token }))
@@ -1190,7 +1196,13 @@ function SourcesTab({
     name: string,
     type: OrgType,
   ) => void;
-  onIgnoreSender: (senderEmail: string) => void;
+  // The group's own From addresses travel with the ignore so the tombstone can
+  // claim their existing mail; without them those messages keep sitting in the
+  // unassigned scan window forever.
+  onIgnoreSender: (
+    senderEmail: string,
+    group?: { senderEmails: string[]; listAddress?: string },
+  ) => void;
   onUnignoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
@@ -1352,7 +1364,12 @@ function SourcesTab({
                   onCreateAndAssign={(name, type) =>
                     onCreateAndAssignInboxSender(item.sender, name, type)
                   }
-                  onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
+                  onIgnore={() =>
+                    onIgnoreSender(item.sender.senderEmail, {
+                      senderEmails: item.sender.senderEmails,
+                      listAddress: item.sender.listAddress,
+                    })
+                  }
                 />
               ),
             )}
@@ -3196,6 +3213,19 @@ function PublishTab({
   const blocked = readyCount === 0 && needsAssignment > 0;
   const [showReady, setShowReady] = useState(false);
   const [selected, setSelected] = useState<Set<Id<"events">>>(new Set());
+
+  // `listReadyMessages` drops unassigned messages *after* pagination, so a page
+  // can come back empty while assigned messages sit further down the index.
+  // Keep pulling pages until one of them yields something, otherwise the queue
+  // reads "nothing waiting" until an admin clicks Load more by hand. The status
+  // leaves "CanLoadMore" while a page is in flight and ends at "Exhausted", so
+  // this terminates on its own.
+  useEffect(() => {
+    if (!showReady) return;
+    if (readyCount > 0) return;
+    if (readyStatus !== "CanLoadMore") return;
+    onLoadMoreReady();
+  }, [showReady, readyCount, readyStatus, onLoadMoreReady]);
 
   function toggleSelected(id: Id<"events">) {
     setSelected((prev) => {

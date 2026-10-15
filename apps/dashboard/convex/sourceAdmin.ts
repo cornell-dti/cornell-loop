@@ -132,10 +132,16 @@ export const overview = query({
 
     for (const message of messages) {
       const senderEmail = message.senderEmail.toLowerCase();
-      if (!senderEmail || sourceEmails.has(senderEmail)) continue;
+      if (!senderEmail) continue;
 
       const listAddress = listAddressForMessage(message);
       const key = listAddress ?? senderEmail;
+      // Checked on the group identity, not the From address. A list group is
+      // keyed on the list address, so testing `senderEmail` meant ignoring a
+      // list group had no effect — the students' personal addresses were still
+      // unknown and the group reappeared. It also hid a student's mail to a
+      // *different* unknown list once they became an alias on some other row.
+      if (sourceEmails.has(key)) continue;
 
       const existing = groups.get(key);
       if (existing) {
@@ -438,7 +444,16 @@ export const assignSender = mutation({
 export const ignoreSender = mutation({
   args: {
     token: v.string(),
+    // The group's identity, exactly as `assignSender` takes it: a Cornell list
+    // address for list mail, or the From address for direct mail.
     senderEmail: v.string(),
+    // Every From address observed in the group. Used only to scope the message
+    // backfill below — deliberately *not* stored on the tombstone, because
+    // making 62 students "known" would hide their mail to other unknown lists.
+    senderEmails: v.optional(v.array(v.string())),
+    // Set when this group came from list mail, so the backfill only claims
+    // mail actually addressed to this list.
+    listAddress: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -448,32 +463,50 @@ export const ignoreSender = mutation({
     // If a listservs row already exists, just mark it paused so it stops
     // surfacing in the unassigned list without losing history.
     const existing = await findListservByAnyAddress(ctx, senderEmail);
+    const now = Date.now();
 
+    let listservId: Id<"listservs">;
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      await ctx.db.patch(existing._id, { status: "paused", updatedAt: now });
+      listservId = existing._id;
+    } else {
+      // For inbox-only senders, create a minimal tombstone row so the sender
+      // email is now "known" and won't appear as unrecognized again.
+      const suggestion = suggestSource(senderEmail);
+      listservId = await ctx.db.insert("listservs", {
+        name: suggestion.sourceName,
+        displayName: suggestion.sourceName,
+        listEmail: senderEmail,
+        senderEmails: [senderEmail],
+        sourceType: suggestion.sourceType,
         status: "paused",
-        updatedAt: Date.now(),
+        joinMethod: "unknown",
+        joinStatus: "not_started",
+        source: "manual",
+        createdAt: now,
+        updatedAt: now,
       });
-      return null;
     }
 
-    // For inbox-only senders, create a minimal tombstone row so the sender
-    // email is now "known" and won't appear as unrecognized again.
-    const suggestion = suggestSource(senderEmail);
-    const now = Date.now();
-    await ctx.db.insert("listservs", {
-      name: suggestion.sourceName,
-      displayName: suggestion.sourceName,
-      listEmail: senderEmail,
-      senderEmails: [senderEmail],
-      sourceType: suggestion.sourceType,
-      status: "paused",
-      joinMethod: "unknown",
-      joinStatus: "not_started",
-      source: "manual",
-      createdAt: now,
-      updatedAt: now,
-    });
+    // Park the group's existing mail on the row, the same way `assignSender`
+    // does. Without this the messages keep `listservId: undefined` forever and
+    // go on consuming the Sources tab's bounded unassigned scan, so ignoring a
+    // group would never let the next batch through. A fresh tombstone has no
+    // org; an already-known row keeps whichever one it has.
+    const backfillAddresses = [
+      ...new Set([
+        senderEmail,
+        ...(args.senderEmails ?? []).map(normalizeEmail),
+      ]),
+    ];
+    for (const address of backfillAddresses) {
+      await backfillMessagesForSender(ctx, address, {
+        listservId,
+        organizationId: existing?.organizationId,
+        listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
+      });
+    }
+
     return null;
   },
 });
@@ -793,13 +826,16 @@ const BACKFILL_BATCH_SIZE = 200;
  *
  * The first page runs inline so a small source is fully assigned by the time
  * the mutation returns; anything larger continues in scheduled batches.
+ *
+ * `organizationId` is optional because `ignoreSender` reuses this to park an
+ * ignored group's mail on its paused tombstone, and a tombstone has no org.
  */
 async function backfillMessagesForSender(
   ctx: MutationCtx,
   senderEmail: string,
   target: {
     listservId: Id<"listservs">;
-    organizationId: Id<"orgs">;
+    organizationId?: Id<"orgs">;
     listAddress: string | null;
   },
 ) {
@@ -813,7 +849,7 @@ async function backfillMessagesForSender(
 type SenderBackfillArgs = {
   senderEmail: string;
   listservId: Id<"listservs">;
-  organizationId: Id<"orgs">;
+  organizationId?: Id<"orgs">;
   listAddress: string | null;
   cursor: string | null;
 };
@@ -857,7 +893,7 @@ export const backfillSenderMessages = internalMutation({
   args: {
     senderEmail: v.string(),
     listservId: v.id("listservs"),
-    organizationId: v.id("orgs"),
+    organizationId: v.optional(v.id("orgs")),
     listAddress: v.union(v.string(), v.null()),
     cursor: v.union(v.string(), v.null()),
   },

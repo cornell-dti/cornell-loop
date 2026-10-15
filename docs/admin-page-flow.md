@@ -114,9 +114,15 @@ shows no email composer.
 3. Simplelists replies with a confirmation email. Handle it in `Ingest` →
    `Confirmation queue`.
 
-The subscribe URL is always shown as a link above the button. If the submit
-fails — or the list requires manager approval — open that link and subscribe by
-hand; the reason is printed on the row.
+The subscribe URL is always shown as a link above the button. If a submission
+that reached Simplelists fails — or the list requires manager approval — open
+that link and subscribe by hand; the reason is printed on the row.
+
+Automatic subscribing is off unless the deployment sets
+`SIMPLELISTS_ALLOW_SUBSCRIBE=true`. When it is off the button fails immediately
+with an error toast: nothing is sent to Cornell, no attempt is recorded, and
+the row keeps its previous status rather than showing a reason. Join those
+lists through the subscribe link instead.
 
 A closed or approval-only list should be switched to
 `cornell simplelists owner contact` in `Settings`, which emails the list's human

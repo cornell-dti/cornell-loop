@@ -897,6 +897,58 @@ export const recomputeJoinStrategy = mutation({
   },
 });
 
+/**
+ * One-off repair for rows whose saved join strategy predates Simplelists.
+ *
+ * `lists.cornell.edu` used to be classified as a Lyris domain, so rows created
+ * before that fix still store `cornell_lyris` with a
+ * `<list>-request@cornell.edu` recipient. The Join tab reads the saved
+ * detection verbatim now, so those rows offer "Prepare email" to an address
+ * that cannot process join commands at all (see `lib/legacyLyris.ts`) — and
+ * nothing reclassifies them short of an admin clicking Re-detect on each one.
+ *
+ * Only the detection fields are rewritten; `joinStatus` and the attempt history
+ * are left alone. Idempotent, so a second run is a no-op.
+ *
+ * Run with:
+ * `npx convex run listservAdmin:redetectStaleSimplelistsRows '{"cursor":null}'`
+ */
+export const redetectStaleSimplelistsRows = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    scanned: v.number(),
+    repaired: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("listservs")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let repaired = 0;
+    for (const listserv of page.page) {
+      if (!isSimplelistsAddress(listserv.listEmail)) continue;
+      if (!listserv.joinStrategy?.startsWith("cornell_lyris")) continue;
+
+      await ctx.db.patch(listserv._id, {
+        ...detectJoinStrategy(listserv.listEmail, listserv.senderEmails),
+        updatedAt: Date.now(),
+      });
+      repaired += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.listservAdmin.redetectStaleSimplelistsRows,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { scanned: page.page.length, repaired, isDone: page.isDone };
+  },
+});
+
 export const updateJoinStrategy = mutation({
   args: {
     token: v.string(),
@@ -957,11 +1009,41 @@ export const rematchUnassignedMessagesNow = action({
   }),
   handler: async (ctx, args): Promise<RematchResult> => {
     requireAdminToken(args.token);
-    return await ctx.runMutation(internal.ingestion.rematchUnassignedMessages, {
-      limit: args.limit,
-    });
+
+    // The mutation now walks the index with a cursor, so one call only covers
+    // one page. Draining several pages per click keeps the button's behaviour
+    // ("scan a chunk of the backlog") while letting a run reach mail that is
+    // not at the head of the index.
+    let cursor: string | null = null;
+    const totals: RematchResult = {
+      scanned: 0,
+      matched: 0,
+      candidatesRaised: 0,
+    };
+
+    for (let pageIndex = 0; pageIndex < REMATCH_PAGE_BUDGET; pageIndex += 1) {
+      // Annotated explicitly: `listservAdmin` and `ingestion` import from each
+      // other, so inferring this from `internal.ingestion.*` is circular.
+      const page: RematchResult & {
+        continueCursor: string;
+        isDone: boolean;
+      } = await ctx.runMutation(internal.ingestion.rematchUnassignedMessages, {
+        limit: args.limit,
+        cursor,
+      });
+      totals.scanned += page.scanned;
+      totals.matched += page.matched;
+      totals.candidatesRaised += page.candidatesRaised;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+
+    return totals;
   },
 });
+
+/** Pages drained per `rematchUnassignedMessagesNow` click. */
+const REMATCH_PAGE_BUDGET = 20;
 
 export const updateListservStatus = mutation({
   args: {
@@ -1179,23 +1261,37 @@ export const absorbListservFields = internalMutation({
     // or neither qualify, the target keeps its own.
     const targetIsList = isCornellListAddress(target.listEmail);
     const duplicateIsList = isCornellListAddress(duplicate.listEmail);
-    const listEmail =
-      !targetIsList && duplicateIsList ? duplicate.listEmail : target.listEmail;
+    const takeDuplicateIdentity = !targetIsList && duplicateIsList;
+    const listEmail = takeDuplicateIdentity
+      ? duplicate.listEmail
+      : target.listEmail;
+
+    // Both rows' own addresses are folded in alongside the aliases, so no
+    // address the system has ever seen for this list is lost.
+    const senderEmails = [
+      ...new Set(
+        [
+          ...target.senderEmails,
+          ...duplicate.senderEmails,
+          target.listEmail,
+          duplicate.listEmail,
+        ].map(normalizeEmail),
+      ),
+    ];
+
+    // When the survivor takes the duplicate's list address, its own detection
+    // no longer describes it: a personal-sender row is almost always
+    // `direct_org_email` pointed at the student, so keeping those fields left
+    // the Join tab offering to email a student about a Simplelists list.
+    // Re-deriving from the merged addresses is cheaper and more honest than
+    // cherry-picking which row's join fields to trust.
+    const joinFields: Partial<JoinDetectionPatch> = takeDuplicateIdentity
+      ? detectJoinStrategy(listEmail, senderEmails)
+      : {};
 
     await ctx.db.patch(args.targetId, {
       listEmail: normalizeEmail(listEmail),
-      // Both rows' own addresses are folded in alongside the aliases, so no
-      // address the system has ever seen for this list is lost.
-      senderEmails: [
-        ...new Set(
-          [
-            ...target.senderEmails,
-            ...duplicate.senderEmails,
-            target.listEmail,
-            duplicate.listEmail,
-          ].map(normalizeEmail),
-        ),
-      ],
+      senderEmails,
       lastReceivedAt: maxOptional(
         target.lastReceivedAt,
         duplicate.lastReceivedAt,
@@ -1203,7 +1299,6 @@ export const absorbListservFields = internalMutation({
       isPrimary: target.isPrimary || duplicate.isPrimary || undefined,
       // Join and subscribe details are only taken when the target has none:
       // the duplicate may be the row detection actually ran against.
-      subscribeUrl: target.subscribeUrl ?? duplicate.subscribeUrl,
       joinStrategy: target.joinStrategy ?? duplicate.joinStrategy,
       joinRecipient: target.joinRecipient ?? duplicate.joinRecipient,
       ownerRecipient: target.ownerRecipient ?? duplicate.ownerRecipient,
@@ -1214,6 +1309,13 @@ export const absorbListservFields = internalMutation({
       joinDetectionReasons:
         target.joinDetectionReasons ?? duplicate.joinDetectionReasons,
       joinDetectedAt: target.joinDetectedAt ?? duplicate.joinDetectedAt,
+      ...joinFields,
+      // Detection only emits a subscribe URL for strategies that have one, so
+      // a fold must not drop a URL either row already carried.
+      subscribeUrl:
+        joinFields.subscribeUrl ??
+        target.subscribeUrl ??
+        duplicate.subscribeUrl,
       notes: mergeNotes(target.notes, duplicate.notes),
       updatedAt: Date.now(),
     });
@@ -1591,12 +1693,22 @@ async function upsertCandidates(
 
       // A list that is in the directory *and* shows up in the student mail
       // data is the strongest signal discovery has — far stronger than the
-      // `-l` suffix heuristic, which is only ever guessing at this. The boost
-      // is credited once: re-running must not inflate confidence each time.
+      // `-l` suffix heuristic, which is only ever guessing at this.
+      //
+      // Judged on the merged state rather than on this input alone, so the
+      // boost no longer depends on which discovery happened to run second: the
+      // old test required DIRECTORY_REASON to arrive *with* the input, which
+      // silently skipped every list the directory found first. Credited once —
+      // the marker reason below is what makes a re-run idempotent.
+      const mergedReasons = new Set([
+        ...existing.matchedReasons,
+        ...input.matchedReasons,
+      ]);
       const crossReferenced =
-        input.matchedReasons.includes(DIRECTORY_REASON) &&
-        !existing.matchedReasons.includes(DIRECTORY_REASON) &&
-        (existing.popularity ?? 0) > 0;
+        mergedReasons.has(DIRECTORY_REASON) &&
+        (input.popularity ?? existing.popularity ?? 0) > 0 &&
+        !mergedReasons.has(CROSS_REFERENCE_REASON);
+      if (crossReferenced) mergedReasons.add(CROSS_REFERENCE_REASON);
 
       await ctx.db.patch(existing._id, {
         displayName:
@@ -1606,9 +1718,7 @@ async function upsertCandidates(
             (crossReferenced ? DIRECTORY_MATCH_BOOST : 0),
         ),
         popularity: input.popularity ?? existing.popularity,
-        matchedReasons: [
-          ...new Set([...existing.matchedReasons, ...input.matchedReasons]),
-        ],
+        matchedReasons: [...mergedReasons],
         directoryDescription:
           input.directoryDescription ?? existing.directoryDescription,
         subscribeUrl: input.subscribeUrl ?? existing.subscribeUrl,
@@ -1618,14 +1728,25 @@ async function upsertCandidates(
       continue;
     }
 
+    // A single input can already carry both signals, so the same credit is
+    // applied on insert rather than waiting for a second run that may never
+    // come.
+    const crossReferenced =
+      input.matchedReasons.includes(DIRECTORY_REASON) &&
+      (input.popularity ?? 0) > 0;
+
     await ctx.db.insert("listservCandidates", {
       email,
       displayName: input.displayName ?? inferDisplayName(email),
       source: input.source ?? "d1_discovery",
       status: "candidate",
-      confidence: input.confidence,
+      confidence: clampConfidence(
+        input.confidence + (crossReferenced ? DIRECTORY_MATCH_BOOST : 0),
+      ),
       popularity: input.popularity,
-      matchedReasons: input.matchedReasons,
+      matchedReasons: crossReferenced
+        ? [...input.matchedReasons, CROSS_REFERENCE_REASON]
+        : input.matchedReasons,
       directoryDescription: input.directoryDescription,
       subscribeUrl: input.subscribeUrl,
       createdAt: now,
@@ -1716,6 +1837,15 @@ const DIRECTORY_BASE_CONFIDENCE = 25;
 
 /** Credited once when a directory entry meets a candidate that has D1 overlap. */
 const DIRECTORY_MATCH_BOOST = 25;
+
+/**
+ * Marker reason recording that {@link DIRECTORY_MATCH_BOOST} has been applied.
+ *
+ * Stored on the row rather than inferred, because the condition that earns the
+ * boost stays true forever once both signals are present — without a marker,
+ * every subsequent discovery run would credit it again.
+ */
+const CROSS_REFERENCE_REASON = "cross-referenced with student mail";
 
 /**
  * Prefixes that are never a student org.
