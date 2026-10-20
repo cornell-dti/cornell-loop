@@ -483,6 +483,8 @@ export const overview = query({
     failedMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     ignoredMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     needsAssignmentCount: v.number(),
+    readyCount: v.number(),
+    readyScanTruncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
@@ -514,10 +516,10 @@ export const overview = query({
           )
           .order("desc")
           .take(25),
-        // Bounded window used only to estimate how many "new" messages are
-        // blocked on sender assignment. The ready queue itself is no longer
-        // computed here — see `listReadyMessages`, which paginates instead of
-        // silently truncating.
+        // Bounded window behind both of the header's "new" message counts: how
+        // many are blocked on sender assignment, and how many are ready to
+        // parse. The ready *queue* is still paginated by `listReadyMessages`,
+        // because listing it is a different job from counting it.
         ctx.db
           .query("listservMessages")
           .withIndex("by_processing_status", (q) =>
@@ -530,6 +532,13 @@ export const overview = query({
     const needsAssignment = newMessages.filter(
       (m) => m.organizationId === undefined,
     );
+    // Counted here rather than from the first page of `listReadyMessages`,
+    // which filters unassigned rows out *after* paginating: when the newest 25
+    // "new" messages are all unassigned — the normal state while the Sources
+    // backlog is large — that page comes back empty and the admin page
+    // concluded there was nothing to parse, disabling the only control that
+    // runs the parser.
+    const readyCount = newMessages.length - needsAssignment.length;
 
     // Project only what the admin UI needs — no email body content sent to client.
     const projectMessage = (m: (typeof failedMessages)[number]) => ({
@@ -550,6 +559,10 @@ export const overview = query({
       failedMessages: failedMessages.map(projectMessage),
       ignoredMessages: ignoredMessages.map(projectMessage),
       needsAssignmentCount: needsAssignment.length,
+      readyCount,
+      // Both counts above describe the newest `NEEDS_ASSIGNMENT_SCAN_LIMIT`
+      // messages only, so the UI can show them as "at least this many".
+      readyScanTruncated: newMessages.length === NEEDS_ASSIGNMENT_SCAN_LIMIT,
     };
   },
 });

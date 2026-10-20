@@ -30,8 +30,9 @@ const MESSAGES_PER_PAGE = 100;
 const MAX_BOOTSTRAP_MESSAGES = 250;
 /**
  * Upper bound on one steady-state poll. Anything beyond this is picked up by
- * the next run ten minutes later, because `markIngestionSucceeded` advances the
- * cursor only to the history id Gmail reported for the page we actually read.
+ * the next run ten minutes later, because a truncated run reports the id of the
+ * last history record it actually consumed as the next `startHistoryId` — see
+ * {@link fetchMessagesSinceHistory}.
  */
 const MAX_HISTORY_MESSAGES = 250;
 const BATCH_SIZE = 50;
@@ -65,6 +66,8 @@ type GmailListResponse = {
 
 type GmailHistoryResponse = {
   history?: Array<{
+    /** The record's own history id, usable as a later `startHistoryId`. */
+    id?: string;
     messagesAdded?: Array<{ message?: { id?: string } }>;
   }>;
   nextPageToken?: string;
@@ -784,6 +787,19 @@ async function fetchMessageIds(
   }
 }
 
+/**
+ * Walks Gmail's history from `historyId`, stopping at {@link
+ * MAX_HISTORY_MESSAGES}.
+ *
+ * The returned history id is the run's next `startHistoryId`, and which one is
+ * correct depends on whether the walk finished. `response.historyId` is the
+ * *mailbox's current* history id, not the end of the page just read, so
+ * reporting it after stopping early tells the next run to begin after records
+ * this run never looked at — silently dropping every message in them. A
+ * truncated run therefore reports the id of the last record it actually
+ * consumed, and the next run resumes there. That record is read a second time;
+ * `filterUnseenMessages` drops the duplicate by `gmailMessageId`.
+ */
 async function fetchMessagesSinceHistory(
   accessToken: string,
   historyId: string,
@@ -791,6 +807,8 @@ async function fetchMessagesSinceHistory(
   const ids: string[] = [];
   let pageToken: string | undefined;
   let latestHistoryId: string | undefined;
+  let lastRecordId: string | undefined;
+  let truncated = false;
 
   do {
     const url = new URL(GMAIL_HISTORY_URL);
@@ -809,17 +827,25 @@ async function fetchMessagesSinceHistory(
       for (const added of historyItem.messagesAdded ?? []) {
         if (added.message?.id) ids.push(added.message.id);
       }
+      if (historyItem.id) lastRecordId = historyItem.id;
     }
 
     // Capped the same way the bootstrap path is. Without a bound, a gap in
     // polling — a paused deploy, a run of failures, or a batch of newly joined
     // lists all going live at once — returns thousands of ids in one run, and
     // every downstream stage is sized off this array.
-    pageToken =
-      ids.length < MAX_HISTORY_MESSAGES ? response.nextPageToken : undefined;
+    if (ids.length >= MAX_HISTORY_MESSAGES && response.nextPageToken) {
+      truncated = true;
+      pageToken = undefined;
+    } else {
+      pageToken = response.nextPageToken;
+    }
   } while (pageToken);
 
-  return { messageIds: [...new Set(ids)], historyId: latestHistoryId };
+  return {
+    messageIds: [...new Set(ids)],
+    historyId: truncated ? (lastRecordId ?? latestHistoryId) : latestHistoryId,
+  };
 }
 
 /**

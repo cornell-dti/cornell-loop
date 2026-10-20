@@ -461,6 +461,8 @@ export default function Admin() {
   const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
     []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
+  const readyCount: number = parseData?.readyCount ?? 0;
+  const readyScanTruncated: boolean = parseData?.readyScanTruncated ?? false;
 
   // Real ready-to-parse queue: paginated rather than a number capped at 200,
   // so a genuine backlog is both visible and inspectable.
@@ -848,6 +850,8 @@ export default function Admin() {
             readyMessages={readyMessages}
             readyStatus={readyStatus}
             onLoadMoreReady={onLoadMoreReady}
+            readyCount={readyCount}
+            readyScanTruncated={readyScanTruncated}
             needsAssignment={needsAssignment}
             onRunParse={() =>
               act("Parse complete.", () => runParseNow({ token }))
@@ -3182,6 +3186,8 @@ function PublishTab({
   readyMessages,
   readyStatus,
   onLoadMoreReady,
+  readyCount,
+  readyScanTruncated,
   needsAssignment,
   onRunParse,
   onPublish,
@@ -3199,6 +3205,11 @@ function PublishTab({
   readyMessages: ParseMessage[];
   readyStatus: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
   onLoadMoreReady: () => void;
+  // Counted server-side over the same bounded window as `needsAssignment`, so
+  // the header and the Run parser button reflect the real backlog rather than
+  // whatever survived the first page of `readyMessages`.
+  readyCount: number;
+  readyScanTruncated: boolean;
   needsAssignment: number;
   onRunParse: () => void;
   onPublish: (id: Id<"events">) => void;
@@ -3209,23 +3220,26 @@ function PublishTab({
   onRequeue: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
 }) {
-  const readyCount = readyMessages.length;
+  // How many rows the expandable list has actually loaded, which is not the
+  // same thing as how many are ready: `listReadyMessages` filters each page
+  // after paginating it.
+  const loadedReadyCount = readyMessages.length;
   const blocked = readyCount === 0 && needsAssignment > 0;
   const [showReady, setShowReady] = useState(false);
   const [selected, setSelected] = useState<Set<Id<"events">>>(new Set());
 
-  // `listReadyMessages` drops unassigned messages *after* pagination, so a page
-  // can come back empty while assigned messages sit further down the index.
-  // Keep pulling pages until one of them yields something, otherwise the queue
-  // reads "nothing waiting" until an admin clicks Load more by hand. The status
-  // leaves "CanLoadMore" while a page is in flight and ends at "Exhausted", so
-  // this terminates on its own.
+  // Because of that filtering a page can come back empty while assigned
+  // messages sit further down the index, so the expanded list keeps pulling
+  // pages until one of them yields something rather than showing "nothing
+  // waiting" until an admin clicks Load more. The status leaves "CanLoadMore"
+  // while a page is in flight and ends at "Exhausted", so this terminates on
+  // its own.
   useEffect(() => {
     if (!showReady) return;
-    if (readyCount > 0) return;
+    if (loadedReadyCount > 0) return;
     if (readyStatus !== "CanLoadMore") return;
     onLoadMoreReady();
-  }, [showReady, readyCount, readyStatus, onLoadMoreReady]);
+  }, [showReady, loadedReadyCount, readyStatus, onLoadMoreReady]);
 
   function toggleSelected(id: Id<"events">) {
     setSelected((prev) => {
@@ -3265,7 +3279,7 @@ function PublishTab({
                   className="text-[length:var(--font-size-sub2)] font-bold underline-offset-2 hover:underline"
                 >
                   {readyCount}
-                  {readyStatus === "CanLoadMore" ? "+" : ""}
+                  {readyScanTruncated ? "+" : ""}
                 </button>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   ready
@@ -3341,9 +3355,11 @@ function PublishTab({
         )}
         {showReady && (
           <div className="mt-4 border-t border-[var(--color-border)] pt-4">
-            {readyCount === 0 ? (
+            {loadedReadyCount === 0 ? (
               <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
-                No assigned messages waiting to be parsed.
+                {readyStatus === "Exhausted"
+                  ? "No assigned messages waiting to be parsed."
+                  : "Loading…"}
               </p>
             ) : (
               <div className="grid gap-2">
