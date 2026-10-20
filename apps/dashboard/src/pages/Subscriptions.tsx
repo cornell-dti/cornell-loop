@@ -30,10 +30,12 @@ import {
   Tag,
   fallbackColorsForName,
 } from "@app/ui";
+import VerifiedBadge from "@app/ui/assets/verified.svg?react";
 import type { SideBarItemId, RsvpGroup, Club } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicOrg } from "../../convex/orgs";
+import type { SubscriptionInfo } from "../../convex/listservs";
 import { orgsToClubs, rsvpsToRsvpGroups } from "../lib/eventToPost";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -161,6 +163,15 @@ function SubscriptionRow({
               {item.orgName}
             </span>
 
+            {/* Verified badge — org.isVerified has no other visible
+                treatment anywhere in the app; this is its only surface. */}
+            {item.isVerified && (
+              <VerifiedBadge
+                aria-label="Verified organization"
+                className="size-[var(--space-4)] shrink-0"
+              />
+            )}
+
             {/* "Following" pill — matches DashboardPost / SearchResultRow exactly */}
             <span
               className={[
@@ -231,18 +242,21 @@ function SubscriptionRow({
 // ─── Subscriptions ────────────────────────────────────────────────────────────
 
 /**
- * Convert a followed org Doc to the SubscriptionItem display shape. The dashboard
- * doesn't yet track per-org email counts; surface tag count as a placeholder
- * proxy so the row still renders meaningfully. Real email counts land later.
+ * Convert a followed org Doc to the SubscriptionItem display shape, using
+ * the org's real listserv email + real message count from
+ * `listservs.getSubscriptionInfoByOrgIds` (never `org.email`, and never
+ * fabricated from `org.slug` — see that query's docstring for why).
  */
-function orgToSubscriptionItem(org: PublicOrg): SubscriptionItem {
-  const fallbackEmail = `${org.slug}-l@cornell.edu`;
+function orgToSubscriptionItem(
+  org: PublicOrg,
+  info: SubscriptionInfo | undefined,
+): SubscriptionItem {
   return {
     orgName: org.name,
     orgAvatarUrl: org.avatarUrl,
     isVerified: org.isVerified,
-    emailsReceived: org.tags.length,
-    emailAddress: org.email ?? fallbackEmail,
+    emailsReceived: info?.emailsReceived ?? 0,
+    emailAddress: info?.email ?? "No email on file",
   };
 }
 
@@ -270,12 +284,26 @@ export function Subscriptions({
   const unfollowMutation = useMutation(api.follows.unfollow);
   // Map followed orgs to SubscriptionItem shape, preserving the natural order
   // returned by the server (recency-desc). The sort toggle re-sorts a copy so
-  // we don't mutate the source array. "Most emails" sort uses tag count as a
-  // placeholder proxy until real email counts are tracked.
+  // we don't mutate the source array.
   const orgsList = useMemo<readonly PublicOrg[]>(
     () => followedOrgs ?? [],
     [followedOrgs],
   );
+
+  const orgIds = useMemo(() => orgsList.map((org) => org._id), [orgsList]);
+  const subscriptionInfoResult = useQuery(
+    api.listservs.getSubscriptionInfoByOrgIds,
+    orgIds.length > 0 ? { orgIds } : "skip",
+  );
+  const subscriptionInfoByOrgId = useMemo<
+    ReadonlyMap<Id<"orgs">, SubscriptionInfo>
+  >(() => {
+    const map = new Map<Id<"orgs">, SubscriptionInfo>();
+    for (const info of subscriptionInfoResult ?? []) {
+      map.set(info.orgId, info);
+    }
+    return map;
+  }, [subscriptionInfoResult]);
 
   const sortMode: SortMode =
     sortLabel === "Alphabetical" ||
@@ -288,7 +316,9 @@ export function Subscriptions({
     if (subscriptionsOverride !== undefined) {
       return subscriptionsOverride;
     }
-    const mapped = orgsList.map(orgToSubscriptionItem);
+    const mapped = orgsList.map((org) =>
+      orgToSubscriptionItem(org, subscriptionInfoByOrgId.get(org._id)),
+    );
     if (sortMode === "Alphabetical") {
       return [...mapped].sort((a, b) => a.orgName.localeCompare(b.orgName));
     }
@@ -297,7 +327,7 @@ export function Subscriptions({
     }
     // "Recently added" — preserve server order (follows.createdAt desc).
     return mapped;
-  }, [subscriptionsOverride, orgsList, sortMode]);
+  }, [subscriptionsOverride, orgsList, subscriptionInfoByOrgId, sortMode]);
 
   // Map list index → org id for unfollow. Only populated when the data comes
   // from Convex (override mode keeps the legacy in-memory removal flow).
@@ -310,11 +340,17 @@ export function Subscriptions({
     }
     if (sortMode === "Most emails") {
       return [...orgsList]
-        .sort((a, b) => b.tags.length - a.tags.length)
+        .sort((a, b) => {
+          const aCount =
+            subscriptionInfoByOrgId.get(a._id)?.emailsReceived ?? 0;
+          const bCount =
+            subscriptionInfoByOrgId.get(b._id)?.emailsReceived ?? 0;
+          return bCount - aCount;
+        })
         .map((o) => o._id);
     }
     return orgsList.map((o) => o._id);
-  }, [subscriptionsOverride, orgsList, sortMode]);
+  }, [subscriptionsOverride, orgsList, subscriptionInfoByOrgId, sortMode]);
 
   const queriedRsvpGroups = useMemo(
     () => rsvpsToRsvpGroups(myRsvps),

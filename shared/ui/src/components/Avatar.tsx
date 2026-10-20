@@ -123,7 +123,7 @@ export function Avatar({ avatars, className }: AvatarProps) {
      */
     <div
       className={[
-        "flex items-center gap-[var(--space-2)]",
+        "flex min-w-0 items-center gap-[var(--space-2)]",
         "px-[var(--space-1-5)]",
         className,
       ]
@@ -131,7 +131,7 @@ export function Avatar({ avatars, className }: AvatarProps) {
         .join(" ")}
     >
       {/* ── Circle(s) ── */}
-      <div className="flex items-center">
+      <div className="flex shrink-0 items-center">
         {avatars.map((avatar, i) => (
           <AvatarCircle
             key={i}
@@ -153,13 +153,13 @@ export function Avatar({ avatars, className }: AvatarProps) {
        */}
       <div
         className={[
-          "flex items-center",
+          "flex min-w-0 flex-wrap items-center",
           isMultiple ? "gap-[var(--space-1)]" : "",
           "font-[family-name:var(--font-body)] font-semibold",
           "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
           "tracking-[var(--letter-spacing-body2)]",
           "text-[color:var(--color-neutral-700)]",
-          "pointer-events-none whitespace-nowrap select-none",
+          "pointer-events-none select-none",
         ]
           .filter(Boolean)
           .join(" ")}

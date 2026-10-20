@@ -35,7 +35,9 @@ import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -106,10 +108,7 @@ export function Bookmarks({
 
   const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
   const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const followedOrgIdSet = useMemo<ReadonlySet<Id<"orgs">>>(() => {
-    if (!followedOrgIds) return new Set<Id<"orgs">>();
-    return new Set<Id<"orgs">>(followedOrgIds);
-  }, [followedOrgIds]);
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
 
   // Optimistic-removal set: bookmarks that the user just unbookmarked but
   // whose mutation hasn't yet round-tripped. Visually filter these out so the
@@ -169,14 +168,12 @@ export function Bookmarks({
           orgs: row.orgs,
           isBookmarked: true,
         });
-        const organizations = base.organizations.map((org, i) => {
-          const matched = row.orgs[i];
-          return {
-            ...org,
-            following:
-              matched !== undefined ? followedOrgIdSet.has(matched._id) : false,
-          };
-        });
+        const organizations = stampFollowState(
+          base.organizations,
+          row.orgs,
+          followedOrgIdSet,
+          toggleFollow,
+        );
         return {
           ...base,
           organizations,
@@ -190,6 +187,7 @@ export function Bookmarks({
     handleRemoveBookmark,
     handleRsvp,
     optimisticallyRemoved,
+    toggleFollow,
   ]);
 
   const queriedRsvpGroups = useMemo(
@@ -197,6 +195,16 @@ export function Bookmarks({
     [myRsvps],
   );
   const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
@@ -326,6 +334,7 @@ export function Bookmarks({
           rsvpGroups={rsvpGroups}
           clubs={clubs}
           onClubClick={onClubClick}
+          onToggleFollow={handleClubToggleFollow}
           className="hidden h-full shrink-0 overflow-visible lg:flex"
         />
       )}

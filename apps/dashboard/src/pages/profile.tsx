@@ -259,7 +259,7 @@ export function Profile({
  */
 interface ProfileModalInnerProps {
   initialValue: ProfileFieldsValue;
-  userName: string;
+  userName?: string;
   onDismiss: () => void;
   onSignOut: () => void;
 }
@@ -367,7 +367,7 @@ export function ProfileModalRoute({
     [profile?.major, profile?.gradYear, profile?.minor, profile?.interests],
   );
 
-  const userName = (user?.name ?? "Megan").split(" ")[0] || "Megan";
+  const userName = user?.name?.split(" ")[0] || undefined;
 
   // Stable identity for the inner form — when the persisted profile lands the
   // key flips, remounting the inner component with the freshly-hydrated value.

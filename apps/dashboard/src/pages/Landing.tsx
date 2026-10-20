@@ -810,7 +810,7 @@ export default function Landing() {
       {/* ── Value Proposition Banner ──────────────────────────────── */}
       <section className="relative px-4 pb-12 md:px-8 md:pb-24 lg:px-[121px]">
         <div className="relative overflow-hidden rounded-3xl bg-[var(--color-black)] px-6 py-8 text-center md:px-16 md:py-[37px] lg:px-[145px]">
-          <p
+          <div
             className="font-[family-name:var(--font-body)] text-[28px] leading-[36px] font-medium tracking-[-1px] text-white md:text-[40px] md:leading-[48px]"
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -832,7 +832,7 @@ export default function Landing() {
               <span className="relative">highlights</span>
             </span>{" "}
             what&apos;s important.
-          </p>
+          </div>
         </div>
       </section>
 

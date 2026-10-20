@@ -31,3 +31,8 @@ declare module "@app/ui/assets/close_search.svg?react" {
   const ReactComponent: SvgReactComponent;
   export default ReactComponent;
 }
+
+declare module "@app/ui/assets/verified.svg?react" {
+  const ReactComponent: SvgReactComponent;
+  export default ReactComponent;
+}

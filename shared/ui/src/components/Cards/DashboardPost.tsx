@@ -65,6 +65,8 @@ export interface DashboardPostProps {
   description: string;
   truncateDescription?: boolean;
   tags?: DashboardEventCardProps["tags"];
+  rsvpLabel?: DashboardEventCardProps["rsvpLabel"];
+  rsvpUrl?: DashboardEventCardProps["rsvpUrl"];
   onRsvp?: () => void;
   onShare?: () => void;
   bookmarked?: boolean;
@@ -95,6 +97,8 @@ export function DashboardPost({
   description,
   truncateDescription,
   tags,
+  rsvpLabel,
+  rsvpUrl,
   onRsvp,
   onShare,
   bookmarked,
@@ -109,6 +113,8 @@ export function DashboardPost({
     description,
     truncateDescription,
     tags,
+    rsvpLabel,
+    rsvpUrl,
     onRsvp,
     onShare,
     bookmarked,
@@ -159,10 +165,10 @@ export function DashboardPost({
       {/* ── Post header ── */}
       <div className="flex items-center gap-[var(--space-3)]">
         {/* Left: avatar stack + org names + following badge */}
-        <div className="flex items-center gap-[var(--space-2)]">
+        <div className="flex min-w-0 flex-1 items-center gap-[var(--space-2)]">
           {/* Stacked avatars */}
           {organizations.length > 0 && (
-            <div className="flex items-center">
+            <div className="flex shrink-0 items-center">
               {organizations.map((org, i) => {
                 const fallback = fallbackColorsForName(org.name);
                 return (
@@ -209,11 +215,11 @@ export function DashboardPost({
           {/* Org names — each is its own hover trigger with tooltip */}
           <span
             className={
-              "flex items-center gap-[var(--space-1)] " +
+              "flex min-w-0 flex-wrap items-center gap-[var(--space-1)] " +
               "font-[family-name:var(--font-body)] font-semibold " +
               "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
               "tracking-[var(--letter-spacing-body2)] " +
-              "whitespace-nowrap text-[color:var(--color-neutral-700)]"
+              "text-[color:var(--color-neutral-700)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -277,7 +283,7 @@ export function DashboardPost({
         </div>
 
         {/* Right: separator bullet + date */}
-        <div className="flex items-center gap-[var(--space-2)]">
+        <div className="flex shrink-0 items-center gap-[var(--space-2)]">
           {/* Bullet — Figma: Neutral/500 */}
           <span
             className="text-[length:var(--font-size-body3)] leading-[1.5] text-[color:var(--color-neutral-500)]"
