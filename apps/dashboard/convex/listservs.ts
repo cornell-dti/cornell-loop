@@ -36,6 +36,18 @@ async function resolveOrgEmail(
     .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
     .take(MAX_LISTSERVS_PER_ORG);
 
+  // `.take()` returning exactly the cap means there may be more rows this
+  // read never saw — silently truncating here could hide a real primary row
+  // and report "no email on file" for an org that actually has one. PR5's
+  // merge tooling is the real fix (Entrepreneurship's 62 rows are the
+  // motivating case); this is deliberately loud rather than silent until
+  // every org is below the cap.
+  if (rows.length === MAX_LISTSERVS_PER_ORG) {
+    console.warn(
+      `resolveOrgEmail: org ${orgId} has at least ${MAX_LISTSERVS_PER_ORG} listservs rows — result may be truncated.`,
+    );
+  }
+
   const active: Doc<"listservs">[] = rows.filter(
     (row) => row.status !== "paused",
   );
@@ -78,14 +90,17 @@ export const getSubscriptionInfoByOrgIds = authedQuery({
     }),
   ),
   handler: async (ctx, args): Promise<SubscriptionInfo[]> => {
-    const results: SubscriptionInfo[] = [];
-    for (const orgId of args.orgIds) {
-      const [email, emailsReceived] = await Promise.all([
-        resolveOrgEmail(ctx, orgId),
-        countOrgMessages(ctx, orgId),
-      ]);
-      results.push({ orgId, email, emailsReceived });
-    }
-    return results;
+    // One org's email/count lookups were already parallel; batching across
+    // orgs too turns N sequential round trips into N parallel ones instead
+    // of resolving them one org at a time.
+    return Promise.all(
+      args.orgIds.map(async (orgId) => {
+        const [email, emailsReceived] = await Promise.all([
+          resolveOrgEmail(ctx, orgId),
+          countOrgMessages(ctx, orgId),
+        ]);
+        return { orgId, email, emailsReceived };
+      }),
+    );
   },
 });
