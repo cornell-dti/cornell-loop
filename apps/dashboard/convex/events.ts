@@ -425,9 +425,24 @@ export const byOrg = authedQuery({
   },
 });
 
+
+/**
+ * Splits raw email body text into paragraphs for OriginalEmailView.
+ *
+ * Normalizes `\r\n` (Outlook/Exchange line endings) to `\n` first, so blank
+ * lines are recognized as paragraph breaks. Whitespace-only lines count as
+ * blank. Paragraphs are trimmed and empty ones are dropped.
+ *
+ * Single newlines inside a paragraph are kept. The view must render them with
+ * `whitespace-pre-line`. Does not strip HTML, signatures, or `[cid:...]` tags.
+ *
+ * @param text Raw email body (`bodyText`, or `rawText`/`rawHtml` for legacy rows).
+ * @returns Non-empty, trimmed paragraphs in original order.
+ */
 function splitIntoParagraphs(text: string): string[] {
   return text
-    .split(/\n{2,}/)
+    .replace(/\r\n?/g, "\n")
+    .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 }
