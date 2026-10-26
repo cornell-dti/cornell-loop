@@ -36,6 +36,7 @@ For local development, set the same env var in the local Convex environment befo
    an email request for everything else.
 4. `Ingest`: pull email and clear subscription confirmations.
 5. `Publish`: parse messages, review drafts, and publish events.
+6. `Orgs`: generate and publish missing org page fields from each org's email.
 
 ## Setup
 
@@ -188,6 +189,33 @@ Review every draft before publishing.
 
 Check title, date, location, description, and links before publishing.
 
+## Orgs
+
+Use this tab to fill in org pages. Creating an org from `Sources` only sets its
+name, so new orgs start with no description, Loop summary, tags, website,
+contact email, or images.
+
+- Orgs with missing fields or an open draft are listed first. Switch to `All`
+  to see every org.
+- `Generate profile`: reads the org's most recent emails (up to 15, skipping
+  list-manager mail) plus its parsed events, and proposes values for the
+  missing fields. Runs only when you click it.
+- `Reparse`: regenerates the draft, replacing the open one. Use it once more
+  mail has arrived.
+
+Review the draft before publishing.
+
+- Each field shows the current value next to the proposed one. Only checked
+  fields are applied; fields that already have a value start unchecked.
+- Edit any proposed value inline before publishing.
+- Images are candidates found in the org's email HTML. Pick an avatar and/or
+  cover; the chosen image is copied into Loop's storage on publish.
+- `Publish selected`: writes the checked fields to the org page.
+- `Discard`: drops the draft without changing the org.
+
+Drafts built from fewer than 3 emails are flagged. Websites and emails the
+model returns are dropped unless they appear verbatim in the org's email.
+
 ## Common Terms
 
 - `Candidate`: possible source that has not been approved yet.
@@ -214,10 +242,16 @@ Check title, date, location, description, and links before publishing.
 - Subscribe form failed for another reason: open the subscribe link on the row
   and complete the form by hand.
 - Parser failed: use `Retry` on the failed message or rerun the parser later.
+- `Generate profile` says there are no usable emails: the org has no assigned
+  source with ingested mail yet. Assign one in `Sources` and wait for `Ingest`.
+- No image candidates: the org's emails are plain text or only use tracking
+  images. Upload images in `Sources` → `Organizations` instead.
 
 ## Safe Operating Rules
 
 - Do not publish without checking the event details.
+- Do not publish an org profile without reading the proposed description and
+  summary — they are public on the org page.
 - Do not send join emails without reviewing the recipient and subject.
 - Do not email a `lists.cornell.edu` address asking to be added — Simplelists
   ignores email commands. Use the subscribe form.
