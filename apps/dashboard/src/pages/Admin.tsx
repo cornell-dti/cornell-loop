@@ -7,6 +7,7 @@ import {
   usePaginatedQuery,
   useQuery,
 } from "convex/react";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import {
   confirmationLinkFrom,
@@ -91,6 +92,13 @@ type Organization = Doc<"orgs">;
 type EventDoc = Doc<"events">;
 type ParseRun = Doc<"parseRuns">;
 type JoinAttempt = Doc<"joinAttempts">;
+type OrgProfileRow = FunctionReturnType<
+  typeof api.orgEnrichment.overview
+>[number];
+type OrgProfileDraft = Doc<"orgProfileDrafts">;
+type OrgDraftFields = FunctionArgs<
+  typeof api.orgEnrichment.publishDraft
+>["fields"];
 
 type GmailStatus = {
   email: string;
@@ -168,7 +176,7 @@ type OrgUpdatePayload = {
   coverStorageId?: Id<"_storage"> | null;
 };
 
-type AdminTab = "setup" | "sources" | "join" | "ingest" | "publish";
+type AdminTab = "setup" | "sources" | "join" | "ingest" | "publish" | "orgs";
 
 const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "setup", label: "Setup", hint: "Gmail + discovery" },
@@ -176,6 +184,7 @@ const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "join", label: "Join", hint: "Subscribe to lists" },
   { id: "ingest", label: "Ingest", hint: "Poll inbox" },
   { id: "publish", label: "Publish", hint: "Review + publish drafts" },
+  { id: "orgs", label: "Orgs", hint: "Fill org profiles" },
 ];
 
 /** Narrows a `?tab=` query value to {@link AdminTab} without an `as` cast. */
@@ -330,6 +339,10 @@ export default function Admin() {
     token ? { token } : "skip",
   );
   const parseData = useQuery(api.parser.overview, token ? { token } : "skip");
+  const orgProfiles = useQuery(
+    api.orgEnrichment.overview,
+    token ? { token } : "skip",
+  );
 
   // ── mutations / actions ──
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
@@ -377,6 +390,9 @@ export default function Admin() {
   );
   const foldListservs = useAction(api.listservAdmin.foldListservs);
   const setPrimaryListserv = useMutation(api.listservAdmin.setPrimaryListserv);
+  const runEnrichment = useAction(api.orgEnrichment.runEnrichment);
+  const publishOrgDraft = useAction(api.orgEnrichment.publishDraft);
+  const discardOrgDraft = useMutation(api.orgEnrichment.discardDraft);
 
   // ── duplicate-org guard ──
   // findSimilarOrganizations is a query, called imperatively (not via
@@ -882,6 +898,23 @@ export default function Admin() {
               act("Requeued.", () => requeueMessage({ token, messageId: id }))
             }
             onGoToSources={() => switchTab("sources")}
+          />
+        )}
+
+        {activeTab === "orgs" && (
+          <OrgsTab
+            rows={orgProfiles}
+            onGenerate={(orgId) =>
+              act("Profile draft ready.", () => runEnrichment({ token, orgId }))
+            }
+            onPublish={(draftId, fields) =>
+              act("Org profile published.", () =>
+                publishOrgDraft({ token, draftId, fields }),
+              )
+            }
+            onDiscard={(draftId) =>
+              act("Draft discarded.", () => discardOrgDraft({ token, draftId }))
+            }
           />
         )}
       </div>
@@ -3173,6 +3206,572 @@ function ConfirmationCard({
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Orgs tab ─────────────────────────────────────────────────────────────────
+
+const MISSING_FIELD_LABELS: Record<string, string> = {
+  description: "Description",
+  loopSummary: "Loop summary",
+  websiteUrl: "Website",
+  email: "Email",
+  avatar: "Avatar",
+  cover: "Cover",
+  tags: "Tags",
+};
+
+type OrgDraftTextField =
+  | "description"
+  | "loopSummary"
+  | "tags"
+  | "websiteUrl"
+  | "email";
+
+type OrgDraftTextValues = Record<OrgDraftTextField, string>;
+
+const ORG_DRAFT_TEXT_FIELDS: Array<{
+  key: OrgDraftTextField;
+  label: string;
+  multiline: boolean;
+}> = [
+  { key: "description", label: "Description", multiline: true },
+  { key: "loopSummary", label: "Loop summary", multiline: true },
+  { key: "tags", label: "Tags (comma-separated)", multiline: false },
+  { key: "websiteUrl", label: "Website", multiline: false },
+  { key: "email", label: "Contact email", multiline: false },
+];
+
+function fillsBlank(proposed: string, current: string) {
+  return proposed.trim() !== "" && current.trim() === "";
+}
+
+function splitTags(raw: string) {
+  return raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function OrgsTab({
+  rows,
+  onGenerate,
+  onPublish,
+  onDiscard,
+}: {
+  rows: OrgProfileRow[] | undefined;
+  onGenerate: (orgId: Id<"orgs">) => Promise<boolean>;
+  onPublish: (
+    draftId: Id<"orgProfileDrafts">,
+    fields: OrgDraftFields,
+  ) => Promise<boolean>;
+  onDiscard: (draftId: Id<"orgProfileDrafts">) => Promise<boolean>;
+}) {
+  const [filter, setFilter] = useState<"missing" | "all">("missing");
+  const [search, setSearch] = useState("");
+  const [generating, setGenerating] = useState<Set<Id<"orgs">>>(new Set());
+
+  async function generate(orgId: Id<"orgs">) {
+    setGenerating((prev) => new Set(prev).add(orgId));
+    try {
+      await onGenerate(orgId);
+    } finally {
+      setGenerating((prev) => {
+        const next = new Set(prev);
+        next.delete(orgId);
+        return next;
+      });
+    }
+  }
+
+  const allRows = rows ?? [];
+  const query = search.trim().toLowerCase();
+  const visible = allRows
+    .filter(
+      (row) =>
+        filter === "all" || row.missingFields.length > 0 || row.draft !== null,
+    )
+    .filter((row) => !query || row.org.name.toLowerCase().includes(query))
+    .sort(
+      (a, b) =>
+        Number(b.draft !== null) - Number(a.draft !== null) ||
+        b.missingFields.length - a.missingFields.length ||
+        a.org.name.localeCompare(b.org.name),
+    );
+  const incompleteCount = allRows.filter(
+    (row) => row.missingFields.length > 0,
+  ).length;
+  const draftCount = allRows.filter((row) => row.draft !== null).length;
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              Org Profiles
+            </h2>
+            <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+              Generates description, Loop summary, tags, contact details, and
+              image suggestions from each org&apos;s emails. Results are drafts
+              — you choose which fields to publish.
+            </p>
+          </div>
+          <div className="flex gap-4 text-center">
+            <div>
+              <div className="text-[length:var(--font-size-sub2)] font-bold text-amber-700">
+                {incompleteCount}
+              </div>
+              <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                incomplete
+              </div>
+            </div>
+            <div>
+              <div className="text-[length:var(--font-size-sub2)] font-bold">
+                {draftCount}
+              </div>
+              <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                drafts
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="flex gap-1">
+            <Btn
+              primary={filter === "missing"}
+              onClick={() => setFilter("missing")}
+            >
+              Missing fields
+            </Btn>
+            <Btn primary={filter === "all"} onClick={() => setFilter("all")}>
+              All
+            </Btn>
+          </div>
+          <div className="min-w-0 flex-1">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search orgs…"
+              aria-label="Search orgs"
+              className={input()}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {rows === undefined ? (
+        <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+          Loading…
+        </p>
+      ) : visible.length === 0 ? (
+        <Card>
+          <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            {filter === "missing" && !query
+              ? "Every org profile is complete."
+              : "No orgs match."}
+          </p>
+        </Card>
+      ) : (
+        <div className="grid gap-3">
+          {visible.map((row) => (
+            <OrgProfileCard
+              key={row.org._id}
+              row={row}
+              generating={generating.has(row.org._id)}
+              onGenerate={() => generate(row.org._id)}
+              onPublish={onPublish}
+              onDiscard={onDiscard}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrgProfileCard({
+  row,
+  generating,
+  onGenerate,
+  onPublish,
+  onDiscard,
+}: {
+  row: OrgProfileRow;
+  generating: boolean;
+  onGenerate: () => void;
+  onPublish: (
+    draftId: Id<"orgProfileDrafts">,
+    fields: OrgDraftFields,
+  ) => Promise<boolean>;
+  onDiscard: (draftId: Id<"orgProfileDrafts">) => Promise<boolean>;
+}) {
+  const { org, draft } = row;
+  const noSources = row.sourceCount === 0;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {org.avatarUrl ? (
+            <img
+              src={org.avatarUrl}
+              alt={org.name}
+              className="size-10 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-neutral-200)] font-semibold text-[color:var(--color-neutral-700)]">
+              {org.name.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="font-semibold">{org.name}</div>
+            <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              {row.sourceCount} source{row.sourceCount === 1 ? "" : "s"} · last
+              mail {fmtDate(row.lastReceivedAt)}
+            </div>
+            {row.missingFields.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {row.missingFields.map((field) => (
+                  <Tag key={field} variant="amber">
+                    {MISSING_FIELD_LABELS[field] ?? field}
+                  </Tag>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Btn
+            primary={!draft}
+            onClick={onGenerate}
+            disabled={generating || noSources}
+          >
+            {generating
+              ? "Generating…"
+              : draft
+                ? "Reparse"
+                : "Generate profile"}
+          </Btn>
+          {noSources && (
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Assign a source first
+            </span>
+          )}
+        </div>
+      </div>
+
+      {draft && (
+        <OrgDraftReview
+          // Remount on a new or reparsed draft so local edits reset to it.
+          key={`${draft._id}:${draft.updatedAt}`}
+          org={org}
+          draft={draft}
+          generating={generating}
+          onReparse={onGenerate}
+          onPublish={(fields) => onPublish(draft._id, fields)}
+          onDiscard={() => onDiscard(draft._id)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function OrgDraftReview({
+  org,
+  draft,
+  generating,
+  onReparse,
+  onPublish,
+  onDiscard,
+}: {
+  org: Organization;
+  draft: OrgProfileDraft;
+  generating: boolean;
+  onReparse: () => void;
+  onPublish: (fields: OrgDraftFields) => Promise<boolean>;
+  onDiscard: () => Promise<boolean>;
+}) {
+  const current: OrgDraftTextValues = {
+    description: org.description,
+    loopSummary: org.loopSummary ?? "",
+    tags: org.tags.join(", "),
+    websiteUrl: org.websiteUrl ?? "",
+    email: org.email ?? "",
+  };
+  const proposed: OrgDraftTextValues = {
+    description: draft.description ?? "",
+    loopSummary: draft.loopSummary ?? "",
+    tags: draft.tags.join(", "),
+    websiteUrl: draft.websiteUrl ?? "",
+    email: draft.email ?? "",
+  };
+
+  const [values, setValues] = useState<OrgDraftTextValues>(proposed);
+  // Default to filling blanks only, so hand-curated fields aren't overwritten
+  // unless the admin opts in.
+  const [applied, setApplied] = useState<Record<OrgDraftTextField, boolean>>(
+    () => ({
+      description: fillsBlank(proposed.description, current.description),
+      loopSummary: fillsBlank(proposed.loopSummary, current.loopSummary),
+      tags: fillsBlank(proposed.tags, current.tags),
+      websiteUrl: fillsBlank(proposed.websiteUrl, current.websiteUrl),
+      email: fillsBlank(proposed.email, current.email),
+    }),
+  );
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(
+    org.avatarUrl ? null : (draft.suggestedAvatarUrl ?? null),
+  );
+  const [coverUrl, setCoverUrl] = useState<string | null>(
+    org.coverImageUrl ? null : (draft.suggestedCoverUrl ?? null),
+  );
+  const [busy, setBusy] = useState(false);
+
+  function isApplied(key: OrgDraftTextField) {
+    return applied[key] && values[key].trim() !== "";
+  }
+
+  const anySelected =
+    ORG_DRAFT_TEXT_FIELDS.some((field) => isApplied(field.key)) ||
+    avatarUrl !== null ||
+    coverUrl !== null;
+
+  async function publish() {
+    const fields: OrgDraftFields = {};
+    if (isApplied("description")) fields.description = values.description;
+    if (isApplied("loopSummary")) fields.loopSummary = values.loopSummary;
+    if (isApplied("tags")) fields.tags = splitTags(values.tags);
+    if (isApplied("websiteUrl")) fields.websiteUrl = values.websiteUrl.trim();
+    if (isApplied("email")) fields.email = values.email.trim();
+    if (avatarUrl) fields.avatarImageUrl = avatarUrl;
+    if (coverUrl) fields.coverImageUrl = coverUrl;
+    setBusy(true);
+    try {
+      await onPublish(fields);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discard() {
+    setBusy(true);
+    try {
+      await onDiscard();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 grid gap-4 border-t border-[var(--color-border)] pt-4">
+      <div className="flex flex-wrap items-center gap-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+        <ConfidenceBadge value={Math.round(draft.confidence * 100)} />
+        <span>
+          Based on {draft.messagesUsed} email
+          {draft.messagesUsed === 1 ? "" : "s"} · generated{" "}
+          {fmtDate(draft.updatedAt)} · {draft.model}
+        </span>
+      </div>
+
+      {draft.warnings.length > 0 && (
+        <ul className="grid gap-1 text-[length:var(--font-size-body3)] text-amber-700">
+          {draft.warnings.map((warning) => (
+            <li key={warning}>⚠ {warning}</li>
+          ))}
+        </ul>
+      )}
+
+      <div className="grid gap-3">
+        {ORG_DRAFT_TEXT_FIELDS.map((field) => {
+          const empty = values[field.key].trim() === "";
+          return (
+            <div
+              key={field.key}
+              className="grid gap-2 md:grid-cols-[auto_1fr_1fr] md:items-start"
+            >
+              <label className="flex items-center gap-2 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)] md:w-44">
+                <input
+                  type="checkbox"
+                  checked={applied[field.key] && !empty}
+                  disabled={empty}
+                  onChange={(e) =>
+                    setApplied((prev) => ({
+                      ...prev,
+                      [field.key]: e.target.checked,
+                    }))
+                  }
+                  className="size-4 shrink-0"
+                />
+                {field.label}
+              </label>
+              <div className="text-[length:var(--font-size-body2)] break-words text-[color:var(--color-text-muted)]">
+                <span className="text-[length:var(--font-size-body3)] font-semibold tracking-widest uppercase">
+                  Current
+                </span>
+                <p className="mt-1">{current[field.key] || "—"}</p>
+              </div>
+              <div>
+                <span className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Proposed
+                </span>
+                {field.multiline ? (
+                  <textarea
+                    value={values[field.key]}
+                    onChange={(e) =>
+                      setValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                    rows={3}
+                    className={`mt-1 ${input()}`}
+                  />
+                ) : (
+                  <input
+                    value={values[field.key]}
+                    onChange={(e) =>
+                      setValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                    className={`mt-1 ${input()}`}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-6">
+          <CurrentImage label="Current avatar" url={org.avatarUrl} round />
+          <CurrentImage label="Current cover" url={org.coverImageUrl} />
+        </div>
+        {draft.imageCandidates.length === 0 ? (
+          <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            No images found in this org&apos;s emails — upload manually in
+            Sources → Organizations.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {draft.imageCandidates.map((candidate) => {
+              const isAvatar = avatarUrl === candidate.url;
+              const isCover = coverUrl === candidate.url;
+              return (
+                <div
+                  key={candidate.url}
+                  className={[
+                    "flex flex-col gap-2 rounded-xl border p-2",
+                    isAvatar || isCover
+                      ? "border-[var(--color-primary-700)]"
+                      : "border-[var(--color-border)]",
+                  ].join(" ")}
+                >
+                  <img
+                    src={candidate.url}
+                    alt={candidate.alt ?? "Image from email"}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="h-20 w-full rounded-lg bg-[var(--color-neutral-100)] object-contain"
+                  />
+                  <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    ×{candidate.occurrences}
+                    {candidate.alt ? ` · ${candidate.alt}` : ""}
+                  </div>
+                  <div className="flex gap-1">
+                    <ImagePickButton
+                      selected={isAvatar}
+                      onClick={() =>
+                        setAvatarUrl(isAvatar ? null : candidate.url)
+                      }
+                    >
+                      Avatar
+                    </ImagePickButton>
+                    <ImagePickButton
+                      selected={isCover}
+                      onClick={() =>
+                        setCoverUrl(isCover ? null : candidate.url)
+                      }
+                    >
+                      Cover
+                    </ImagePickButton>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Btn primary onClick={publish} disabled={busy || !anySelected}>
+          {busy ? "Working…" : "Publish selected"}
+        </Btn>
+        <Btn onClick={onReparse} disabled={busy || generating}>
+          {generating ? "Generating…" : "Reparse"}
+        </Btn>
+        <Btn danger onClick={discard} disabled={busy}>
+          Discard
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+function CurrentImage({
+  label,
+  url,
+  round,
+}: {
+  label: string;
+  url: string | undefined;
+  round?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+      <span className="font-semibold tracking-widest uppercase">{label}</span>
+      {url ? (
+        <img
+          src={url}
+          alt={label}
+          className={
+            round
+              ? "size-10 rounded-full object-cover"
+              : "h-10 w-24 rounded-lg object-cover"
+          }
+        />
+      ) : (
+        <span>None</span>
+      )}
+    </div>
+  );
+}
+
+function ImagePickButton({
+  selected,
+  onClick,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={[
+        "flex-1 rounded-md px-2 py-1 text-[length:var(--font-size-body3)] font-semibold transition-colors",
+        selected
+          ? "bg-[var(--color-primary-700)] text-white"
+          : "border border-[var(--color-border)] text-[color:var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]",
+      ].join(" ")}
+    >
+      {children}
+    </button>
   );
 }
 
