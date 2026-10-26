@@ -362,3 +362,36 @@ export const eventDocValidator = v.object({
   createdAt: v.optional(v.number()),
   updatedAt: v.optional(v.number()),
 });
+
+export const orgProfileDraftDocValidator = v.object({
+  _id: v.id("orgProfileDrafts"),
+  _creationTime: v.number(),
+  orgId: v.id("orgs"),
+  status: v.union(
+    v.literal("draft"),
+    v.literal("published"),
+    v.literal("discarded"),
+  ),
+  description: v.optional(v.string()),
+  loopSummary: v.optional(v.string()),
+  tags: v.array(v.string()),
+  websiteUrl: v.optional(v.string()),
+  email: v.optional(v.string()),
+  imageCandidates: v.array(
+    v.object({
+      url: v.string(),
+      alt: v.optional(v.string()),
+      occurrences: v.number(),
+    }),
+  ),
+  suggestedAvatarUrl: v.optional(v.string()),
+  suggestedCoverUrl: v.optional(v.string()),
+  sourceMessageIds: v.array(v.id("listservMessages")),
+  messagesUsed: v.number(),
+  confidence: v.number(),
+  warnings: v.array(v.string()),
+  provider: v.union(v.literal("openai"), v.literal("gemini")),
+  model: v.string(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
