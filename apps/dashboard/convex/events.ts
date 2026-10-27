@@ -131,9 +131,7 @@ function isPublished(event: Doc<"events">): boolean {
   return event.visibility !== "draft" && event.visibility !== "hidden";
 }
 
-function getEventTimestamp(
-  event: Doc<"events">
-): number {
+function getEventTimestamp(event: Doc<"events">): number {
   const starts = event.dates
     .filter((date) => date.type === "start" || date.type === "single")
     .map((date) => date.timestamp);
@@ -145,9 +143,7 @@ function getEventTimestamp(
           .filter((date) => date.type === "deadline")
           .map((date) => date.timestamp);
 
-  return dates.length > 0
-    ? Math.min(...dates)
-    : event._creationTime;
+  return dates.length > 0 ? Math.min(...dates) : event._creationTime;
 }
 
 async function hydrateEvent(
@@ -332,10 +328,9 @@ export const feed = authedQuery({
     }
 
     subscribedEvents.sort((a, b) => {
-      const byScheduledDate =
-        getEventTimestamp(a) - getEventTimestamp(b);
+      const byScheduledDate = getEventTimestamp(a) - getEventTimestamp(b);
       if (byScheduledDate !== 0) return byScheduledDate;
-        return ( a.title.localeCompare(b.title) || a._id.localeCompare(b._id));
+      return a.title.localeCompare(b.title) || a._id.localeCompare(b._id);
     });
     const subscribedSlice = subscribedEvents.slice(0, targetItems);
 
