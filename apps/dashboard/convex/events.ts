@@ -131,6 +131,21 @@ function isPublished(event: Doc<"events">): boolean {
   return event.visibility !== "draft" && event.visibility !== "hidden";
 }
 
+function getEventTimestamp(event: Doc<"events">): number {
+  const starts = event.dates
+    .filter((date) => date.type === "start" || date.type === "single")
+    .map((date) => date.timestamp);
+
+  const dates =
+    starts.length > 0
+      ? starts
+      : event.dates
+          .filter((date) => date.type === "deadline")
+          .map((date) => date.timestamp);
+
+  return dates.length > 0 ? Math.min(...dates) : event._creationTime;
+}
+
 async function hydrateEvent(
   ctx: QueryCtx,
   event: Doc<"events">,
@@ -312,7 +327,11 @@ export const feed = authedQuery({
       }
     }
 
-    subscribedEvents.sort((a, b) => b._creationTime - a._creationTime);
+    subscribedEvents.sort((a, b) => {
+      const byScheduledDate = getEventTimestamp(a) - getEventTimestamp(b);
+      if (byScheduledDate !== 0) return byScheduledDate;
+      return a.title.localeCompare(b.title) || a._id.localeCompare(b._id);
+    });
     const subscribedSlice = subscribedEvents.slice(0, targetItems);
 
     const remaining = targetItems - subscribedSlice.length;
