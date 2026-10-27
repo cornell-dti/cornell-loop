@@ -335,7 +335,7 @@ export const feed = authedQuery({
       const byScheduledDate =
         getEventTimestamp(a) - getEventTimestamp(b);
       if (byScheduledDate !== 0) return byScheduledDate;
-        return a._id.localeCompare(b._id);
+        return ( a.title.localeCompare(b.title) || a._id.localeCompare(b._id));
     });
     const subscribedSlice = subscribedEvents.slice(0, targetItems);
 
