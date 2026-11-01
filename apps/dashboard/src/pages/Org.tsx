@@ -27,7 +27,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
@@ -135,6 +135,16 @@ function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
 }
 
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
+}
+
 // ─── OrgTagPill ───────────────────────────────────────────────────────────────
 
 interface OrgTagSpec {
@@ -178,7 +188,7 @@ function OrgTagPill({ label, variant }: OrgTagSpec) {
 // ─── Page-level loading & not-found shells ───────────────────────────────────
 
 function ShellWithSidebar({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   return (
     <div
       className={[
@@ -187,7 +197,7 @@ function ShellWithSidebar({ children }: { children: React.ReactNode }) {
       ].join(" ")}
     >
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
       <main
         className={[
@@ -265,6 +275,7 @@ function NotFoundState({ slug }: { slug: string | undefined }) {
 export function Org() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
 
   const orgQuery = useQuery(api.orgs.getBySlug, slug ? { slug } : "skip");
   const eventsQuery = useQuery(
@@ -490,7 +501,7 @@ export function Org() {
     >
       {/* ── Left sidebar — design system ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
 
       {/* ── Main content ── */}

@@ -53,6 +53,46 @@ export default defineSchema({
     .searchIndex("search_orgs_name", { searchField: "name" })
     .searchIndex("search_orgs_desc", { searchField: "description" }),
 
+  // AI-proposed org profile fields, built from an org's listserv mail. Nothing
+  // here reaches `orgs` until an admin publishes it — the same draft-first
+  // flow as parsed events. At most one row per org is in `draft` status;
+  // rerunning the parser replaces it in place.
+  orgProfileDrafts: defineTable({
+    orgId: v.id("orgs"),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("published"),
+      v.literal("discarded"),
+    ),
+    description: v.optional(v.string()),
+    loopSummary: v.optional(v.string()),
+    tags: v.array(v.string()),
+    websiteUrl: v.optional(v.string()),
+    email: v.optional(v.string()),
+    // Images found in the org's email HTML. The model's pick for each slot is
+    // only a suggestion; the admin chooses on publish, and the chosen image is
+    // copied into Convex storage so a dead hotlink can't break the org page.
+    imageCandidates: v.array(
+      v.object({
+        url: v.string(),
+        alt: v.optional(v.string()),
+        occurrences: v.number(),
+      }),
+    ),
+    suggestedAvatarUrl: v.optional(v.string()),
+    suggestedCoverUrl: v.optional(v.string()),
+    sourceMessageIds: v.array(v.id("listservMessages")),
+    messagesUsed: v.number(),
+    confidence: v.number(),
+    warnings: v.array(v.string()),
+    provider: v.union(v.literal("openai"), v.literal("gemini")),
+    model: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org_and_status", ["orgId", "status"])
+    .index("by_status", ["status"]),
+
   // Denormalized event<->org join so feed can be assembled per followed org
   eventOrgs: defineTable({
     eventId: v.id("events"),
@@ -113,6 +153,9 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     source: v.union(
       v.literal("d1_discovery"),
+      // The official lists.cornell.edu index. Authoritative about which lists
+      // exist, but silent about whether students actually read them.
+      v.literal("simplelists_directory"),
       v.literal("manual"),
       v.literal("import"),
     ),
@@ -124,12 +167,20 @@ export default defineSchema({
     confidence: v.number(),
     popularity: v.optional(v.number()),
     matchedReasons: v.array(v.string()),
+    // The directory's human-written blurb. Far more informative than
+    // inferDisplayName's local-part mangling, so it is kept verbatim.
+    directoryDescription: v.optional(v.string()),
+    subscribeUrl: v.optional(v.string()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_email", ["email"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    // Directory discovery adds ~600 low-confidence rows. Reading the review
+    // queue by creation time would bury every D1 candidate behind them, so the
+    // dashboard reads highest-confidence-first within a status instead.
+    .index("by_status_and_confidence", ["status", "confidence"]),
 
   listservs: defineTable({
     name: v.string(),
@@ -139,6 +190,8 @@ export default defineSchema({
     organizationId: v.optional(v.id("orgs")),
     sourceType: v.optional(
       v.union(
+        v.literal("simplelists"),
+        // Cornell retired Lyris in 2026. Kept so existing rows still validate.
         v.literal("lyris"),
         v.literal("campus_groups"),
         v.literal("newsletter"),
@@ -168,6 +221,12 @@ export default defineSchema({
     ),
     joinStrategy: v.optional(
       v.union(
+        v.literal("cornell_simplelists"),
+        // Targets <LIST>-manager@lists.cornell.edu for closed or
+        // approval-required lists, where self-subscribe is unavailable.
+        v.literal("cornell_simplelists_owner_contact"),
+        // Lyris strategies are retained so existing rows still validate; no
+        // new row is ever classified into them. See lib/legacyLyris.ts.
         v.literal("cornell_lyris"),
         v.literal("cornell_lyris_owner_contact"),
         v.literal("campus_groups"),
@@ -181,12 +240,19 @@ export default defineSchema({
     ownerRecipient: v.optional(v.string()),
     joinSubject: v.optional(v.string()),
     joinBody: v.optional(v.string()),
+    // Public Simplelists subscribe page for this list. Populated by detection
+    // for lists.cornell.edu rows; the admin UI always renders it as a
+    // clickable fallback when the auto-POST fails.
+    subscribeUrl: v.optional(v.string()),
     joinInstructions: v.optional(v.string()),
     joinConfidence: v.optional(v.number()),
     joinDetectionReasons: v.optional(v.array(v.string())),
     joinDetectedAt: v.optional(v.number()),
+    // approveCandidate copies the candidate's source onto the row it creates,
+    // so this union has to stay a superset of listservCandidates.source.
     source: v.union(
       v.literal("d1_discovery"),
+      v.literal("simplelists_directory"),
       v.literal("manual"),
       v.literal("import"),
     ),
@@ -240,7 +306,10 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_received_at", ["receivedAt"])
     .index("by_confirmation_cleared_at", ["confirmationClearedAt"])
-    .index("by_processing_status", ["processingStatus"]),
+    .index("by_processing_status", ["processingStatus"])
+    // assignSender backfills every message from a sender onto the newly
+    // assigned listserv/org; without this it was a full-table scan.
+    .index("by_sender_email", ["senderEmail"]),
 
   listservIngestionState: defineTable({
     key: v.string(),
@@ -257,7 +326,10 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   discoveryRuns: defineTable({
-    source: v.literal("initial_sender_dataset"),
+    source: v.union(
+      v.literal("initial_sender_dataset"),
+      v.literal("simplelists_directory"),
+    ),
     status: v.union(
       v.literal("running"),
       v.literal("completed"),
@@ -274,10 +346,15 @@ export default defineSchema({
   joinAttempts: defineTable({
     listservId: v.id("listservs"),
     status: v.union(v.literal("sent"), v.literal("failed")),
-    recipient: v.string(),
-    subject: v.string(),
-    body: v.string(),
+    // Web-form attempts have no recipient/subject/body, so the three
+    // email-shaped fields are optional. Existing rows all carry them.
+    recipient: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
     gmailMessageId: v.optional(v.string()),
+    method: v.optional(v.union(v.literal("email"), v.literal("web_form"))),
+    httpStatus: v.optional(v.number()),
+    subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
   })
@@ -317,7 +394,11 @@ export default defineSchema({
     messagesScanned: v.number(),
     messagesParsed: v.number(),
     eventsCreated: v.number(),
+    // Kept for existing rows and always written as 0 going forward: the
+    // parser never actually updates an existing event on a dedupe hit, it
+    // skips storing the new one. See eventsSkippedDuplicate below.
     eventsUpdated: v.number(),
+    eventsSkippedDuplicate: v.optional(v.number()),
     messagesIgnored: v.number(),
     error: v.optional(v.string()),
   }).index("by_started_at", ["startedAt"]),
