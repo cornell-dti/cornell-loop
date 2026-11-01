@@ -50,6 +50,46 @@ export default defineSchema({
     .searchIndex("search_orgs_name", { searchField: "name" })
     .searchIndex("search_orgs_desc", { searchField: "description" }),
 
+  // AI-proposed org profile fields, built from an org's listserv mail. Nothing
+  // here reaches `orgs` until an admin publishes it — the same draft-first
+  // flow as parsed events. At most one row per org is in `draft` status;
+  // rerunning the parser replaces it in place.
+  orgProfileDrafts: defineTable({
+    orgId: v.id("orgs"),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("published"),
+      v.literal("discarded"),
+    ),
+    description: v.optional(v.string()),
+    loopSummary: v.optional(v.string()),
+    tags: v.array(v.string()),
+    websiteUrl: v.optional(v.string()),
+    email: v.optional(v.string()),
+    // Images found in the org's email HTML. The model's pick for each slot is
+    // only a suggestion; the admin chooses on publish, and the chosen image is
+    // copied into Convex storage so a dead hotlink can't break the org page.
+    imageCandidates: v.array(
+      v.object({
+        url: v.string(),
+        alt: v.optional(v.string()),
+        occurrences: v.number(),
+      }),
+    ),
+    suggestedAvatarUrl: v.optional(v.string()),
+    suggestedCoverUrl: v.optional(v.string()),
+    sourceMessageIds: v.array(v.id("listservMessages")),
+    messagesUsed: v.number(),
+    confidence: v.number(),
+    warnings: v.array(v.string()),
+    provider: v.union(v.literal("openai"), v.literal("gemini")),
+    model: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_org_and_status", ["orgId", "status"])
+    .index("by_status", ["status"]),
+
   // Denormalized event<->org join so feed can be assembled per followed org
   eventOrgs: defineTable({
     eventId: v.id("events"),
