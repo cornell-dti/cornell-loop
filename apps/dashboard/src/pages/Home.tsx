@@ -32,7 +32,6 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { SideBar } from "@app/ui";
 import type { SideBarItemId } from "@app/ui";
-import { Tag } from "@app/ui";
 import { SearchBar } from "@app/ui";
 import { DashboardPost } from "@app/ui";
 import type { DashboardPostProps, Organization } from "@app/ui";
@@ -50,6 +49,7 @@ import {
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
 import { SearchOverlay } from "../components/SearchOverlay";
+import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
 import {
   overlayLabelAt,
   overlayRowCount,
@@ -65,28 +65,12 @@ const SUGGESTION_DEBOUNCE_MS = 250;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export interface FeedTagItem {
-  /** Display label for the filter tag, e.g. "Recruitment". */
-  label: string;
-}
-
 export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
   /** Currently active navigation item. Defaults to 'home'. */
   activeNavItem?: SideBarItemId;
   /** Called with the nav item id when a sidebar tab is clicked. */
   onNavigate?: (id: SideBarItemId) => void;
-
-  // ── Tag filter bar ──
-  /**
-   * List of tags shown in the horizontal filter bar.
-   * Defaults to the tags from the Figma spec.
-   */
-  feedTags?: FeedTagItem[];
-  /** Called with the tag label when a filter tag is clicked. */
-  onTagClick?: (label: string) => void;
-  /** Called when the "+" add-tag button is clicked. */
-  onAddTag?: () => void;
 
   // ── Posts ──
   /** Feed posts rendered using the DashboardPost component. */
@@ -138,14 +122,6 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
 // the `filteredPosts` useMemo below would recompute unnecessarily.
 const EMPTY_POSTS: DashboardPostProps[] = [];
 
-const DEFAULT_FEED_TAGS: FeedTagItem[] = [
-  { label: "Recruitment" },
-  { label: "Early Career" },
-  { label: "Tech" },
-  { label: "Mentorship" },
-  { label: "Just for Fun" },
-];
-
 // ─── Home ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -174,9 +150,6 @@ export function Home(props: HomeProps) {
 function HomeInner({
   activeNavItem = "home",
   onNavigate,
-  feedTags = DEFAULT_FEED_TAGS,
-  onTagClick,
-  onAddTag,
   posts: postsOverride,
   searchValue,
   onSearchChange,
@@ -351,13 +324,6 @@ function HomeInner({
   // Selected filter tag — clicking a tag filters the feed to posts carrying
   // that tag; clicking the active tag again clears the filter.
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const handleTagClick = useCallback(
-    (label: string) => {
-      setSelectedTag((prev) => (prev === label ? null : label));
-      onTagClick?.(label);
-    },
-    [onTagClick],
-  );
 
   const [focused, setFocused] = useState<boolean>(false);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
@@ -610,31 +576,10 @@ function HomeInner({
             </div>
           )}
 
-          {/* Tag filter bar */}
-          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-            {feedTags.map((tag) => (
-              <Tag
-                key={tag.label}
-                color={selectedTag === tag.label ? "blue" : "neutral"}
-                onClick={() => handleTagClick(tag.label)}
-                aria-pressed={selectedTag === tag.label}
-                className="shrink-0 cursor-pointer"
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                {tag.label}
-              </Tag>
-            ))}
-
-            {/* "+" tag — opens tag picker (Figma node 263:3552) */}
-            <Tag
-              color="neutral"
-              onClick={onAddTag}
-              className="shrink-0 cursor-pointer"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              +
-            </Tag>
-          </div>
+          <FeedTagFilterBar
+            selectedTag={selectedTag}
+            onSelectedTagChange={setSelectedTag}
+          />
         </div>
 
         {/* Horizontal divider — Figma node 263:3557: 1px, --color-border */}

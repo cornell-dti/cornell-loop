@@ -2,22 +2,24 @@
  * SortByTags — reusable sort/filter tag strip.
  *
  * Used in BookmarkView and SearchView. Manages:
- *   • Active tag toggling (click to filter; active tags use primary/orange bg)
- *   • Custom tag addition via a "+" inline input (press Enter or blur to add)
+ *   • Active tag toggling (click to filter; active tags use the blue bg)
+ *   • "+" opens a picker of canonical tags not yet in the strip; click one to
+ *     pin it (tags are limited to the shared set in `convex/lib/tags.ts`)
  *   • Edit mode via pencil icon: Tag's built-in onDismiss renders the design-
- *     system × button; click × to delete the tag
+ *     system × button; click × to unpin the tag
  */
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Tag } from "@app/ui";
 import EditIcon from "@app/ui/assets/edit_icon.svg?react";
+import { CANONICAL_TAGS, type CanonicalTag } from "@app/convex/lib/tags";
 
 export interface SortByTagsProps {
-  tags: string[];
+  tags: CanonicalTag[];
   activeTags: string[];
-  onTagToggle: (tag: string) => void;
-  onTagAdd: (tag: string) => void;
-  onTagRemove: (tag: string) => void;
+  onTagToggle: (tag: CanonicalTag) => void;
+  onTagAdd: (tag: CanonicalTag) => void;
+  onTagRemove: (tag: CanonicalTag) => void;
 }
 
 export function SortByTags({
@@ -28,96 +30,92 @@ export function SortByTags({
   onTagRemove,
 }: SortByTagsProps) {
   const [isEditMode, setIsEditMode] = useState(false);
-  const [showInput, setShowInput] = useState(false);
-  const [inputValue, setInputValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
-  const commitNewTag = () => {
-    const trimmed = inputValue.trim();
-    if (trimmed && !tags.includes(trimmed)) {
-      onTagAdd(trimmed);
-    }
-    setInputValue("");
-    setShowInput(false);
-  };
-
-  const handlePlusClick = () => {
-    setShowInput(true);
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
+  const unpinned = CANONICAL_TAGS.filter((t) => !tags.includes(t));
 
   return (
-    <div className="flex flex-wrap items-center gap-[9px]">
-      {tags.map((label) => {
-        const isActive = activeTags.includes(label);
+    <div className="flex flex-col gap-[var(--space-2)]">
+      <div className="flex flex-wrap items-center gap-[9px]">
+        {tags.map((label) => {
+          const isActive = activeTags.includes(label);
 
-        return (
-          <Tag
-            key={label}
-            color={isActive ? "blue" : "neutral"}
-            className={!isEditMode ? "cursor-pointer" : undefined}
-            onClick={!isEditMode ? () => onTagToggle(label) : undefined}
-            // In edit mode: show the design-system × dismiss button
-            onDismiss={isEditMode ? () => onTagRemove(label) : undefined}
-            dismissLabel={`Remove ${label}`}
-            aria-pressed={!isEditMode ? isActive : undefined}
+          return (
+            <Tag
+              key={label}
+              color={isActive ? "blue" : "neutral"}
+              className={!isEditMode ? "cursor-pointer" : undefined}
+              onClick={!isEditMode ? () => onTagToggle(label) : undefined}
+              // In edit mode: show the design-system × dismiss button
+              onDismiss={isEditMode ? () => onTagRemove(label) : undefined}
+              dismissLabel={`Remove ${label}`}
+              aria-pressed={!isEditMode ? isActive : undefined}
+            >
+              {label}
+            </Tag>
+          );
+        })}
+
+        {/* "+" opens the canonical tag picker — hidden while editing */}
+        {!isEditMode && unpinned.length > 0 && (
+          <button
+            type="button"
+            aria-label="Add filter tag"
+            aria-expanded={showPicker}
+            onClick={() => setShowPicker((open) => !open)}
+            className="cursor-pointer"
           >
-            {label}
-          </Tag>
-        );
-      })}
+            <Tag color={showPicker ? "blue" : "neutral"}>+</Tag>
+          </button>
+        )}
 
-      {/* "+" add new tag — hidden while editing */}
-      {!isEditMode && !showInput && (
-        <Tag
-          color="neutral"
-          className="cursor-pointer"
-          onClick={handlePlusClick}
-          aria-label="Add custom tag"
-        >
-          +
-        </Tag>
-      )}
-
-      {/* Inline custom tag input */}
-      {showInput && (
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitNewTag();
-            if (e.key === "Escape") {
-              setInputValue("");
-              setShowInput(false);
-            }
+        {/* Pencil / edit-mode toggle */}
+        <button
+          type="button"
+          aria-label={isEditMode ? "Done editing tags" : "Edit filter tags"}
+          aria-pressed={isEditMode}
+          onClick={() => {
+            setIsEditMode((e) => !e);
+            setShowPicker(false);
           }}
-          onBlur={commitNewTag}
-          placeholder="New tag…"
           className={[
-            "h-[var(--space-6)] w-[90px] rounded-[var(--radius-button)]",
-            "border border-[var(--color-primary-700)] bg-white",
-            "px-[var(--space-2)] text-[length:var(--font-size-body3)]",
-            "font-[family-name:var(--font-body)] font-normal",
-            "text-[var(--color-neutral-900)] outline-none",
+            "size-4 shrink-0 cursor-pointer transition-opacity",
+            isEditMode ? "opacity-100" : "opacity-60 hover:opacity-100",
           ].join(" ")}
-        />
-      )}
+        >
+          <EditIcon className="size-full" />
+        </button>
+      </div>
 
-      {/* Pencil / edit-mode toggle */}
-      <button
-        type="button"
-        aria-label={isEditMode ? "Done editing tags" : "Edit filter tags"}
-        aria-pressed={isEditMode}
-        onClick={() => setIsEditMode((e) => !e)}
-        className={[
-          "size-4 shrink-0 cursor-pointer transition-opacity",
-          isEditMode ? "opacity-100" : "opacity-60 hover:opacity-100",
-        ].join(" ")}
-      >
-        <EditIcon className="size-full" />
-      </button>
+      {/* Canonical tag picker */}
+      {showPicker && !isEditMode && unpinned.length > 0 && (
+        <div
+          role="group"
+          aria-label="Add filter tag"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setShowPicker(false);
+          }}
+          className={[
+            "flex flex-wrap gap-[var(--space-2)] p-[var(--space-2)]",
+            "rounded-[var(--radius-card)] border border-[var(--color-border)]",
+            "bg-[var(--color-surface)]",
+          ].join(" ")}
+        >
+          {unpinned.map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                onTagAdd(label);
+                if (unpinned.length === 1) setShowPicker(false);
+              }}
+              className="cursor-pointer"
+            >
+              <Tag color="neutral">{label}</Tag>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

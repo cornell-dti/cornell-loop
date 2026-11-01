@@ -13,6 +13,9 @@ export default defineSchema({
     gradYear: v.optional(v.string()),
     minor: v.optional(v.string()),
     interests: v.array(v.string()),
+    // Tags pinned to the feed filter bar (dashboard + extension). Unset means
+    // the user hasn't customised it, so clients show DEFAULT_FILTER_TAGS.
+    filterTags: v.optional(v.array(v.string())),
     onboardingCompletedAt: v.optional(v.number()),
     isSeed: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),

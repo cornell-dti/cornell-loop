@@ -18,7 +18,6 @@ import {
   SideBar,
   SearchBar,
   SearchPanel,
-  Tag,
   DashboardPost,
   Button,
 } from "@app/ui";
@@ -38,12 +37,9 @@ import {
   stampFollowState,
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
+import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
-
-export interface FeedTagItem {
-  label: string;
-}
 
 export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
@@ -54,11 +50,6 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   onSearchClear?: () => void;
-
-  // ── Tag filter bar ──
-  feedTags?: FeedTagItem[];
-  onTagClick?: (label: string) => void;
-  onAddTag?: () => void;
 
   // ── Bookmarked posts ──
   posts?: DashboardPostProps[];
@@ -71,13 +62,8 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   onOrgClick?: (org: Organization) => void;
 }
 
-const DEFAULT_FEED_TAGS: FeedTagItem[] = [
-  { label: "Recruitment" },
-  { label: "Early Career" },
-  { label: "Tech" },
-  { label: "Mentorship" },
-  { label: "Just for Fun" },
-];
+// Stable empty fallback so the filtered-posts memo doesn't recompute each render.
+const EMPTY_POSTS: DashboardPostProps[] = [];
 
 // ─── Bookmarks ────────────────────────────────────────────────────────────────
 
@@ -87,9 +73,6 @@ export function Bookmarks({
   searchValue,
   onSearchChange,
   onSearchClear,
-  feedTags = DEFAULT_FEED_TAGS,
-  onTagClick,
-  onAddTag,
   posts: postsOverride,
   rsvpGroups: rsvpGroupsOverride,
   clubs: clubsOverride,
@@ -206,7 +189,17 @@ export function Bookmarks({
     [followedOrgs, toggleFollow],
   );
 
-  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  const posts: DashboardPostProps[] =
+    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
+
+  // Selected filter tag — narrows the bookmarks to posts carrying that tag.
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const visiblePosts = useMemo(() => {
+    if (!selectedTag) return posts;
+    return posts.filter((post) =>
+      post.tags?.some((tag) => tag.label === selectedTag),
+    );
+  }, [posts, selectedTag]);
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -276,27 +269,10 @@ export function Bookmarks({
             className="w-full shrink-0"
           />
 
-          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-            {feedTags.map((tag) => (
-              <Tag
-                key={tag.label}
-                color="neutral"
-                onClick={() => onTagClick?.(tag.label)}
-                className="shrink-0 cursor-pointer"
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                {tag.label}
-              </Tag>
-            ))}
-            <Tag
-              color="neutral"
-              onClick={onAddTag}
-              className="shrink-0 cursor-pointer"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              +
-            </Tag>
-          </div>
+          <FeedTagFilterBar
+            selectedTag={selectedTag}
+            onSelectedTagChange={setSelectedTag}
+          />
         </div>
 
         {/* Divider */}
@@ -313,7 +289,7 @@ export function Bookmarks({
           )}
           {feedLoading && <BookmarksLoadingState />}
           {!feedLoading && feedEmpty && <BookmarksEmptyState />}
-          {posts.map((post, i) => (
+          {visiblePosts.map((post, i) => (
             <DashboardPost
               key={i}
               {...post}

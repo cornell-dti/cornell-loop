@@ -15,6 +15,11 @@ import {
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
+import {
+  CANONICAL_TAGS,
+  normalizeTags,
+  type CanonicalTag,
+} from "../../convex/lib/tags";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -4126,7 +4131,9 @@ function DraftCard({
     event.location?.isVirtual ?? false,
   );
   const [links, setLinks] = useState<EventDoc["links"]>(event.links);
-  const [tagsRaw, setTagsRaw] = useState(event.tags.join(", "));
+  const [tags, setTags] = useState<CanonicalTag[]>(() =>
+    normalizeTags(event.tags),
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
 
   function startEdit() {
@@ -4140,17 +4147,12 @@ function DraftCard({
     setLocBuildingCode(event.location?.buildingCode ?? "");
     setLocIsVirtual(event.location?.isVirtual ?? false);
     setLinks(event.links);
-    setTagsRaw(event.tags.join(", "));
+    setTags(normalizeTags(event.tags));
     setSaveError(null);
     setEditing(true);
   }
 
   function save() {
-    const tags = tagsRaw
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
     // Drop blank rows (e.g. an unfilled "Add link") and reject anything left
     // that isn't a well-formed http(s) URL. The mutation re-validates this
     // server-side too — this is just for immediate feedback.
@@ -4471,12 +4473,8 @@ function DraftCard({
             </div>
           </div>
 
-          {/* Tags */}
-          <Field
-            label="Tags (comma-separated)"
-            value={tagsRaw}
-            onChange={setTagsRaw}
-          />
+          {/* Tags — restricted to the canonical set so feed filters match */}
+          <TagPicker selected={tags} onChange={setTags} />
         </div>
       )}
 
@@ -4565,6 +4563,53 @@ function Btn({
     <button {...props} className={`${base} ${variant} ${className ?? ""}`}>
       {children}
     </button>
+  );
+}
+
+/**
+ * Toggle chips for every canonical tag. Adding a tag rebuilds the selection
+ * from CANONICAL_TAGS rather than appending, so the saved order always stays
+ * canonical regardless of click order.
+ */
+function TagPicker({
+  selected,
+  onChange,
+}: {
+  selected: CanonicalTag[];
+  onChange: (next: CanonicalTag[]) => void;
+}) {
+  return (
+    <fieldset className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)]">
+      <legend className="mb-1">Tags</legend>
+      <div className="flex flex-wrap gap-1.5">
+        {CANONICAL_TAGS.map((tag) => {
+          const active = selected.includes(tag);
+          return (
+            <button
+              key={tag}
+              type="button"
+              aria-pressed={active}
+              onClick={() =>
+                onChange(
+                  active
+                    ? selected.filter((t) => t !== tag)
+                    : CANONICAL_TAGS.filter(
+                        (t) => t === tag || selected.includes(t),
+                      ),
+                )
+              }
+              className={`rounded-md border px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold transition-colors ${
+                active
+                  ? "border-[var(--color-primary-700)] bg-[var(--color-primary-700)] text-[color:var(--color-text-inverse)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-neutral-100)]"
+              }`}
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 
