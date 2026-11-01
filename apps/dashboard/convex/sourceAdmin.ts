@@ -429,13 +429,11 @@ export const assignSender = mutation({
     // Every From address in the group, plus the identity itself for direct
     // mail where they are the same thing.
     const backfillAddresses = [...new Set([senderEmail, ...groupSenders])];
-    for (const address of backfillAddresses) {
-      await backfillMessagesForSender(ctx, address, {
-        listservId,
-        organizationId,
-        listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
-      });
-    }
+    await startSenderBackfills(ctx, backfillAddresses, {
+      listservId,
+      organizationId,
+      listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
+    });
 
     return { organizationId, listservId };
   },
@@ -499,13 +497,11 @@ export const ignoreSender = mutation({
         ...(args.senderEmails ?? []).map(normalizeEmail),
       ]),
     ];
-    for (const address of backfillAddresses) {
-      await backfillMessagesForSender(ctx, address, {
-        listservId,
-        organizationId: existing?.organizationId,
-        listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
-      });
-    }
+    await startSenderBackfills(ctx, backfillAddresses, {
+      listservId,
+      organizationId: existing?.organizationId,
+      listAddress: args.listAddress ? normalizeEmail(args.listAddress) : null,
+    });
 
     return null;
   },
@@ -816,7 +812,7 @@ async function getOrCreateOrg(
 const BACKFILL_BATCH_SIZE = 200;
 
 /**
- * Attributes a sender's not-yet-attributed mail to a listserv and org.
+ * Attributes a group's not-yet-attributed mail to a listserv and org.
  *
  * Only touches messages with no `listservId`: a message that already resolved
  * to some other source is correctly attributed there, and re-pointing it would
@@ -824,26 +820,37 @@ const BACKFILL_BATCH_SIZE = 200;
  * is further narrowed to mail addressed to that list, so assigning a student
  * who posts to two lists does not drag the other list's mail along.
  *
- * The first page runs inline so a small source is fully assigned by the time
- * the mutation returns; anything larger continues in scheduled batches.
+ * Only the first address is drained inline, so a single-address group is fully
+ * assigned by the time the mutation returns. The rest start as their own
+ * scheduled mutations, because Convex permits one paginated query per function
+ * execution and {@link runSenderBackfillBatch} spends it — draining a list
+ * group's 62 students in a loop threw `ran multiple paginated queries` and
+ * failed the whole assignment.
  *
  * `organizationId` is optional because `ignoreSender` reuses this to park an
  * ignored group's mail on its paused tombstone, and a tombstone has no org.
  */
-async function backfillMessagesForSender(
+async function startSenderBackfills(
   ctx: MutationCtx,
-  senderEmail: string,
+  senderEmails: string[],
   target: {
     listservId: Id<"listservs">;
     organizationId?: Id<"orgs">;
     listAddress: string | null;
   },
 ) {
-  await runSenderBackfillBatch(ctx, {
-    senderEmail,
-    ...target,
-    cursor: null,
-  });
+  for (const [index, senderEmail] of senderEmails.entries()) {
+    const batch = { senderEmail, ...target, cursor: null };
+    if (index === 0) {
+      await runSenderBackfillBatch(ctx, batch);
+      continue;
+    }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.sourceAdmin.backfillSenderMessages,
+      batch,
+    );
+  }
 }
 
 type SenderBackfillArgs = {
