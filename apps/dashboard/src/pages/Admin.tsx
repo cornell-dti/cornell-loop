@@ -4566,6 +4566,11 @@ function Btn({
   );
 }
 
+/**
+ * Toggle chips for every canonical tag. Adding a tag rebuilds the selection
+ * from CANONICAL_TAGS rather than appending, so the saved order always stays
+ * canonical regardless of click order.
+ */
 function TagPicker({
   selected,
   onChange,

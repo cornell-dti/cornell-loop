@@ -40,6 +40,8 @@ export function useFilterTags(): {
       if (!signedIn) return;
       saveFilterTags({ tags: next }).catch((err: unknown) => {
         console.error("Failed to save filter tags", err);
+        // Fall back to the saved tags, unless a newer edit has replaced this one.
+        setLocalTags((prev) => (prev === next ? null : prev));
       });
     },
     [saveFilterTags, signedIn],

@@ -107,6 +107,11 @@ const TAG_ALIASES: Readonly<Record<string, CanonicalTag>> = {
   science: "Research",
 };
 
+/**
+ * Lower-cased canonical tag → canonical tag, for case-insensitive lookup.
+ * Assumes no two CANONICAL_TAGS differ only by case; if they did, the later
+ * entry would silently shadow the earlier one.
+ */
 const CANONICAL_BY_LOWER: ReadonlyMap<string, CanonicalTag> = new Map(
   CANONICAL_TAGS.map((tag) => [tag.toLowerCase(), tag]),
 );
