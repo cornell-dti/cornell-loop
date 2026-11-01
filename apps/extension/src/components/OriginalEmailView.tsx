@@ -18,7 +18,8 @@ const EMAIL_TITLE =
 const EMAIL_BODY =
   "font-[family-name:var(--font-body)] font-normal " +
   "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-  "tracking-[var(--letter-spacing-body2)] text-[#5f5f5f]";
+  "tracking-[var(--letter-spacing-body2)] text-[#5f5f5f]" +
+  "whitespace-pre-line break-words [overflow-wrap:anywhere]";
 
 export interface OriginalEmailViewProps {
   /**
@@ -104,7 +105,7 @@ export default function OriginalEmailView({
               </p>
 
               {/* Body paragraphs — empty strings become blank-line spacers */}
-              <div className="flex flex-col">
+              <div className="flex flex-col gap-[var(--space-2)]">
                 {paragraphs.map((line, i) =>
                   line === "" ? (
                     <div

@@ -192,14 +192,16 @@ function ClubCard({ org, isFollowing, onToggle, pending }: ClubCardProps) {
   return (
     <li
       className={[
-        "flex flex-col gap-[var(--space-3)]",
+        "flex min-w-0 flex-col gap-[var(--space-3)]",
         "rounded-[var(--radius-card)] bg-[var(--color-surface)]",
         "border border-[var(--color-border)]",
         "px-[var(--space-4)] py-[var(--space-4)]",
         "shadow-[var(--shadow-1)]",
       ].join(" ")}
     >
-      <div className="flex items-start gap-[var(--space-3)]">
+      {/* wrap-anywhere is inherited by Avatar's label so long org names
+          (including single unbroken words) wrap instead of overflowing. */}
+      <div className="flex min-w-0 items-start gap-[var(--space-3)] wrap-anywhere">
         <Avatar avatars={[{ name: org.name, src: org.avatarUrl }]} />
       </div>
 
