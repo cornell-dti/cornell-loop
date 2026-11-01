@@ -70,6 +70,7 @@ export interface DashboardEventCardProps extends ComponentPropsWithoutRef<"artic
    */
   rsvpUrl?: string;
   onRsvp?: () => void;
+  /** The share button is only rendered when this is provided. */
   onShare?: () => void;
   /**
    * Whether the event is currently bookmarked / saved.
@@ -175,22 +176,24 @@ export function DashboardEventCard({
 
           {/* Actions: icons + RSVP grouped so icons vertically center with the button */}
           <div className="flex shrink-0 items-center gap-[var(--space-3)]">
-            <button
-              type="button"
-              aria-label="Share event"
-              onClick={onShare}
-              className="group flex cursor-pointer items-center justify-center"
-            >
-              <ExternalLink
-                aria-hidden="true"
-                size={20}
-                className={
-                  "text-[color:var(--color-neutral-500)] " +
-                  "group-hover:text-[color:var(--color-neutral-700)] " +
-                  "transition-colors duration-150"
-                }
-              />
-            </button>
+            {onShare && (
+              <button
+                type="button"
+                aria-label="Share event"
+                onClick={onShare}
+                className="group flex cursor-pointer items-center justify-center"
+              >
+                <ExternalLink
+                  aria-hidden="true"
+                  size={20}
+                  className={
+                    "text-[color:var(--color-neutral-500)] " +
+                    "group-hover:text-[color:var(--color-neutral-700)] " +
+                    "transition-colors duration-150"
+                  }
+                />
+              </button>
+            )}
 
             <Bookmark
               bookmarked={bookmarked}
