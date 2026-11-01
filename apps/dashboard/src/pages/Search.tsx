@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
@@ -57,6 +57,16 @@ const MIN_QUERY_LENGTH = 2;
 
 function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
+}
+
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
 }
 
 // ─── Shared typography ───────────────────────────────────────────────────────
@@ -167,6 +177,7 @@ function OrgCard({ org, onClick }: OrgCardProps) {
 
 export function Search() {
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";
   const trimmed = q.trim();
@@ -330,7 +341,7 @@ export function Search() {
     >
       {/* ── Left sidebar ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
 
       {/* ── Main column ── */}
