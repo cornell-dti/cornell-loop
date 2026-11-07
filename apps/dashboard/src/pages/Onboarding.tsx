@@ -506,6 +506,14 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
     [profile?.major, profile?.gradYear, profile?.minor, profile?.interests],
   );
 
+  const handleFinish = useCallback(async () => {
+    await completeOnboarding();
+  }, [completeOnboarding]);
+
+  const handleClose = useCallback(() => {
+    onClose?.();
+  }, [onClose]);
+
   if (loading) {
     return (
       <OnboardingShell step={step} onClose={onClose}>
@@ -534,14 +542,6 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
 
   const handleStep2Continue = () => setStep(3);
   const handleStep2Back = () => setStep(1);
-
-  const handleFinish = useCallback(async () => {
-    await completeOnboarding();
-  }, [completeOnboarding]);
-
-  const handleClose = useCallback(() => {
-    onClose?.();
-  }, [onClose]);
 
   return (
     <OnboardingShell step={step} onClose={onClose}>
