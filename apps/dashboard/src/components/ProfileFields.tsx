@@ -1,17 +1,50 @@
 /**
- * ProfileFields — shared profile-form primitives.
+ * ProfileFields — shared, controlled profile-form components.
  *
- * Pulled out of `pages/profile.tsx` so the same field UI powers both the
- * profile modal (saved state animation included) and the `/onboarding`
- * full-screen flow. The picker visuals match Figma node 633:4436 exactly —
- * the design system's `<Dropdown>` renders its own pill-shaped trigger which
- * doesn't fit the bare-text trigger inside this label/field combo, so the
- * trigger lives here.
+ * Purpose:
+ *   - Provides reusable profile fields for both the Profile modal
+ *     and the onboarding flow.
+ *   - Collects major, graduation year, minor, and interests.
  *
- * Exports:
- *   • <ProfileSelectField>    single-select label + popover
- *   • <ProfileInterestsField> multi-select tag picker with a + button
- *   • <ProfileFieldsForm>     orchestrates all four fields, controlled
+ * Components:
+ *   - ProfileSelectField: Single-select dropdown with a custom popover.
+ *   - ProfileSearchField: Searchable single-select field for Major/Minor.
+ *   - ProfileInterestsField: Multi-select interest picker with removable tags.
+ *   - ProfileFieldsForm: Combines all four fields into a controlled form.
+ *
+ * Searchable Major/Minor:
+ *   - Uses React useState to track search input.
+ *   - Filters predefined options using case-insensitive matching.
+ *   - Displays matching suggestions dynamically as the user types.
+ *   - Selecting an option updates the parent form through onSelect.
+ *   - Displays the selected value as a removable orange Tag.
+ *   - Clears the search input after selection.
+ *   - Supports one selected major and one selected minor at a time.
+ *
+ * Graduation Year:
+ *   - Preserves the existing ProfileSelectField dropdown.
+ *   - Uses predefined graduation year options.
+ *
+ * Interests:
+ *   - Supports multiple selections through the existing InterestPicker.
+ *   - Displays selected interests as removable orange Tags.
+ *   - Prevents duplicate selections.
+ *
+ * State Management:
+ *   - ProfileFieldsForm receives value and onChange props.
+ *   - Updates individual fields while preserving other form values.
+ *   - Supports disabled states across all fields.
+ *   - Uses shared options from data/profileOptions.ts.
+ *
+ * Styling:
+ *   - Uses Tailwind CSS and shared design tokens.
+ *   - Applies consistent orange styling to selected Tags.
+ *   - Maintains the existing Profile modal design language.
+ *
+ * Backend:
+ *   - Contains only frontend form components and state handling.
+ *   - Does not directly call Convex queries or mutations.
+ *   - Parent components handle profile persistence.
  *
  * All design tokens live in `tokens.css`. No hardcoded colours / spacing.
  */
@@ -413,6 +446,7 @@ export function ProfileInterestsField({
           <Tag
             key={value}
             color="neutral"
+            className="!border-2 !border-solid !border-[#EB7128] !bg-[#FCE8DC] !text-[#A74409] [&_svg]:!text-[#EB7128]"
             onDismiss={disabled ? undefined : () => handleRemove(value)}
           >
             {value}
@@ -448,6 +482,117 @@ export function ProfileInterestsField({
           onSelect={handleAdd}
           onRequestClose={() => setPickerOpen(false)}
         />
+      )}
+    </div>
+  );
+}
+
+/* ProfileSearchField  */
+
+function ProfileSearchField({
+  label,
+  value,
+  options,
+  onSelect,
+  disabled = false,
+}: {
+  label: string;
+  value?: string;
+  options: readonly string[];
+  onSelect: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+
+  const filteredOptions = options.filter((option) =>
+    option.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  return (
+    <div className="relative flex w-full flex-col items-start gap-[var(--space-1)]">
+      <span
+        className={
+          BODY2_REGULAR + " whitespace-nowrap text-[var(--color-text-muted)]"
+        }
+      >
+        {label}
+      </span>
+
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={`Search ${label.toLowerCase()}...`}
+        disabled={disabled}
+        className={[
+          "w-full",
+          "px-[var(--space-4)] py-[var(--space-1-5)]",
+          "rounded-[var(--radius-card)]",
+          "border border-[var(--color-border)]",
+          "bg-[var(--color-surface)]",
+          BODY2_REGULAR,
+          "text-[var(--color-neutral-900)]",
+          "outline-none",
+          "focus:border-[var(--color-primary-400)]",
+          disabled ? "cursor-not-allowed opacity-60" : "",
+        ].join(" ")}
+      />
+
+      {value && (
+        <div className="mt-[var(--space-2)]">
+          <Tag
+            color="neutral"
+            className="!border-2 !border-solid !border-[#EB7128] !bg-[#FCE8DC] !text-[#A74409] [&_svg]:!text-[#EB7128]"
+            onDismiss={disabled ? undefined : () => onSelect("")}
+          >
+            {value}
+          </Tag>
+        </div>
+      )}
+
+      {search.length > 0 && (
+        <div
+          className={[
+            "absolute top-[calc(100%+var(--space-1))] left-0 z-20",
+            "max-h-[14rem] w-full overflow-y-auto",
+            "flex flex-col",
+            "border border-[var(--color-border)] bg-[var(--color-surface)]",
+            "rounded-[var(--radius-card)] shadow-[var(--shadow-1)]",
+            "p-[var(--space-1)]",
+          ].join(" ")}
+        >
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => (
+              <button
+                key={option}
+                onClick={() => {
+                  onSelect(option);
+                  setSearch("");
+                }}
+                type="button"
+                className={[
+                  BODY2_REGULAR,
+                  "cursor-pointer text-left",
+                  "px-[var(--space-3)] py-[var(--space-1-5)]",
+                  "rounded-[var(--radius-input)]",
+                  "text-[var(--color-neutral-900)]",
+                  "hover:bg-[var(--color-surface-subtle)]",
+                ].join(" ")}
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <span
+              className={
+                BODY2_REGULAR +
+                " px-[var(--space-3)] py-[var(--space-1-5)] text-[var(--color-text-muted)]"
+              }
+            >
+              No matches found
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
@@ -501,13 +646,11 @@ export function ProfileFieldsForm({
     >
       {/* Major + Grad Year row */}
       <div className="flex w-full items-start gap-[var(--space-4)]">
-        <ProfileSelectField
+        <ProfileSearchField
           label="Major"
           value={value.major}
-          placeholder="Select major"
           options={majorOptions}
-          onSelect={(v) => update("major", v)}
-          className="min-w-0 flex-1"
+          onSelect={(v) => update("major", v || undefined)}
           disabled={disabled}
         />
         <ProfileSelectField
@@ -525,13 +668,11 @@ export function ProfileFieldsForm({
 
       {/* Minor */}
       <div className="flex w-full items-start">
-        <ProfileSelectField
+        <ProfileSearchField
           label="Minor"
           value={value.minor}
-          placeholder="Select minor"
           options={minorOptions}
-          onSelect={(v) => update("minor", v)}
-          className="min-w-0 flex-1"
+          onSelect={(v) => update("minor", v || undefined)}
           disabled={disabled}
         />
       </div>
