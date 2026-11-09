@@ -6,7 +6,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import "./App.css";
 import Landing from "./pages/Landing";
 import { Home } from "./pages/Home";
@@ -211,18 +211,13 @@ function RoutedBookmarks() {
   );
 }
 
-const SORT_OPTIONS = ["Alphabetical", "Most emails", "Recently added"] as const;
-
 function RoutedSubscriptions() {
   const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
-  const [sortIndex, setSortIndex] = useState(0);
   return (
     <Subscriptions
       activeNavItem="subscriptions"
       onNavigate={onNavigate}
-      sortLabel={SORT_OPTIONS[sortIndex]}
-      onSortChange={() => setSortIndex((i) => (i + 1) % SORT_OPTIONS.length)}
       onClubClick={onClubClick}
     />
   );

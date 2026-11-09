@@ -19,12 +19,12 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 import { X } from "lucide-react";
-import { ChevronDown } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
   Button,
+  Dropdown,
   SearchBar,
   SearchPanel,
   Tag,
@@ -56,17 +56,6 @@ export interface SubscriptionsProps extends ComponentPropsWithoutRef<"div"> {
   // ── Header ──
   subscriptionCount?: number;
 
-  // ── Center search ──
-  searchValue?: string;
-  onSearchChange?: (value: string) => void;
-  onSearchClear?: () => void;
-
-  // ── Sort ──
-  /** Display label for the sort chip (e.g. "Alphabetical"). */
-  sortLabel?: string;
-  /** Called when the sort chip is clicked so the caller can cycle/show a picker. */
-  onSortChange?: () => void;
-
   // ── Subscription list ──
   subscriptions?: SubscriptionItem[];
 
@@ -80,11 +69,11 @@ export interface SubscriptionsProps extends ComponentPropsWithoutRef<"div"> {
 
 function SubscriptionRow({
   item,
-  onUnsubscribeClick,
+  onUnfollowClick,
   onClick,
 }: {
   item: SubscriptionItem;
-  onUnsubscribeClick: () => void;
+  onUnfollowClick: () => void;
   onClick?: () => void;
 }) {
   const fallback = fallbackColorsForName(item.orgName);
@@ -104,7 +93,7 @@ function SubscriptionRow({
     >
       {/* ── Left: avatar + org info — rendered as a real <button> when clickable
           so the row stays a single interactive element (avoids axe's
-          nested-interactive rule firing because of the inner Unsubscribe button). */}
+          nested-interactive rule firing because of the inner Unfollow button). */}
       <button
         type="button"
         onClick={onClick}
@@ -225,15 +214,15 @@ function SubscriptionRow({
         </div>
       </button>
 
-      {/* Unsubscribe — design-system secondary Button, sm size to balance row height. */}
+      {/* Unfollow — design-system secondary Button, sm size to balance row height. */}
       <Button
         variant="secondary"
         size="sm"
-        onClick={onUnsubscribeClick}
-        aria-label={`Unsubscribe from ${item.orgName}`}
+        onClick={onUnfollowClick}
+        aria-label={`Unfollow ${item.orgName}`}
         className="shrink-0"
       >
-        Unsubscribe
+        Unfollow
       </Button>
     </div>
   );
@@ -262,15 +251,29 @@ function orgToSubscriptionItem(
 
 type SortMode = "Alphabetical" | "Most emails" | "Recently added";
 
+const SORT_MODES: SortMode[] = [
+  "Alphabetical",
+  "Most emails",
+  "Recently added",
+];
+
+/** Narrows a Dropdown value to {@link SortMode} without an `as` cast. */
+function parseSortMode(value: string): SortMode {
+  return SORT_MODES.find((mode) => mode === value) ?? "Alphabetical";
+}
+
+/** One rendered row. Carries its org so actions never depend on list index. */
+interface SubscriptionRowData {
+  key: string;
+  item: SubscriptionItem;
+  /** Present for Convex-backed rows; absent in the legacy override flow. */
+  org?: PublicOrg;
+}
+
 export function Subscriptions({
   activeNavItem = "subscriptions",
   onNavigate,
   subscriptionCount,
-  searchValue,
-  onSearchChange,
-  onSearchClear,
-  sortLabel = "Alphabetical",
-  onSortChange,
   subscriptions: subscriptionsOverride,
   rsvpGroups: rsvpGroupsOverride,
   clubs: clubsOverride,
@@ -282,9 +285,6 @@ export function Subscriptions({
   const followedOrgs = useQuery(api.orgs.listFollowed);
   const myRsvps = useQuery(api.rsvps.myRsvps);
   const unfollowMutation = useMutation(api.follows.unfollow);
-  // Map followed orgs to SubscriptionItem shape, preserving the natural order
-  // returned by the server (recency-desc). The sort toggle re-sorts a copy so
-  // we don't mutate the source array.
   const orgsList = useMemo<readonly PublicOrg[]>(
     () => followedOrgs ?? [],
     [followedOrgs],
@@ -305,52 +305,59 @@ export function Subscriptions({
     return map;
   }, [subscriptionInfoResult]);
 
-  const sortMode: SortMode =
-    sortLabel === "Alphabetical" ||
-    sortLabel === "Most emails" ||
-    sortLabel === "Recently added"
-      ? sortLabel
-      : "Alphabetical";
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("Alphabetical");
 
-  const items: SubscriptionItem[] = useMemo(() => {
+  // Local copy for the deprecated subscriptionsOverride flow so the unfollow
+  // modal can still optimistically remove rows.
+  const [overrideItems, setOverrideItems] = useState<SubscriptionItem[]>(
+    subscriptionsOverride ?? [],
+  );
+
+  // Followed orgs in the chosen order. Sorting works on a copy; the server
+  // returns follows newest-first, which is the "Recently added" order.
+  const allRows = useMemo<SubscriptionRowData[]>(() => {
     if (subscriptionsOverride !== undefined) {
-      return subscriptionsOverride;
+      return overrideItems.map((item, i) => ({
+        key: `${item.emailAddress}-${i}`,
+        item,
+      }));
     }
-    const mapped = orgsList.map((org) =>
-      orgToSubscriptionItem(org, subscriptionInfoByOrgId.get(org._id)),
-    );
+    const rows = orgsList.map((org) => ({
+      key: org._id,
+      item: orgToSubscriptionItem(org, subscriptionInfoByOrgId.get(org._id)),
+      org,
+    }));
     if (sortMode === "Alphabetical") {
-      return [...mapped].sort((a, b) => a.orgName.localeCompare(b.orgName));
+      return [...rows].sort((a, b) =>
+        a.item.orgName.localeCompare(b.item.orgName),
+      );
     }
     if (sortMode === "Most emails") {
-      return [...mapped].sort((a, b) => b.emailsReceived - a.emailsReceived);
+      return [...rows].sort(
+        (a, b) => b.item.emailsReceived - a.item.emailsReceived,
+      );
     }
-    // "Recently added" — preserve server order (follows.createdAt desc).
-    return mapped;
-  }, [subscriptionsOverride, orgsList, subscriptionInfoByOrgId, sortMode]);
+    return rows;
+  }, [
+    subscriptionsOverride,
+    overrideItems,
+    orgsList,
+    subscriptionInfoByOrgId,
+    sortMode,
+  ]);
 
-  // Map list index → org id for unfollow. Only populated when the data comes
-  // from Convex (override mode keeps the legacy in-memory removal flow).
-  const idsForItems = useMemo<Id<"orgs">[] | null>(() => {
-    if (subscriptionsOverride !== undefined) return null;
-    if (sortMode === "Alphabetical") {
-      return [...orgsList]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((o) => o._id);
-    }
-    if (sortMode === "Most emails") {
-      return [...orgsList]
-        .sort((a, b) => {
-          const aCount =
-            subscriptionInfoByOrgId.get(a._id)?.emailsReceived ?? 0;
-          const bCount =
-            subscriptionInfoByOrgId.get(b._id)?.emailsReceived ?? 0;
-          return bCount - aCount;
-        })
-        .map((o) => o._id);
-    }
-    return orgsList.map((o) => o._id);
-  }, [subscriptionsOverride, orgsList, subscriptionInfoByOrgId, sortMode]);
+  // Search matches the org name or its listserv address.
+  const visibleRows = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return allRows;
+    return allRows.filter(
+      ({ item }) =>
+        item.orgName.toLowerCase().includes(query) ||
+        (item.emailAddress.includes("@") &&
+          item.emailAddress.toLowerCase().includes(query)),
+    );
+  }, [allRows, searchQuery]);
 
   const queriedRsvpGroups = useMemo(
     () => rsvpsToRsvpGroups(myRsvps),
@@ -367,78 +374,57 @@ export function Subscriptions({
     subscriptionsOverride === undefined &&
     followedOrgs !== undefined &&
     followedOrgs.length === 0;
+  const noSearchMatches =
+    !loading && allRows.length > 0 && visibleRows.length === 0;
 
-  // Local override state for the deprecated subscriptionsOverride flow so the
-  // unsubscribe modal can still optimistically remove rows.
-  const [overrideItems, setOverrideItems] = useState<SubscriptionItem[]>(
-    subscriptionsOverride ?? [],
+  const [pendingUnfollowKey, setPendingUnfollowKey] = useState<string | null>(
+    null,
   );
-  const displayedItems =
-    subscriptionsOverride === undefined ? items : overrideItems;
+  const [recentlyUnfollowed, setRecentlyUnfollowed] = useState<string | null>(
+    null,
+  );
 
-  const [pendingUnsubscribeIndex, setPendingUnsubscribeIndex] = useState<
-    number | null
-  >(null);
-  const [recentlyUnsubscribed, setRecentlyUnsubscribed] = useState<
-    string | null
-  >(null);
-
-  const pendingItem = useMemo(
-    () =>
-      pendingUnsubscribeIndex !== null
-        ? (displayedItems[pendingUnsubscribeIndex] ?? null)
-        : null,
-    [pendingUnsubscribeIndex, displayedItems],
+  const pendingRow = useMemo(
+    () => allRows.find((row) => row.key === pendingUnfollowKey) ?? null,
+    [allRows, pendingUnfollowKey],
   );
 
   const handleCloseModal = useCallback(() => {
-    setPendingUnsubscribeIndex(null);
+    setPendingUnfollowKey(null);
   }, []);
 
-  const handleConfirmUnsubscribe = useCallback(() => {
-    if (pendingUnsubscribeIndex === null) return;
-    const removed = displayedItems[pendingUnsubscribeIndex];
-    if (!removed) return;
-
-    if (subscriptionsOverride === undefined && idsForItems !== null) {
-      const orgId = idsForItems[pendingUnsubscribeIndex];
-      if (orgId !== undefined) {
-        void unfollowMutation({ orgId });
-      }
+  const handleConfirmUnfollow = useCallback(() => {
+    if (!pendingRow) return;
+    if (pendingRow.org) {
+      void unfollowMutation({ orgId: pendingRow.org._id });
     } else {
       setOverrideItems((prev) =>
-        prev.filter((_, i) => i !== pendingUnsubscribeIndex),
+        prev.filter((item) => item !== pendingRow.item),
       );
     }
-    setRecentlyUnsubscribed(removed.orgName);
-    setPendingUnsubscribeIndex(null);
-  }, [
-    pendingUnsubscribeIndex,
-    displayedItems,
-    subscriptionsOverride,
-    idsForItems,
-    unfollowMutation,
-  ]);
+    setRecentlyUnfollowed(pendingRow.item.orgName);
+    setPendingUnfollowKey(null);
+  }, [pendingRow, unfollowMutation]);
 
   useEffect(() => {
-    if (recentlyUnsubscribed === null) return;
-    const id = window.setTimeout(() => setRecentlyUnsubscribed(null), 3500);
+    if (recentlyUnfollowed === null) return;
+    const id = window.setTimeout(() => setRecentlyUnfollowed(null), 3500);
     return () => window.clearTimeout(id);
-  }, [recentlyUnsubscribed]);
+  }, [recentlyUnfollowed]);
 
   useEffect(() => {
-    if (pendingUnsubscribeIndex === null) return;
+    if (pendingUnfollowKey === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") handleCloseModal();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pendingUnsubscribeIndex, handleCloseModal]);
+  }, [pendingUnfollowKey, handleCloseModal]);
 
   const dialogTitleId = useId();
   const dialogDescId = useId();
 
-  const displayedCount = subscriptionCount ?? displayedItems.length;
+  const displayedCount = subscriptionCount ?? allRows.length;
 
   return (
     <div
@@ -487,44 +473,21 @@ export function Subscriptions({
           {/* Search + Sort row — Figma: SearchBar fills, Sort pill on the right. */}
           <div className="flex w-full items-center gap-[var(--space-3)]">
             <SearchBar
-              value={searchValue}
-              onChange={onSearchChange}
-              onClear={onSearchClear}
+              value={searchQuery}
+              onChange={setSearchQuery}
+              onClear={() => setSearchQuery("")}
               placeholder="Search"
               className="min-w-0 flex-1"
             />
 
-            {/*
-             * Sort dropdown trigger. Cycles through three orderings on click so
-             * the chip feels interactive even though sorting isn't yet wired to
-             * data. Visual matches Figma node 506:4039 (Sort: Alphabetical pill).
-             */}
-            <button
-              type="button"
-              onClick={onSortChange}
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-1-5)]",
-                "px-[var(--space-3)] py-[var(--space-1-5)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface)]",
-                "border border-[var(--color-border)]",
-                "font-[family-name:var(--font-body)] font-normal",
-                "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)]",
-                "tracking-[var(--letter-spacing-body3)]",
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-              aria-label="Change sort order"
-            >
-              {`Sort: ${sortLabel}`}
-              <ChevronDown
-                aria-hidden="true"
-                className="size-[var(--space-4)] shrink-0"
-              />
-            </button>
+            {/* Sort — design-system Dropdown (Figma node 506:4039). */}
+            <Dropdown
+              value={sortMode}
+              onChange={(value) => setSortMode(parseSortMode(value))}
+              options={SORT_MODES}
+              valuePrefix="Sort: "
+              className="w-[13rem] shrink-0"
+            />
           </div>
         </div>
 
@@ -539,25 +502,22 @@ export function Subscriptions({
           {!loading && isEmpty && (
             <SubscriptionsEmptyState onBrowse={() => navigate("/search")} />
           )}
-          {displayedItems.map((item, i) => (
-            <SubscriptionRow
-              key={`${item.emailAddress}-${i}`}
-              item={item}
-              onUnsubscribeClick={() => setPendingUnsubscribeIndex(i)}
-              onClick={() => {
-                // Navigate to the org page when the row is clicked anywhere
-                // outside the Unsubscribe button. We need a slug, which the
-                // override flow doesn't carry — fall back to a no-op there.
-                if (
-                  subscriptionsOverride === undefined &&
-                  idsForItems !== null
-                ) {
-                  const org = orgsList.find((o) => o._id === idsForItems[i]);
-                  if (org) navigate(`/orgs/${org.slug}`);
-                }
-              }}
-            />
-          ))}
+          {noSearchMatches && (
+            <SubscriptionsNoMatchesState query={searchQuery.trim()} />
+          )}
+          {visibleRows.map((row) => {
+            const { org } = row;
+            return (
+              <SubscriptionRow
+                key={row.key}
+                item={row.item}
+                onUnfollowClick={() => setPendingUnfollowKey(row.key)}
+                // Clicking the row (outside Unfollow) opens the org page. The
+                // override flow carries no slug, so its rows aren't clickable.
+                onClick={org ? () => navigate(`/orgs/${org.slug}`) : undefined}
+              />
+            );
+          })}
         </div>
       </main>
 
@@ -579,19 +539,19 @@ export function Subscriptions({
         />
       )}
 
-      {/* ── Unsubscribe confirmation modal ── */}
-      {pendingItem && (
-        <UnsubscribeModal
-          item={pendingItem}
+      {/* ── Unfollow confirmation modal ── */}
+      {pendingRow && (
+        <UnfollowModal
+          item={pendingRow.item}
           titleId={dialogTitleId}
           descriptionId={dialogDescId}
           onCancel={handleCloseModal}
-          onConfirm={handleConfirmUnsubscribe}
+          onConfirm={handleConfirmUnfollow}
         />
       )}
 
-      {/* ── Toast (post-unsubscribe) ── */}
-      {recentlyUnsubscribed && (
+      {/* ── Toast (post-unfollow) ── */}
+      {recentlyUnfollowed && (
         <div
           role="status"
           aria-live="polite"
@@ -610,7 +570,7 @@ export function Subscriptions({
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
-          <span>Unsubscribed from {recentlyUnsubscribed}</span>
+          <span>Unfollowed {recentlyUnfollowed}</span>
         </div>
       )}
     </div>
@@ -696,6 +656,29 @@ function SubscriptionsSidebarEmptyState() {
   );
 }
 
+function SubscriptionsNoMatchesState({ query }: { query: string }) {
+  return (
+    <div
+      className={[
+        "flex w-full items-center justify-center",
+        "rounded-[var(--radius-card)]",
+        "border border-dashed border-[var(--color-border)]",
+        "bg-[var(--color-surface)]",
+        "px-[var(--space-6)] py-[var(--space-8)]",
+        "font-[family-name:var(--font-body)] font-normal",
+        "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
+        "tracking-[var(--letter-spacing-body2)]",
+        "text-[color:var(--color-text-secondary)]",
+      ].join(" ")}
+      role="status"
+      aria-live="polite"
+      style={{ fontVariationSettings: "'opsz' 14" }}
+    >
+      No subscriptions match &ldquo;{query}&rdquo;
+    </div>
+  );
+}
+
 function SubscriptionsEmptyState({ onBrowse }: { onBrowse: () => void }) {
   return (
     <div
@@ -736,9 +719,9 @@ function SubscriptionsEmptyState({ onBrowse }: { onBrowse: () => void }) {
   );
 }
 
-// ─── UnsubscribeModal ─────────────────────────────────────────────────────────
+// ─── UnfollowModal ────────────────────────────────────────────────────────────
 
-function UnsubscribeModal({
+function UnfollowModal({
   item,
   titleId,
   descriptionId,
@@ -848,20 +831,8 @@ function UnsubscribeModal({
             ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
-            Remove your email from the {item.orgName} mailing list?
+            Unfollow {item.orgName}?
           </h2>
-          <p
-            className={[
-              "text-center whitespace-nowrap",
-              "font-[family-name:var(--font-body)] font-normal",
-              "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
-              "tracking-[var(--letter-spacing-body2)]",
-              "text-[var(--color-neutral-700)]",
-            ].join(" ")}
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
-            {item.emailAddress}
-          </p>
         </div>
 
         <p
@@ -875,7 +846,9 @@ function UnsubscribeModal({
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
-          Don&rsquo;t worry, you&rsquo;ll still see their posts here on Loop!
+          They&rsquo;ll be removed from your clubs, so their posts won&rsquo;t
+          be prioritized in your feed. You can follow them again anytime from
+          their org page.
         </p>
 
         <div className="mt-[var(--space-1)] flex items-center gap-[var(--space-3)]">
@@ -883,7 +856,7 @@ function UnsubscribeModal({
             Cancel
           </Button>
           <Button variant="secondary" size="md" onClick={onConfirm}>
-            Unsubscribe
+            Unfollow
           </Button>
         </div>
       </div>
