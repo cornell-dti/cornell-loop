@@ -2,7 +2,7 @@
  * SortByTags — reusable sort/filter tag strip.
  *
  * Used in BookmarkView and SearchView. Manages:
- *   • Active tag toggling (click to filter; active tags use the blue bg)
+ *   • Active tag toggling (click to filter; blue is reserved for active tags)
  *   • "+" opens a picker of canonical tags not yet in the strip; click one to
  *     pin it (tags are limited to the shared set in `convex/lib/tags.ts`)
  *   • Edit mode via pencil icon: Tag's built-in onDismiss renders the design-
@@ -36,7 +36,7 @@ export function SortByTags({
 
   return (
     <div className="flex flex-col gap-[var(--space-2)]">
-      <div className="flex flex-wrap items-center gap-[9px]">
+      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
         {tags.map((label) => {
           const isActive = activeTags.includes(label);
 
@@ -65,7 +65,7 @@ export function SortByTags({
             onClick={() => setShowPicker((open) => !open)}
             className="cursor-pointer"
           >
-            <Tag color={showPicker ? "blue" : "neutral"}>+</Tag>
+            <Tag color="neutral">+</Tag>
           </button>
         )}
 
@@ -109,9 +109,10 @@ export function SortByTags({
                 onTagAdd(label);
                 if (unpinned.length === 1) setShowPicker(false);
               }}
+              aria-label={`Add ${label}`}
               className="cursor-pointer"
             >
-              <Tag color="neutral">{label}</Tag>
+              <Tag color="neutral">+ {label}</Tag>
             </button>
           ))}
         </div>

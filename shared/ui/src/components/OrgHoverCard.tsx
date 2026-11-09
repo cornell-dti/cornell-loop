@@ -178,7 +178,7 @@ export function OrgHoverCard({
 
         {/* Tags row */}
         {org.tags && org.tags.length > 0 && (
-          <div className="flex gap-[var(--space-2)]">
+          <div className="flex flex-wrap gap-[var(--space-2)]">
             {org.tags.map((tag) => (
               <Tag key={tag.label} color={tag.color ?? "neutral"}>
                 {tag.label}

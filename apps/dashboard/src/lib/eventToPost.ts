@@ -9,6 +9,7 @@
  * Pure function, no side effects.
  */
 
+import { formatActionLabel } from "@app/ui";
 import type {
   Club,
   DashboardPostProps,
@@ -157,12 +158,15 @@ function resolvePrimaryLink(event: PublicEvent): EventLink | undefined {
   return event.links[0];
 }
 
-/** Button label: explicit link label → per-type default → hidden (info). */
+/** Button label: explicit link label → per-type default → hidden (info).
+ * Parser-written labels arrive in arbitrary case, so they're sentence-cased. */
 function resolveRsvpLabel(
   event: PublicEvent,
   link: EventLink | undefined,
 ): string | undefined {
-  return link?.label ?? defaultRsvpLabel(event.eventType);
+  return link?.label
+    ? formatActionLabel(link.label)
+    : defaultRsvpLabel(event.eventType);
 }
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────

@@ -22,9 +22,7 @@ test.describe("Subscriptions", () => {
     await seedDb();
   });
 
-  test("followed orgs render; unsubscribe removes the row", async ({
-    page,
-  }) => {
+  test("followed orgs render; unfollow removes the row", async ({ page }) => {
     await resetUserState(SUBS_EMAIL);
     const { token } = await signInAs(page, SUBS_EMAIL);
     await followOrgs(token, ["wicc", "acsu", "cuauv"]);
@@ -34,21 +32,61 @@ test.describe("Subscriptions", () => {
     await expect(
       page.getByRole("heading", { name: /Email Subscriptions/i }),
     ).toBeVisible();
-    // All three follows should appear, one Unsubscribe button per row.
+    // All three follows should appear, one Unfollow button per row.
     // Anchor the regex so we only match the inner Button (whose aria-label
-    // starts with "Unsubscribe from"), not the outer clickable row whose
-    // accessible name concatenates the org name first.
-    const unsubscribeButtons = page.getByRole("button", {
-      name: /^Unsubscribe from /i,
+    // starts with "Unfollow "), not the outer clickable row whose accessible
+    // name concatenates the org name first.
+    const unfollowButtons = page.getByRole("button", {
+      name: /^Unfollow /i,
     });
-    await expect(unsubscribeButtons).toHaveCount(3, { timeout: 15_000 });
+    await expect(unfollowButtons).toHaveCount(3, { timeout: 15_000 });
 
-    // Click the first row's Unsubscribe → confirm modal → confirm.
-    await unsubscribeButtons.first().click();
+    // Click the first row's Unfollow → confirm modal → confirm.
+    await unfollowButtons.first().click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: /^Unsubscribe$/ }).click();
+    await dialog.getByRole("button", { name: /^Unfollow$/ }).click();
 
-    await expect(unsubscribeButtons).toHaveCount(2, { timeout: 15_000 });
+    await expect(unfollowButtons).toHaveCount(2, { timeout: 15_000 });
+  });
+
+  test("search filters rows; unfollow targets the filtered row", async ({
+    page,
+  }) => {
+    await resetUserState(SUBS_EMAIL);
+    const { token } = await signInAs(page, SUBS_EMAIL);
+    await followOrgs(token, ["wicc", "acsu", "cuauv"]);
+
+    await page.goto("/subscriptions");
+
+    const unfollowButtons = page.getByRole("button", {
+      name: /^Unfollow /i,
+    });
+    await expect(unfollowButtons).toHaveCount(3, { timeout: 15_000 });
+
+    const search = page.getByRole("searchbox");
+    await search.fill("women");
+    await expect(unfollowButtons).toHaveCount(1);
+    await expect(unfollowButtons.first()).toHaveAccessibleName(
+      /Women in Computing at Cornell/,
+    );
+
+    await search.fill("no such club");
+    await expect(page.getByText(/No subscriptions match/)).toBeVisible();
+
+    // Unfollowing from a filtered list must remove that org, not whichever
+    // org held the same position in the unfiltered list.
+    await search.fill("cuauv");
+    await unfollowButtons.first().click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: /^Unfollow$/ })
+      .click();
+
+    await page.getByRole("button", { name: "Clear search" }).click();
+    await expect(unfollowButtons).toHaveCount(2, { timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: /^Unfollow .*CUAUV/ }),
+    ).toHaveCount(0);
   });
 });

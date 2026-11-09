@@ -14,4 +14,5 @@ export * from "./components/Cards/DashboardEventCard";
 export * from "./components/Cards/DashboardPost";
 export * from "./components/Cards/ExtensionEventCard";
 export * from "./components/Cards/LoopSummary";
+export * from "./utils/actionLabel";
 export * from "./utils/fallbackColors";
