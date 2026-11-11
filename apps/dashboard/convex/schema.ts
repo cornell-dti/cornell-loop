@@ -113,6 +113,16 @@ export default defineSchema({
     .index("by_user_and_org", ["userId", "orgId"])
     .index("by_org", ["orgId"]),
 
+  // Orgs a user explicitly said "not a member of" when suggested via a Gmail
+  // listserv scan, so future scans stop re-suggesting them.
+  orgSuggestionDismissals: defineTable({
+    userId: v.id("users"),
+    orgId: v.id("orgs"),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_org", ["userId", "orgId"]),
+
   bookmarks: defineTable({
     userId: v.id("users"),
     eventId: v.id("events"),
