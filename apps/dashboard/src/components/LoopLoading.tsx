@@ -24,7 +24,7 @@
  *     before closing the onboarding modal.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import loopLoadingSvg from "../assets/landing/loop_loading.svg";
 
 interface LoopLoadingProps {
@@ -37,6 +37,7 @@ export default function LoopLoading({
   onComplete,
 }: LoopLoadingProps) {
   const [progress, setProgress] = useState(0);
+  const hasCompleted = useRef(false);
 
   useEffect(() => {
     let frameId = 0;
@@ -46,18 +47,21 @@ export default function LoopLoading({
       if (startTime === null) startTime = timestamp;
 
       const elapsed = timestamp - startTime;
-      const next = Math.min(elapsed / duration, 1);
+      const safeDuration = duration > 0 ? duration : 4000;
+      const next = Math.min(elapsed / safeDuration, 1);
 
       setProgress(next);
 
       if (next < 1) {
         frameId = requestAnimationFrame(animate);
-      } else {
+      } else if (!hasCompleted.current) {
+        hasCompleted.current = true;
         onComplete?.();
       }
     };
-
-    frameId = requestAnimationFrame(animate);
+    if (!hasCompleted.current) {
+      frameId = requestAnimationFrame(animate);
+    }
 
     return () => cancelAnimationFrame(frameId);
   }, [duration, onComplete]);
