@@ -265,6 +265,11 @@ export default defineSchema({
     // address. Purely additive; unset for every existing row until an admin
     // sets it by hand (no admin UI for this yet).
     isPrimary: v.optional(v.boolean()),
+    // Set when an admin files this row away from the Join tab's working list:
+    // a dead or spam list that should stop competing for attention without
+    // being rejected outright, since rejecting also stops its mail being
+    // attributed. Unset means "not archived".
+    joinArchivedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
