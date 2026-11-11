@@ -12,6 +12,8 @@ import { api } from "../../convex/_generated/api";
 import {
   confirmationLinkFrom,
   isCornellListAddress,
+  isLegacyLyrisAddress,
+  isSimplelistsAddress,
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -34,6 +36,39 @@ type Candidate = Doc<"listservCandidates">;
  * confidence; without a cap they turn the review queue into an endless scroll.
  */
 const CANDIDATE_PREVIEW_COUNT = 25;
+
+/**
+ * Where a candidate address is hosted. Derived from the address rather than
+ * stored, so no schema field or backfill is involved — add a branch in
+ * {@link candidateOrigin} and an entry in {@link CANDIDATE_ORIGINS} to
+ * recognise another platform.
+ */
+type CandidateOrigin = "simplelists" | "lyris" | "other";
+
+function candidateOrigin(email: string): CandidateOrigin {
+  if (isSimplelistsAddress(email)) return "simplelists";
+  if (isLegacyLyrisAddress(email)) return "lyris";
+  return "other";
+}
+
+/**
+ * The origins offered as filter chips. Lyris is absent on purpose: Cornell
+ * retired it, so those lists can't be joined and belong in the reference
+ * section below the queue rather than in the working set.
+ */
+const CANDIDATE_ORIGINS: ReadonlyArray<{
+  id: CandidateOrigin;
+  label: string;
+}> = [
+  { id: "simplelists", label: "Simplelists" },
+  { id: "other", label: "Other" },
+];
+
+const CANDIDATE_ORIGIN_LABELS: Record<CandidateOrigin, string> = {
+  simplelists: "Simplelists",
+  lyris: "legacy Lyris",
+  other: "other",
+};
 
 type Listserv = Doc<"listservs">;
 
@@ -380,6 +415,8 @@ export default function Admin() {
   const updateListservStatus = useMutation(
     api.listservAdmin.updateListservStatus,
   );
+  const updateJoinStatus = useMutation(api.listservAdmin.updateJoinStatus);
+  const setJoinArchived = useMutation(api.listservAdmin.setJoinArchived);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
   const recomputeJoinStrategy = useMutation(
     api.listservAdmin.recomputeJoinStrategy,
@@ -716,13 +753,13 @@ export default function Admin() {
                 },
               )
             }
-            onIgnoreSender={(senderEmail, group) =>
-              act("Sender ignored.", () =>
+            onRejectSource={(senderEmail, group) =>
+              act("Source rejected.", () =>
                 ignoreSender({ token, senderEmail, ...group }),
               )
             }
-            onUnignoreSource={async (listservId) => {
-              await act("Source reactivated.", () =>
+            onRestoreSource={async (listservId) => {
+              await act("Source restored.", () =>
                 unignoreSource({ token, listservId }),
               );
             }}
@@ -833,6 +870,16 @@ export default function Admin() {
             onStatusChange={(id, status) =>
               act("Status updated.", () =>
                 updateListservStatus({ token, listservId: id, status }),
+              )
+            }
+            onJoinStatusChange={(id, joinStatus) =>
+              act("Join status updated.", () =>
+                updateJoinStatus({ token, listservId: id, joinStatus }),
+              )
+            }
+            onArchiveChange={(id, archived) =>
+              act(archived ? "Source archived." : "Source restored.", () =>
+                setJoinArchived({ token, listservId: id, archived }),
               )
             }
             onStrategyChange={(id, s) =>
@@ -1194,8 +1241,8 @@ function SourcesTab({
   onCreateAndAssignSource,
   onAssignInboxSenderToOrg,
   onCreateAndAssignInboxSender,
-  onIgnoreSender,
-  onUnignoreSource,
+  onRejectSource,
+  onRestoreSource,
   onCreateOrg,
   onUpdateOrg,
   onGenerateUploadUrl,
@@ -1238,14 +1285,14 @@ function SourcesTab({
     name: string,
     type: OrgType,
   ) => void;
-  // The group's own From addresses travel with the ignore so the tombstone can
-  // claim their existing mail; without them those messages keep sitting in the
-  // unassigned scan window forever.
-  onIgnoreSender: (
+  // The group's own From addresses travel with the rejection so the tombstone
+  // can claim their existing mail; without them those messages keep sitting in
+  // the unassigned scan window forever.
+  onRejectSource: (
     senderEmail: string,
     group?: { senderEmails: string[]; listAddress?: string },
   ) => void;
-  onUnignoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
+  onRestoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
@@ -1264,12 +1311,27 @@ function SourcesTab({
     (s) => !s.organizationId && s.status !== "paused",
   );
   const assignedSources = listservs.filter((s) => !!s.organizationId);
-  const ignoredSources = listservs.filter((s) => s.status === "paused");
+  const rejectedSources = listservs.filter((s) => s.status === "paused");
   // Already highest-confidence-first, and already only `status: "candidate"`,
   // from the paginated `listCandidates` query. Directory discovery contributes
   // hundreds of low-confidence departmental lists, so the rest are fetched on
   // demand instead of being capped out of reach.
   const pendingCandidates = candidates;
+
+  // Grouped by where the address is hosted, so the retired-Lyris rows stop
+  // sitting between the Simplelists ones an admin can actually act on. Only
+  // covers rows fetched so far, which is what the "+" in the header means.
+  const [originFilter, setOriginFilter] =
+    useState<CandidateOrigin>("simplelists");
+  const candidatesByOrigin: Record<CandidateOrigin, Candidate[]> = {
+    simplelists: [],
+    lyris: [],
+    other: [],
+  };
+  for (const candidate of pendingCandidates) {
+    candidatesByOrigin[candidateOrigin(candidate.email)].push(candidate);
+  }
+  const visibleCandidates = candidatesByOrigin[originFilter];
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
@@ -1319,19 +1381,37 @@ function SourcesTab({
           <CardHeader
             // "N loaded" rather than "N awaiting review": the queue is paged,
             // so this is how many have been fetched, not the whole backlog.
-            title={`${pendingCandidates.length}${candidateStatus === "Exhausted" ? "" : "+"} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
+            title={`${visibleCandidates.length}${candidateStatus === "Exhausted" ? "" : "+"} ${CANDIDATE_ORIGIN_LABELS[originFilter]} candidate${visibleCandidates.length !== 1 ? "s" : ""} awaiting review`}
             subtitle="Addresses found by discovery, strongest first. Approve to create a source, or reject to dismiss."
           />
-          <div className="mt-4 grid gap-2">
-            {pendingCandidates.map((c) => (
-              <CandidateRow
-                key={c._id}
-                candidate={c}
-                onApprove={(name) => onApproveCandidate(c._id, name)}
-                onReject={() => onRejectCandidate(c._id)}
-              />
+          <div className="mt-3 flex flex-wrap gap-2">
+            {CANDIDATE_ORIGINS.map((origin) => (
+              <FilterChip
+                key={origin.id}
+                active={originFilter === origin.id}
+                onClick={() => setOriginFilter(origin.id)}
+              >
+                {origin.label} ({candidatesByOrigin[origin.id].length})
+              </FilterChip>
             ))}
           </div>
+          {visibleCandidates.length === 0 ? (
+            <p className="mt-4 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+              No {CANDIDATE_ORIGIN_LABELS[originFilter]} candidates in the rows
+              loaded so far.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-2">
+              {visibleCandidates.map((c) => (
+                <CandidateRow
+                  key={c._id}
+                  candidate={c}
+                  onApprove={(name) => onApproveCandidate(c._id, name)}
+                  onReject={() => onRejectCandidate(c._id)}
+                />
+              ))}
+            </div>
+          )}
           {candidateStatus !== "Exhausted" && (
             <div className="mt-3">
               <Btn
@@ -1344,6 +1424,26 @@ function SourcesTab({
               </Btn>
             </div>
           )}
+          {/* Lyris is dead, so these can't be approved — kept visible only as a
+              record of what kinds of lists exist on campus. */}
+          {candidatesByOrigin.lyris.length > 0 && (
+            <details className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3">
+              <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
+                {candidatesByOrigin.lyris.length} legacy Lyris list
+                {candidatesByOrigin.lyris.length !== 1 ? "s" : ""} —
+                deactivated, for reference
+              </summary>
+              <div className="mt-3 grid gap-2">
+                {candidatesByOrigin.lyris.map((c) => (
+                  <CandidateRow
+                    key={c._id}
+                    candidate={c}
+                    onReject={() => onRejectCandidate(c._id)}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
         </Card>
       )}
 
@@ -1352,12 +1452,12 @@ function SourcesTab({
         <Card>
           <CardHeader
             title={`${unifiedItems.length} source${unifiedItems.length !== 1 ? "s" : ""} need an organization`}
-            subtitle="Assign each source to an organization to enable parsing. Ignore sources you don't want to track."
+            subtitle="Assign each source to an organization to enable parsing. Reject sources you don't want to track."
           />
           {unassignedTruncated && (
             <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[length:var(--font-size-body3)] text-amber-800">
               Showing the most recent slice of unassigned mail only — there is
-              more behind it. Assign or ignore these, and the next batch will
+              more behind it. Assign or reject these, and the next batch will
               appear.
             </p>
           )}
@@ -1386,7 +1486,7 @@ function SourcesTab({
                       item.source.listEmail,
                     )
                   }
-                  onIgnore={() => onIgnoreSender(item.source.listEmail)}
+                  onReject={() => onRejectSource(item.source.listEmail)}
                 />
               ) : (
                 <UnassignedRow
@@ -1406,8 +1506,8 @@ function SourcesTab({
                   onCreateAndAssign={(name, type) =>
                     onCreateAndAssignInboxSender(item.sender, name, type)
                   }
-                  onIgnore={() =>
-                    onIgnoreSender(item.sender.senderEmail, {
+                  onReject={() =>
+                    onRejectSource(item.sender.senderEmail, {
                       senderEmails: item.sender.senderEmails,
                       listAddress: item.sender.listAddress,
                     })
@@ -1441,7 +1541,7 @@ function SourcesTab({
                   orgName={org?.name ?? "Unknown org"}
                   organizations={organizations}
                   onReassign={(orgId) => onAssignSource(src._id, orgId)}
-                  onIgnore={() => onIgnoreSender(src.listEmail)}
+                  onReject={() => onRejectSource(src.listEmail)}
                 />
               );
             })}
@@ -1449,25 +1549,25 @@ function SourcesTab({
         </details>
       )}
 
-      {/* Ignored / paused sources */}
-      {ignoredSources.length > 0 && (
+      {/* Rejected / paused sources */}
+      {rejectedSources.length > 0 && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
           <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
-            {ignoredSources.length} ignored source
-            {ignoredSources.length !== 1 ? "s" : ""}
+            {rejectedSources.length} rejected source
+            {rejectedSources.length !== 1 ? "s" : ""}
           </summary>
           <div className="mt-3 grid gap-2">
-            {ignoredSources.map((src) => (
-              <IgnoredSourceRow
+            {rejectedSources.map((src) => (
+              <RejectedSourceRow
                 key={src._id}
                 source={src}
                 organizations={organizations}
-                onReactivate={() => onUnignoreSource(src._id)}
+                onRestore={() => onRestoreSource(src._id)}
                 onAssign={async (orgId) => {
                   // Sequenced on purpose: firing both without awaiting races
                   // two separate mutations against the same row, and assign
-                  // completing first would have unignore's patch overwrite it.
-                  await onUnignoreSource(src._id);
+                  // completing first would have restore's patch overwrite it.
+                  await onRestoreSource(src._id);
                   await onAssignSource(src._id, orgId);
                 }}
               />
@@ -1515,13 +1615,13 @@ function AssignedSourceRow({
   orgName,
   organizations,
   onReassign,
-  onIgnore,
+  onReject,
 }: {
   source: Listserv;
   orgName: string;
   organizations: Organization[];
   onReassign: (orgId: Id<"orgs">) => void;
-  onIgnore: () => void;
+  onReject: () => void;
 }) {
   const [reassigning, setReassigning] = useState(false);
   return (
@@ -1539,8 +1639,8 @@ function AssignedSourceRow({
         {!reassigning && (
           <div className="flex shrink-0 gap-2">
             <Btn onClick={() => setReassigning(true)}>Reassign</Btn>
-            <Btn danger onClick={onIgnore}>
-              Ignore
+            <Btn danger onClick={onReject}>
+              Reject
             </Btn>
           </div>
         )}
@@ -1574,15 +1674,15 @@ function AssignedSourceRow({
   );
 }
 
-function IgnoredSourceRow({
+function RejectedSourceRow({
   source,
   organizations,
-  onReactivate,
+  onRestore,
   onAssign,
 }: {
   source: Listserv;
   organizations: Organization[];
-  onReactivate: () => void;
+  onRestore: () => void;
   onAssign: (orgId: Id<"orgs">) => void | Promise<void>;
 }) {
   const [assigning, setAssigning] = useState(false);
@@ -1599,8 +1699,8 @@ function IgnoredSourceRow({
         </div>
         {!assigning && (
           <div className="flex shrink-0 gap-2">
-            <Btn primary onClick={onReactivate}>
-              Reactivate
+            <Btn primary onClick={onRestore}>
+              Restore
             </Btn>
             <Btn onClick={() => setAssigning(true)}>Assign org</Btn>
           </div>
@@ -2391,7 +2491,7 @@ function UnassignedRow({
   organizations,
   onAssignToOrg,
   onCreateAndAssign,
-  onIgnore,
+  onReject,
 }: {
   email: string;
   name: string;
@@ -2408,11 +2508,12 @@ function UnassignedRow({
   organizations: Organization[];
   onAssignToOrg: (orgId: Id<"orgs">) => void;
   onCreateAndAssign: (name: string, type: OrgType) => void;
-  onIgnore: () => void;
+  onReject: () => void;
 }) {
   const [mode, setMode] = useState<"idle" | "assign" | "create">("idle");
   const [orgName, setOrgName] = useState(suggestedOrgName);
   const [orgType, setOrgType] = useState<OrgType>(suggestedOrgType);
+  const origin = candidateOrigin(email);
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -2421,6 +2522,9 @@ function UnassignedRow({
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate font-semibold">{name}</span>
             {isNewSource && <Tag variant="amber">new source</Tag>}
+            {/* Only when the platform is recognisable: tagging every personal
+                address "other" would be noise, not information. */}
+            {origin !== "other" && <Tag>{CANDIDATE_ORIGIN_LABELS[origin]}</Tag>}
           </div>
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {email}
@@ -2455,8 +2559,8 @@ function UnassignedRow({
               Create org
             </Btn>
             <Btn onClick={() => setMode("assign")}>Assign existing</Btn>
-            <Btn danger onClick={onIgnore}>
-              Ignore
+            <Btn danger onClick={onReject}>
+              Reject
             </Btn>
           </div>
         )}
@@ -2534,11 +2638,13 @@ function CandidateRow({
   onReject,
 }: {
   candidate: Candidate;
-  onApprove: (name?: string) => void;
+  /** Omitted for rows that can't be joined, e.g. retired Lyris lists. */
+  onApprove?: (name?: string) => void;
   onReject: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [name, setName] = useState(candidate.displayName ?? "");
+  const origin = candidateOrigin(candidate.email);
 
   if (candidate.status !== "candidate") return null;
 
@@ -2554,6 +2660,7 @@ function CandidateRow({
               {candidate.email}
             </span>
             <ConfidenceBadge value={candidate.confidence} />
+            <Tag>{CANDIDATE_ORIGIN_LABELS[origin]}</Tag>
           </div>
           {candidate.directoryDescription && (
             <p className="mt-0.5 text-[length:var(--font-size-body3)]">
@@ -2567,10 +2674,14 @@ function CandidateRow({
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Btn primary onClick={() => onApprove(name || undefined)}>
-            Approve
-          </Btn>
-          <Btn onClick={() => setExpanded(!expanded)}>Rename</Btn>
+          {onApprove && (
+            <>
+              <Btn primary onClick={() => onApprove(name || undefined)}>
+                Approve
+              </Btn>
+              <Btn onClick={() => setExpanded(!expanded)}>Rename</Btn>
+            </>
+          )}
           <Btn danger onClick={onReject}>
             Reject
           </Btn>
@@ -2650,6 +2761,8 @@ function JoinTab({
   onSubscribe,
   onRedetect,
   onStatusChange,
+  onJoinStatusChange,
+  onArchiveChange,
   onStrategyChange,
 }: {
   listservs: Listserv[];
@@ -2662,14 +2775,28 @@ function JoinTab({
   onSubscribe: (id: Id<"listservs">) => Promise<void>;
   onRedetect: (id: Id<"listservs">) => void;
   onStatusChange: (id: Id<"listservs">, status: Listserv["status"]) => void;
+  onJoinStatusChange: (
+    id: Id<"listservs">,
+    joinStatus: Listserv["joinStatus"],
+  ) => void;
+  onArchiveChange: (id: Id<"listservs">, archived: boolean) => void;
   onStrategyChange: (id: Id<"listservs">, strategy: JoinStrategy) => void;
 }) {
   const isJoined = (l: Listserv) =>
     l.joinStatus === "joined" ||
     clearedConfirmations.some((c) => confirmationMatchesListserv(c, l));
 
-  const pending = listservs.filter((l) => !isJoined(l));
-  const joined = listservs.filter(isJoined);
+  // Four buckets, so the working list only holds rows that still need a
+  // decision. `paused` is what Reject leaves behind on the Sources tab, and
+  // without excluding it every rejected source reappeared here as something to
+  // join.
+  const archived = listservs.filter((l) => l.joinArchivedAt !== undefined);
+  const live = listservs.filter(
+    (l) => l.joinArchivedAt === undefined && l.status !== "paused",
+  );
+  const joined = live.filter(isJoined);
+  const failed = live.filter((l) => !isJoined(l) && l.joinStatus === "failed");
+  const pending = live.filter((l) => !isJoined(l) && l.joinStatus !== "failed");
 
   // joinAttempts arrives newest-first from the dashboard query, so grouping
   // preserves that order and `[0]` is each row's most recent attempt.
@@ -2747,11 +2874,52 @@ function JoinTab({
                 onSubscribe={() => onSubscribe(l._id)}
                 onRedetect={() => onRedetect(l._id)}
                 onStatusChange={(status) => onStatusChange(l._id, status)}
+                onJoinStatusChange={(s) => onJoinStatusChange(l._id, s)}
+                onArchive={() => onArchiveChange(l._id, true)}
                 onStrategyChange={(s) => onStrategyChange(l._id, s)}
               />
             ))}
           </div>
         </Card>
+      )}
+
+      {/* Failed joins — collapsed, since each one needs a deliberate retry */}
+      {failed.length > 0 && (
+        <details className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-red-800 select-none">
+            {failed.length} failed join{failed.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {failed.map((l) => (
+              <JoinArchiveRow
+                key={l._id}
+                listserv={l}
+                actionLabel="Retry"
+                onAction={() => onJoinStatusChange(l._id, "not_started")}
+                onArchive={() => onArchiveChange(l._id, true)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Archived — dead or spam lists, kept for reference */}
+      {archived.length > 0 && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
+            {archived.length} archived source{archived.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {archived.map((l) => (
+              <JoinArchiveRow
+                key={l._id}
+                listserv={l}
+                actionLabel="Restore"
+                onAction={() => onArchiveChange(l._id, false)}
+              />
+            ))}
+          </div>
+        </details>
       )}
 
       {/* Recent attempts */}
@@ -2821,6 +2989,8 @@ function JoinRow({
   onSubscribe,
   onRedetect,
   onStatusChange,
+  onJoinStatusChange,
+  onArchive,
   onStrategyChange,
 }: {
   listserv: Listserv;
@@ -2829,6 +2999,8 @@ function JoinRow({
   onSubscribe: () => Promise<void>;
   onRedetect: () => void;
   onStatusChange: (status: Listserv["status"]) => void;
+  onJoinStatusChange: (joinStatus: Listserv["joinStatus"]) => void;
+  onArchive: () => void;
   onStrategyChange: (s: JoinStrategy) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2912,6 +3084,12 @@ function JoinRow({
               Prepare email
             </Btn>
           )}
+          {/* Subscribing happens outside this app — on the Simplelists web
+              form, or in a reply an admin reads in their own inbox — so the
+              outcome has to be recordable by hand. */}
+          <Btn onClick={() => onJoinStatusChange("joined")}>Mark joined</Btn>
+          <Btn onClick={() => onJoinStatusChange("failed")}>Mark failed</Btn>
+          <Btn onClick={onArchive}>Archive</Btn>
           <Btn onClick={() => setOpen(!open)}>Settings</Btn>
         </div>
       </div>
@@ -2968,6 +3146,38 @@ function JoinRow({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Compact row for the Join tab's collapsed sections. These rows are being
+ * looked at, not worked on, so they carry one primary action plus an optional
+ * Archive rather than the full `JoinRow` control set.
+ */
+function JoinArchiveRow({
+  listserv,
+  actionLabel,
+  onAction,
+  onArchive,
+}: {
+  listserv: Listserv;
+  actionLabel: string;
+  onAction: () => void;
+  onArchive?: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[length:var(--font-size-body2)]">
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-semibold">{listserv.name}</div>
+        <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          {listserv.listEmail} · {listserv.joinStatus ?? "not started"}
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <Btn onClick={onAction}>{actionLabel}</Btn>
+        {onArchive && <Btn onClick={onArchive}>Archive</Btn>}
+      </div>
     </div>
   );
 }
@@ -3845,6 +4055,18 @@ function PublishTab({
     onLoadMoreReady();
   }, [showReady, loadedReadyCount, readyStatus, onLoadMoreReady]);
 
+  // Publishing a draft removes it from `drafts`, as does hiding one, so the
+  // stored set is narrowed to what is still on screen rather than pruned in an
+  // effect: otherwise the "N selected" count keeps counting rows nobody can
+  // see any more.
+  const liveSelected = new Set(
+    drafts.map((draft) => draft._id).filter((id) => selected.has(id)),
+  );
+
+  const cleanDrafts = drafts.filter(
+    (draft) => (draft.parseWarnings ?? []).length === 0,
+  );
+
   function toggleSelected(id: Id<"events">) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -3855,7 +4077,7 @@ function PublishTab({
   }
 
   function publishSelected() {
-    const ids = Array.from(selected);
+    const ids = Array.from(liveSelected);
     if (ids.length === 0) return;
     onPublishMany(ids);
     setSelected(new Set());
@@ -4000,10 +4222,48 @@ function PublishTab({
             title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
             subtitle="Review each item before publishing. Published items appear in the user-facing feed."
           />
-          {selected.size > 0 && (
-            <Btn primary onClick={publishSelected}>
-              Publish {selected.size} selected
-            </Btn>
+          {drafts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-[length:var(--font-size-body2)] font-semibold">
+                <input
+                  type="checkbox"
+                  checked={liveSelected.size === drafts.length}
+                  // Indeterminate can't be expressed in JSX, so it is set on
+                  // the node: without it a partial selection renders as
+                  // unchecked and reads as "nothing selected".
+                  ref={(node) => {
+                    if (node) {
+                      node.indeterminate =
+                        liveSelected.size > 0 &&
+                        liveSelected.size < drafts.length;
+                    }
+                  }}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked
+                        ? new Set(drafts.map((draft) => draft._id))
+                        : new Set(),
+                    )
+                  }
+                  className="size-4"
+                />
+                Select all ({drafts.length})
+              </label>
+              {cleanDrafts.length > 0 && cleanDrafts.length < drafts.length && (
+                <Btn
+                  onClick={() =>
+                    setSelected(new Set(cleanDrafts.map((draft) => draft._id)))
+                  }
+                >
+                  Select {cleanDrafts.length} without warnings
+                </Btn>
+              )}
+              {liveSelected.size > 0 && (
+                <Btn primary onClick={publishSelected}>
+                  Publish {liveSelected.size} selected
+                </Btn>
+              )}
+            </div>
           )}
         </div>
         {drafts.length === 0 ? (
@@ -4016,7 +4276,7 @@ function PublishTab({
               <DraftCard
                 key={event._id}
                 event={event}
-                selected={selected.has(event._id)}
+                selected={liveSelected.has(event._id)}
                 onToggleSelect={() => toggleSelected(event._id)}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
@@ -4637,6 +4897,32 @@ function Field({
         className={input()}
       />
     </label>
+  );
+}
+
+/** Toggle for a single-choice filter, styled like `TagPicker`'s buttons. */
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-md border px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold transition-colors ${
+        active
+          ? "border-[var(--color-primary-700)] bg-[var(--color-primary-700)] text-[color:var(--color-text-inverse)]"
+          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-neutral-100)]"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

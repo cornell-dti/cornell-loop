@@ -108,6 +108,7 @@ export const listservDocValidator = v.object({
   notes: v.optional(v.string()),
   lastReceivedAt: v.optional(v.number()),
   isPrimary: v.optional(v.boolean()),
+  joinArchivedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
