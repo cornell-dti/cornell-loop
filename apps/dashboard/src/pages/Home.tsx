@@ -50,6 +50,7 @@ import {
 import { useFollowToggle } from "../lib/useFollowToggle";
 import { SearchOverlay } from "../components/SearchOverlay";
 import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
+import { FeedNoMatchesState } from "../components/FeedNoMatchesState";
 import {
   overlayLabelAt,
   overlayRowCount,
@@ -596,6 +597,12 @@ function HomeInner({
          */}
         <div className="flex flex-col gap-[var(--space-5)] px-[var(--space-8)] pb-[var(--space-8)]">
           {feedLoading && <FeedLoadingState />}
+          {!feedLoading && selectedTag && feedPosts.length === 0 && (
+            <FeedNoMatchesState
+              tag={selectedTag}
+              onClear={() => setSelectedTag(null)}
+            />
+          )}
           {feedPosts.map((post, i) => (
             <DashboardPost
               key={i}

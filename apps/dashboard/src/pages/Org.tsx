@@ -102,7 +102,7 @@ function MailIcon({ className }: { className?: string }) {
 
 const BODY2_REGULAR =
   "font-[family-name:var(--font-body)] font-normal " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
 // ─── Tag/time filter dropdowns ────────────────────────────────────────────────
@@ -175,7 +175,7 @@ function OrgTagPill({ label, variant }: OrgTagSpec) {
         "font-[family-name:var(--font-body)] font-medium",
         "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
         "tracking-[var(--letter-spacing-body2)]",
-        "text-[var(--color-primary-900)]",
+        "text-[color:var(--color-primary-900)]",
         "whitespace-nowrap select-none",
       ].join(" ")}
       style={{ fontVariationSettings: "'opsz' 14" }}
@@ -218,7 +218,7 @@ function LoadingState() {
       <div
         className={[
           "flex flex-col items-center gap-[var(--space-3)]",
-          "text-[var(--color-text-secondary)]",
+          "text-[color:var(--color-text-secondary)]",
           BODY2_REGULAR,
         ].join(" ")}
       >
@@ -250,16 +250,17 @@ function NotFoundState({ slug }: { slug: string | undefined }) {
             "font-[family-name:var(--font-body)] font-semibold",
             "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
             "tracking-[var(--letter-spacing-body1)]",
-            "text-[var(--color-neutral-900)]",
+            "text-[color:var(--color-neutral-900)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Organization not found
         </h1>
         <p
-          className={[BODY2_REGULAR, "text-[var(--color-text-secondary)]"].join(
-            " ",
-          )}
+          className={[
+            BODY2_REGULAR,
+            "text-[color:var(--color-text-secondary)]",
+          ].join(" ")}
         >
           {slug
             ? `We couldn't find an organization with the slug "${slug}". It may have been removed or renamed.`
@@ -522,22 +523,39 @@ export function Org() {
           {/*
            * Cover banner — Figma node 613:4241 shows a sky/cloud image. We render
            * a tasteful sky gradient as the no-asset fallback.
+           *
+           * Covers often come from email headers (small, wide, text-heavy), so
+           * cropping them to fill the banner blows them up and cuts off the
+           * text. Instead the image is contained at its own aspect ratio, and a
+           * blurred copy of it fills the remaining space.
            */}
           <div
-            className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
+            className="relative h-60 w-full shrink-0 overflow-hidden bg-[var(--color-surface-raised)]"
             style={
               org.coverImageUrl
-                ? {
-                    backgroundImage: `url(${org.coverImageUrl})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
+                ? undefined
                 : {
                     backgroundImage:
                       "linear-gradient(180deg, var(--color-secondary-500) 0%, var(--color-secondary-300) 100%)",
                   }
             }
-          />
+          >
+            {org.coverImageUrl && (
+              <>
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 size-full scale-110 object-cover opacity-60 blur-2xl"
+                />
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  className="relative size-full object-contain"
+                />
+              </>
+            )}
+          </div>
 
           {/*
            * Action buttons row — right-aligned below the cover banner.
@@ -556,7 +574,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -578,7 +596,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -624,8 +642,8 @@ export function Org() {
                   "flex size-full items-center justify-center " +
                   "bg-[var(--color-secondary-400)] " +
                   "font-[family-name:var(--font-brand)] font-bold " +
-                  "text-[var(--font-size-sub1)] " +
-                  "text-[var(--color-secondary-900)]"
+                  "text-[length:var(--font-size-sub1)] " +
+                  "text-[color:var(--color-secondary-900)]"
                 }
               >
                 {org.name.charAt(0).toUpperCase()}
@@ -644,7 +662,7 @@ export function Org() {
                     "font-[family-name:var(--font-body)] font-semibold " +
                     "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
                     "tracking-[var(--letter-spacing-body1)] " +
-                    "text-[var(--color-neutral-900)]"
+                    "text-[color:var(--color-neutral-900)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -655,7 +673,7 @@ export function Org() {
               {org.description && (
                 <p
                   className={
-                    BODY2_REGULAR + " text-[var(--color-text-secondary)]"
+                    BODY2_REGULAR + " text-[color:var(--color-text-secondary)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
