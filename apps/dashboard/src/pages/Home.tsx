@@ -65,6 +65,7 @@ import {
 import type { RecentSearch, SearchSuggestion } from "../data/sampleSearch";
 import { loadRecentSearches, saveRecentSearches } from "../lib/recentSearches";
 import Onboarding from "../pages/Onboarding";
+import ShadowTour from "../components/ShadowTour";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
 
 const MIN_QUERY_LENGTH = 2;
@@ -177,10 +178,23 @@ function HomeInner({
 }: HomeProps) {
   // Get the current user's onboarding status from Convex
   const { loading, isOnboarded } = useCurrentProfile();
-  // Track whether the modal was dismissed during this page session
+
+  // Track the onboarding flow locally
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+
   // Only show onboarding for users who haven't completed it
   const showOnboarding = !loading && !isOnboarded && !onboardingDismissed;
+  // Start the dashboard tour after onboarding finishes
+  const handleOnboardingComplete = () => {
+    setOnboardingDismissed(true);
+    setShowTour(true);
+  };
+
+  // Finish the entire onboarding experience
+  const handleTourComplete = () => {
+    setShowTour(false);
+  };
 
   // ── Convex-backed feed data ────────────────────────────────────────────
   // Default to "followed" scope; the server transparently falls back to "all"
@@ -647,9 +661,8 @@ function HomeInner({
           className="h-full shrink-0 overflow-visible"
         />
       )}
-      {showOnboarding && (
-        <Onboarding onClose={() => setOnboardingDismissed(true)} />
-      )}
+      {showOnboarding && <Onboarding onClose={handleOnboardingComplete} />}
+      {showTour && <ShadowTour onComplete={handleTourComplete} />}
     </div>
   );
 }

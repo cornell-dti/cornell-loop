@@ -85,36 +85,45 @@ function OnboardingShell({ step, children, onClose }: OnboardingShellProps) {
       role="dialog"
       aria-modal="true"
     >
+      {/* Outer container preserves the rounded corners */}
       <div
-        className={`flex max-h-[85vh] w-full flex-col overflow-y-auto rounded-[var(--radius-card)] bg-[var(--color-surface)] shadow-[var(--shadow-1)] ${
-          step === 3
-            ? "max-w-[500px] gap-2 px-5 py-4"
-            : "max-w-[550px] gap-[var(--space-4)] p-[var(--space-5)]"
+        className={`flex max-h-[85vh] w-full flex-col overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface)] shadow-[var(--shadow-1)] ${
+          step === 3 ? "max-w-[500px]" : "max-w-[550px]"
         }`}
       >
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-[var(--space-4)]">
-            <span
-              className={BODY2}
-              style={{ color: "#A74409" }}
-              aria-live="polite"
-            >
-              Step {step} of {TOTAL_STEPS}
-            </span>
-          </div>
-          {onClose && step !== 3 && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close onboarding"
-              className="text-[var(--color-text-muted)] hover:text-[var(--color-neutral-900)]"
-            >
-              ✕
-            </button>
-          )}
-        </header>
+        {/* Inner container handles scrolling */}
+        <div
+          className={`flex min-h-0 flex-col overflow-y-auto ${
+            step === 3
+              ? "gap-2 px-5 py-4"
+              : "gap-[var(--space-4)] p-[var(--space-5)]"
+          }`}
+        >
+          <header className="flex items-center justify-between">
+            <div className="flex items-center gap-[var(--space-4)]">
+              <span
+                className={BODY2}
+                style={{ color: "#A74409" }}
+                aria-live="polite"
+              >
+                Step {step} of {TOTAL_STEPS}
+              </span>
+            </div>
 
-        {children}
+            {onClose && step !== 3 && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close onboarding"
+                className="cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-neutral-900)]"
+              >
+                ✕
+              </button>
+            )}
+          </header>
+
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -248,7 +257,7 @@ function ClubCard({ org, isFollowing, onToggle, pending }: ClubCardProps) {
       </div>
 
       {/* Subscribe button */}
-      <div className="shrink-0">
+      <div className="w-[145px] shrink-0 [&_button]:w-full">
         <Button
           variant={isFollowing ? "primary" : "secondary"}
           size="sm"
