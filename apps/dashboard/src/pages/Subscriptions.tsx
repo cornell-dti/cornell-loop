@@ -242,10 +242,11 @@ function SubscriptionRow({
 // ─── Subscriptions ────────────────────────────────────────────────────────────
 
 /**
- * Convert a followed org Doc to the SubscriptionItem display shape, using
- * the org's real listserv email + real message count from
- * `listservs.getSubscriptionInfoByOrgIds` (never `org.email`, and never
- * fabricated from `org.slug` — see that query's docstring for why).
+ * Convert a followed org Doc to the SubscriptionItem display shape. The email
+ * shown is the org's own contact address (`org.email`, set by admins or the
+ * org-profile parser), not its listserv address — students should see who to
+ * contact, not the list that mails them. The real message count still comes
+ * from `listservs.getSubscriptionInfoByOrgIds`.
  */
 function orgToSubscriptionItem(
   org: PublicOrg,
@@ -256,7 +257,7 @@ function orgToSubscriptionItem(
     orgAvatarUrl: org.avatarUrl,
     isVerified: org.isVerified,
     emailsReceived: info?.emailsReceived ?? 0,
-    emailAddress: info?.email ?? "No email on file",
+    emailAddress: org.email ?? "No email on file",
   };
 }
 
@@ -471,8 +472,8 @@ export function Subscriptions({
             <h1
               className={
                 "font-[family-name:var(--font-brand)] font-bold " +
-                "leading-[normal] text-[var(--font-size-wordmark)] " +
-                "whitespace-nowrap text-[var(--color-black)]"
+                "text-[length:var(--font-size-wordmark)] leading-[normal] " +
+                "whitespace-nowrap text-[color:var(--color-black)]"
               }
             >
               Email Subscriptions
@@ -511,7 +512,7 @@ export function Subscriptions({
                 "font-[family-name:var(--font-body)] font-normal",
                 "text-[length:var(--font-size-body3)] leading-[var(--line-height-body3)]",
                 "tracking-[var(--letter-spacing-body3)]",
-                "text-[var(--color-neutral-700)]",
+                "text-[color:var(--color-neutral-700)]",
                 "cursor-pointer whitespace-nowrap",
                 "hover:bg-[var(--color-surface-subtle)]",
                 "transition-colors duration-150",
@@ -604,9 +605,9 @@ export function Subscriptions({
             "px-[var(--space-4)] py-[var(--space-3)]",
             "shadow-[var(--shadow-1)]",
             "font-[family-name:var(--font-body)] font-medium",
-            "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
             "tracking-[var(--letter-spacing-body2)]",
-            "text-[var(--color-white)]",
+            "text-[color:var(--color-white)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
@@ -793,9 +794,9 @@ function UnsubscribeModal({
             "inline-flex items-center justify-center",
             "size-[var(--space-6)]",
             "rounded-[var(--radius-input)]",
-            "text-[var(--color-text-secondary)]",
+            "text-[color:var(--color-text-secondary)]",
             "hover:bg-[var(--color-surface-subtle)]",
-            "hover:text-[var(--color-text-default)]",
+            "hover:text-[color:var(--color-text-default)]",
             "cursor-pointer transition-colors duration-150",
           ].join(" ")}
         >
@@ -822,8 +823,8 @@ function UnsubscribeModal({
             <span
               className={[
                 "font-[family-name:var(--font-body)] font-semibold",
-                "text-[var(--color-secondary-900)]",
-                "text-[var(--font-size-h3)]",
+                "text-[color:var(--color-secondary-900)]",
+                "text-[length:var(--font-size-h3)]",
               ].join(" ")}
               style={{ fontVariationSettings: "'opsz' 14" }}
             >
@@ -843,8 +844,8 @@ function UnsubscribeModal({
             className={[
               "text-center",
               "font-[family-name:var(--font-body)] font-bold",
-              "leading-[var(--line-height-sub2)] text-[var(--font-size-sub2)]",
-              "text-[var(--color-neutral-900)]",
+              "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
+              "text-[color:var(--color-neutral-900)]",
             ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -854,9 +855,9 @@ function UnsubscribeModal({
             className={[
               "text-center whitespace-nowrap",
               "font-[family-name:var(--font-body)] font-normal",
-              "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+              "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
               "tracking-[var(--letter-spacing-body2)]",
-              "text-[var(--color-neutral-700)]",
+              "text-[color:var(--color-neutral-700)]",
             ].join(" ")}
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -869,9 +870,9 @@ function UnsubscribeModal({
           className={[
             "text-center",
             "font-[family-name:var(--font-body)] font-normal",
-            "leading-[var(--line-height-body2)] text-[var(--font-size-body2)]",
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
             "tracking-[var(--letter-spacing-body2)]",
-            "text-[var(--color-neutral-700)]",
+            "text-[color:var(--color-neutral-700)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
