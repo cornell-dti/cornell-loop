@@ -112,7 +112,10 @@ export function SortByTags({
               aria-label={`Add ${label}`}
               className="cursor-pointer"
             >
-              <Tag color="neutral">+ {label}</Tag>
+              <Tag color="neutral">
+                <span aria-hidden="true">+</span>
+                <span>{label}</span>
+              </Tag>
             </button>
           ))}
         </div>

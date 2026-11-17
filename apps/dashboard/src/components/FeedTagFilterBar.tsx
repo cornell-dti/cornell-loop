@@ -169,7 +169,10 @@ function AddTagPicker({ tags, onAdd, onRequestClose }: AddTagPickerProps) {
           aria-label={`Add ${tag}`}
           className="cursor-pointer transition-transform duration-150 hover:-translate-y-[1px]"
         >
-          <Tag color="neutral">+ {tag}</Tag>
+          <Tag color="neutral">
+            <span aria-hidden="true">+</span>
+            <span>{tag}</span>
+          </Tag>
         </button>
       ))}
     </div>
