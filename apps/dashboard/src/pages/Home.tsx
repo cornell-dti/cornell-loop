@@ -175,12 +175,20 @@ function HomeInner({
   className,
   ...rest
 }: HomeProps) {
-  // Get the current user's onboarding status from Convex
+  // Latch onboarding visibility after the initial profile load.
   const { loading, isOnboarded } = useCurrentProfile();
-  // Track whether the modal was dismissed during this page session
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  // Only show onboarding for users who haven't completed it
-  const showOnboarding = !loading && !isOnboarded && !onboardingDismissed;
+  const [shouldShowOnboarding, setShouldShowOnboarding] = useState(false);
+  const [onboardingInitialized, setOnboardingInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!loading && !onboardingInitialized) {
+      setShouldShowOnboarding(!isOnboarded);
+      setOnboardingInitialized(true);
+    }
+  }, [loading, isOnboarded, onboardingInitialized]);
+
+  const showOnboarding = shouldShowOnboarding && !onboardingDismissed;
 
   // ── Convex-backed feed data ────────────────────────────────────────────
   // Default to "followed" scope; the server transparently falls back to "all"

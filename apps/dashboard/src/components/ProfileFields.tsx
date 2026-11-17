@@ -461,7 +461,7 @@ export function ProfileInterestsField({
           onClick={() => setPickerOpen((v) => !v)}
           className={[
             "inline-flex items-center justify-center",
-            "px-[var(--space-2)] py-[var(--space-0-5)]",
+            "mt-[5.5px] px-[var(--space-2)] py-[var(--space-0-5)]",
             "rounded-[var(--radius-input)]",
             "bg-[var(--color-neutral-300)]",
             "text-[var(--color-neutral-700)]",
