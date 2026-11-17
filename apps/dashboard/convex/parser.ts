@@ -22,6 +22,10 @@ import {
   resolveYear,
 } from "./lib/eventDates";
 import {
+  normalizeModelConfidence,
+  scoreParseQuality,
+} from "./lib/parseQuality";
+import {
   eventDocValidator,
   parseRunDocValidator,
   parsedItemValidator,
@@ -101,6 +105,10 @@ type ParsedItem = {
     | "international"
     | "graduate";
   perks: Array<"food" | "swag" | "prizes" | "travel_covered" | "paid">;
+  /** How complete this item's extraction is — see lib/parseQuality.ts. */
+  confidence: number;
+  /** This item's own warnings, plus the message-level ones. */
+  warnings: string[];
 };
 
 type SourceMessage = Doc<"listservMessages"> & {
@@ -206,14 +214,12 @@ export const runParseInternal = internalAction({
             continue;
           }
 
+          // Each item carries its own confidence and warnings, with the
+          // message-level ones already merged in, so nothing message-wide is
+          // passed separately.
           const stored = (await ctx.runMutation(
             internal.parser.storeParsedEvents,
-            {
-              messageId: message._id,
-              items: normalized.items,
-              confidence: normalized.confidence,
-              warnings: normalized.warnings,
-            },
+            { messageId: message._id, items: normalized.items },
           )) as { created: number; skippedDuplicate: number };
           messagesParsed += 1;
           eventsCreated += stored.created;
@@ -737,8 +743,6 @@ export const markMessageFailed = internalMutation({
 export const storeParsedEvents = internalMutation({
   args: {
     messageId: v.id("listservMessages"),
-    confidence: v.number(),
-    warnings: v.array(v.string()),
     items: v.array(parsedItemValidator),
   },
   returns: v.object({ created: v.number(), skippedDuplicate: v.number() }),
@@ -808,8 +812,10 @@ export const storeParsedEvents = internalMutation({
         targetAudience: item.targetAudience,
         perks: item.perks,
         visibility: "draft",
-        parseConfidence: args.confidence,
-        parseWarnings: args.warnings,
+        // Per item: `args.confidence` / `args.warnings` describe the message
+        // as a whole and are already folded into each item's own values.
+        parseConfidence: item.confidence,
+        parseWarnings: item.warnings,
         dedupeKey,
         createdAt: now,
         updatedAt: now,
@@ -915,6 +921,76 @@ export const fixDraftEventYears = internalMutation({
     }
 
     return { scanned, changed, skippedNoSource, samples };
+  },
+});
+
+/**
+ * One-off rescore for drafts stored before confidence became a measure of the
+ * extraction rather than the model's self-report. Reads the same fields
+ * `scoreParseQuality` reads at parse time, so a rescored draft and a freshly
+ * parsed one are directly comparable. Drafts only.
+ *
+ * Run `npx convex run parser:rescoreDraftConfidence '{"dryRun": true}'` first
+ * and read `samples`; re-run without `dryRun` to write.
+ */
+export const rescoreDraftConfidence = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    scanned: v.number(),
+    changed: v.number(),
+    samples: v.array(
+      v.object({
+        title: v.string(),
+        before: v.number(),
+        after: v.number(),
+        reasons: v.array(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const samples: Array<{
+      title: string;
+      before: number;
+      after: number;
+      reasons: string[];
+    }> = [];
+    let scanned = 0;
+    let changed = 0;
+
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    for await (const draft of drafts) {
+      scanned += 1;
+      const before = draft.parseConfidence ?? 0;
+      // `droppedDate` is unknowable after the fact — whatever was dropped is
+      // gone — so it is left false here. Those items already carry the
+      // parser's own warning about it.
+      const quality = scoreParseQuality(
+        draft,
+        normalizeModelConfidence(before),
+      );
+      if (quality.confidence === before) continue;
+
+      changed += 1;
+      if (samples.length < 20) {
+        samples.push({
+          title: draft.title,
+          before,
+          after: quality.confidence,
+          reasons: quality.reasons,
+        });
+      }
+      if (args.dryRun) continue;
+
+      await ctx.db.patch(draft._id, {
+        parseConfidence: quality.confidence,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { scanned, changed, samples };
   },
 });
 
@@ -1093,7 +1169,7 @@ Return this exact shape:
   "messageType": "events" | "opportunities" | "newsletter" | "admin" | "irrelevant",
   "shouldPublish": false,
   "summary": string,
-  "confidence": number,
+  "confidence": number,  // whole number 0-100, not a fraction
   "warnings": string[],
   "items": [{
     "title": string,
@@ -1115,6 +1191,8 @@ Return this exact shape:
 
 Tags: choose 0-3 tags for each item, copied exactly from this list and no others: ${CANONICAL_TAGS.join(", ")}.
 
+Confidence: an integer from 0 to 100 (a whole-number percentage, so 85 means 85% — never 0.85), for how well this email supports the items you extracted.
+
 Rules: ignore unsubscribe text, confirmations, and admin/list-manager mail. In "dates", "month" is 1-12, "day" is 1-31, "hour" is 0-23 on a 24-hour clock, and "minute" is 0-59. If no useful item exists, return items: [] and messageType "irrelevant" or "admin". Drafts are reviewed by admins, so shouldPublish must always be false.
 
 Email input:
@@ -1129,14 +1207,20 @@ function normalizeParseResult(
   const warnings = Array.isArray(raw.warnings)
     ? raw.warnings.map(String).slice(0, 20)
     : [];
+  // Rescaled rather than clamped: the prompt used to leave the scale unstated
+  // and the model answered 0-1, which `clampNumber(…, 0, 100)` passed through
+  // untouched and the admin badge then rendered as "0.9%".
+  const modelConfidence = normalizeModelConfidence(Number(raw.confidence));
   const items = Array.isArray(raw.items)
-    ? raw.items.flatMap((item) => normalizeItem(item, warnings, receivedAt))
+    ? raw.items.flatMap((item) =>
+        normalizeItem(item, warnings, receivedAt, modelConfidence),
+      )
     : [];
   return {
     messageType: normalizeMessageType(raw.messageType),
     shouldPublish: false,
     summary: String(raw.summary ?? "").slice(0, 500),
-    confidence: clampNumber(raw.confidence, 0, 100),
+    confidence: modelConfidence,
     warnings,
     items,
   };
@@ -1144,39 +1228,51 @@ function normalizeParseResult(
 
 function normalizeItem(
   item: unknown,
-  warnings: string[],
+  messageWarnings: string[],
   receivedAt: number,
+  modelConfidence: number,
 ): ParsedItem[] {
   if (!isRecord(item)) return [];
   const title = String(item.title ?? "").trim();
   const description = String(item.description ?? "").trim();
   if (!title || !description) return [];
-  const dates = normalizeDates(item.dates, receivedAt, title, warnings);
-  if (
-    dates.length === 0 &&
-    (!Array.isArray(item.links) || item.links.length === 0)
-  ) {
-    warnings.push(`Low detail item: ${title}`);
+
+  // Collected per item, then merged with the message-level ones, so a warning
+  // about this item's dates lands on this item rather than on every draft the
+  // email produced.
+  const itemWarnings: string[] = [];
+  const dates = normalizeDates(item.dates, receivedAt, title, itemWarnings);
+  const droppedDate = itemWarnings.some((warning) =>
+    warning.startsWith("Dropped impossible date"),
+  );
+
+  const scored: Omit<ParsedItem, "confidence" | "warnings"> = {
+    title,
+    description,
+    aiDescription: String(item.aiDescription ?? description).slice(0, 220),
+    eventType: normalizeEventType(item.eventType),
+    hosts: normalizeHosts(item.hosts),
+    dates,
+    isRecurring: Boolean(item.isRecurring),
+    recurrenceNote: optionalString(item.recurrenceNote),
+    location: normalizeLocation(item.location),
+    links: normalizeLinks(item.links),
+    contacts: normalizeContacts(item.contacts),
+    tags: Array.isArray(item.tags) ? normalizeTags(item.tags.map(String)) : [],
+    targetAudience: normalizeAudience(item.targetAudience),
+    perks: normalizePerks(item.perks),
+  };
+
+  const quality = scoreParseQuality(scored, modelConfidence, { droppedDate });
+  if (quality.reasons.length > 0) {
+    itemWarnings.push(`Missing: ${quality.reasons.join(", ")}`);
   }
 
   return [
     {
-      title,
-      description,
-      aiDescription: String(item.aiDescription ?? description).slice(0, 220),
-      eventType: normalizeEventType(item.eventType),
-      hosts: normalizeHosts(item.hosts),
-      dates,
-      isRecurring: Boolean(item.isRecurring),
-      recurrenceNote: optionalString(item.recurrenceNote),
-      location: normalizeLocation(item.location),
-      links: normalizeLinks(item.links),
-      contacts: normalizeContacts(item.contacts),
-      tags: Array.isArray(item.tags)
-        ? normalizeTags(item.tags.map(String))
-        : [],
-      targetAudience: normalizeAudience(item.targetAudience),
-      perks: normalizePerks(item.perks),
+      ...scored,
+      confidence: quality.confidence,
+      warnings: [...itemWarnings, ...messageWarnings].slice(0, 20),
     },
   ];
 }
@@ -1395,12 +1491,6 @@ function isPerk(value: unknown): value is ParsedItem["perks"][number] {
 
 function optionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function clampNumber(value: unknown, min: number, max: number) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return min;
-  return Math.max(min, Math.min(max, number));
 }
 
 function normalizeKey(value: string) {

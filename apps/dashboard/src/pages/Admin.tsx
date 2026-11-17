@@ -18,6 +18,10 @@ import {
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import {
+  normalizeModelConfidence,
+  scoreParseQuality,
+} from "../../convex/lib/parseQuality";
+import {
   CANONICAL_TAGS,
   normalizeTags,
   type CanonicalTag,
@@ -4476,7 +4480,10 @@ function DraftCard({
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold">{event.title}</span>
                 <Tag>{event.eventType}</Tag>
-                <ConfidenceBadge value={event.parseConfidence ?? 0} />
+                <ConfidenceBadge
+                  value={event.parseConfidence ?? 0}
+                  title={confidenceExplanation(event)}
+                />
               </div>
               <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
                 {event.aiDescription || event.description}
@@ -4977,7 +4984,22 @@ function GmailDot({ status }: { status: GmailStatus | undefined }) {
   );
 }
 
-function ConfidenceBadge({ value }: { value: number }) {
+/**
+ * Why a draft scored what it did, for the badge's tooltip. Recomputed from the
+ * same module the parser scores with rather than stored, so the explanation
+ * can never drift from the number next to it.
+ */
+function confidenceExplanation(event: EventDoc) {
+  const { reasons } = scoreParseQuality(
+    event,
+    normalizeModelConfidence(event.parseConfidence ?? 0),
+  );
+  return reasons.length === 0
+    ? "Nothing missing from this item."
+    : `Missing: ${reasons.join(", ")}`;
+}
+
+function ConfidenceBadge({ value, title }: { value: number; title?: string }) {
   const color =
     value >= 80
       ? "bg-green-100 text-green-800"
@@ -4986,6 +5008,7 @@ function ConfidenceBadge({ value }: { value: number }) {
         : "bg-red-100 text-red-700";
   return (
     <span
+      title={title}
       className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${color}`}
     >
       {value}%
