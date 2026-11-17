@@ -1099,6 +1099,31 @@ export const updateJoinStatus = mutation({
   },
 });
 
+/**
+ * File a row away from the Join tab's working list, or put it back.
+ *
+ * Distinct from rejecting the source (`sourceAdmin.ignoreSender`, which pauses
+ * the row): archiving only affects where the Join tab shows it, so a dead or
+ * spam list can stop crowding the queue while its mail is still attributed to
+ * whatever organization it already has.
+ */
+export const setJoinArchived = mutation({
+  args: {
+    token: v.string(),
+    listservId: v.id("listservs"),
+    archived: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    await ctx.db.patch(args.listservId, {
+      joinArchivedAt: args.archived ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 export const updateListservNotes = mutation({
   args: {
     token: v.string(),

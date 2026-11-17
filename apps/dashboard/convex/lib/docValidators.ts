@@ -108,6 +108,7 @@ export const listservDocValidator = v.object({
   notes: v.optional(v.string()),
   lastReceivedAt: v.optional(v.number()),
   isPrimary: v.optional(v.boolean()),
+  joinArchivedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -327,6 +328,11 @@ export const parsedItemValidator = v.object({
   tags: v.array(v.string()),
   targetAudience: v.optional(targetAudienceValidator),
   perks: v.array(perkValidator),
+  // Scored per item rather than per message (see lib/parseQuality.ts): one
+  // newsletter routinely yields one well-specified event and one vague
+  // mention, and a shared score described neither.
+  confidence: v.number(),
+  warnings: v.array(v.string()),
 });
 
 export const eventDocValidator = v.object({
