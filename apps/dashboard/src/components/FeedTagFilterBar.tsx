@@ -38,7 +38,7 @@ export function FeedTagFilterBar({
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
+      <div className="flex items-center gap-[var(--space-3)] overflow-x-auto pb-[var(--space-2)] [scrollbar-width:thin]">
         {tags.map((tag) => (
           <button
             key={tag}
