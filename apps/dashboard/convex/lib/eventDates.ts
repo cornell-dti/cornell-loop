@@ -108,6 +108,18 @@ export function resolveYear(
   return candidate < receivedAt - graceMs ? received.year + 1 : received.year;
 }
 
+/**
+ * True when every date on an item is already behind `now`: the event or
+ * deadline it describes has happened. An item with no dates is never past,
+ * since there is nothing to say it is over.
+ */
+export function isPastEvent(
+  dates: ReadonlyArray<{ timestamp: number }>,
+  now: number,
+): boolean {
+  return dates.length > 0 && dates.every((date) => date.timestamp < now);
+}
+
 /** The {@link SOURCE_TIMEZONE} UTC offset in milliseconds at `timestamp`. */
 function zoneOffsetMs(timestamp: number): number {
   const offset = new Intl.DateTimeFormat("en-US", {

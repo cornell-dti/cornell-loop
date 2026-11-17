@@ -131,9 +131,7 @@ export function inputValueFrom(html: string, field: string) {
  */
 export function submitValueFrom(html: string) {
   const match =
-    html.match(
-      /<button[^>]+name=["']submit["'][^>]*value=["']([^"']*)["']/i,
-    ) ??
+    html.match(/<button[^>]+name=["']submit["'][^>]*value=["']([^"']*)["']/i) ??
     html.match(/<button[^>]+value=["']([^"']*)["'][^>]*name=["']submit["']/i);
   return match?.[1] ?? null;
 }
