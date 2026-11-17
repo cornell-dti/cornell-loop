@@ -1,20 +1,54 @@
 import { v } from "convex/values";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+} from "convex/server";
 import { internal } from "./_generated/api";
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   mutation,
   query,
 } from "./_generated/server";
 import { requireAdminToken } from "./_shared/adminToken";
+import { isRecord } from "./lib/ai";
+import { isListAdminNoise } from "./lib/cornellLists";
+import {
+  SOURCE_TIMEZONE,
+  epochMsToLocalParts,
+  isPastEvent,
+  localPartsToEpochMs,
+  resolveYear,
+} from "./lib/eventDates";
+import {
+  normalizeModelConfidence,
+  scoreParseQuality,
+} from "./lib/parseQuality";
+import {
+  eventDocValidator,
+  parseRunDocValidator,
+  parsedItemValidator,
+} from "./lib/docValidators";
 import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import { CANONICAL_TAGS, normalizeTags } from "./lib/tags";
 
 declare const process: { env: Record<string, string | undefined> };
 
 const DEFAULT_OPENAI_PARSE_MODEL = "gpt-4o-mini";
 const DEFAULT_GEMINI_PARSE_MODEL = "gemini-2.5-flash";
 const MAX_MESSAGES_PER_RUN = 10;
+/** Bound on the "how many need assignment" estimate — see `overview`. */
+const NEEDS_ASSIGNMENT_SCAN_LIMIT = 500;
+/** Bound on the draft counts in `overview`; the list itself is paginated. */
+const DRAFT_COUNT_SCAN_LIMIT = 1000;
+/**
+ * Drafts hidden per `hidePastDrafts` call, keeping one call well inside a
+ * mutation's write limits. A larger backlog reports `remaining` instead.
+ */
+const HIDE_PAST_BATCH = 500;
 
 type AIProvider = "openai" | "gemini";
 type AIConfig = {
@@ -79,6 +113,10 @@ type ParsedItem = {
     | "international"
     | "graduate";
   perks: Array<"food" | "swag" | "prizes" | "travel_covered" | "paid">;
+  /** How complete this item's extraction is — see lib/parseQuality.ts. */
+  confidence: number;
+  /** This item's own warnings, plus the message-level ones. */
+  warnings: string[];
 };
 
 type SourceMessage = Doc<"listservMessages"> & {
@@ -86,15 +124,55 @@ type SourceMessage = Doc<"listservMessages"> & {
   organization?: Doc<"orgs"> | null;
 };
 
+type ParseRunSummary = {
+  messagesScanned: number;
+  messagesParsed: number;
+  eventsCreated: number;
+  eventsSkippedDuplicate: number;
+  messagesIgnored: number;
+};
+
+const PARSE_RUN_SUMMARY_VALIDATOR = v.object({
+  messagesScanned: v.number(),
+  messagesParsed: v.number(),
+  eventsCreated: v.number(),
+  eventsSkippedDuplicate: v.number(),
+  messagesIgnored: v.number(),
+});
+
 export const runParseNow = action({
   args: { token: v.string(), messageId: v.optional(v.id("listservMessages")) },
-  handler: async (ctx, args) => {
+  returns: PARSE_RUN_SUMMARY_VALIDATOR,
+  handler: async (ctx, args): Promise<ParseRunSummary> => {
     requireAdminToken(args.token);
+    return await ctx.runAction(internal.parser.runParseInternal, {
+      trigger: args.messageId ? "single_message" : "manual",
+      messageId: args.messageId,
+    });
+  },
+});
+
+/**
+ * The actual parse run, callable without an admin token so the cron can run
+ * it directly. `runParseNow` (above) is the token-gated public entry point the
+ * admin UI calls; both funnel through here so there is exactly one
+ * implementation of the run loop.
+ */
+export const runParseInternal = internalAction({
+  args: {
+    trigger: v.union(
+      v.literal("manual"),
+      v.literal("cron"),
+      v.literal("single_message"),
+    ),
+    messageId: v.optional(v.id("listservMessages")),
+  },
+  handler: async (ctx, args): Promise<ParseRunSummary> => {
     const aiConfig = getAIConfig();
     const runId: Id<"parseRuns"> = await ctx.runMutation(
       internal.parser.startParseRun,
       {
-        trigger: args.messageId ? "single_message" : "manual",
+        trigger: args.trigger,
         provider: aiConfig.provider,
         model: aiConfig.model,
       },
@@ -103,7 +181,7 @@ export const runParseNow = action({
     let messagesScanned = 0;
     let messagesParsed = 0;
     let eventsCreated = 0;
-    let eventsUpdated = 0;
+    let eventsSkippedDuplicate = 0;
     let messagesIgnored = 0;
 
     try {
@@ -128,7 +206,7 @@ export const runParseNow = action({
 
         try {
           const result = await parseMessageWithAI(message, aiConfig);
-          const normalized = normalizeParseResult(result);
+          const normalized = normalizeParseResult(result, message.receivedAt);
           if (
             normalized.items.length === 0 ||
             normalized.messageType === "irrelevant" ||
@@ -144,18 +222,16 @@ export const runParseNow = action({
             continue;
           }
 
+          // Each item carries its own confidence and warnings, with the
+          // message-level ones already merged in, so nothing message-wide is
+          // passed separately.
           const stored = (await ctx.runMutation(
             internal.parser.storeParsedEvents,
-            {
-              messageId: message._id,
-              items: normalized.items,
-              confidence: normalized.confidence,
-              warnings: normalized.warnings,
-            },
-          )) as { created: number; updated: number };
+            { messageId: message._id, items: normalized.items },
+          )) as { created: number; skippedDuplicate: number };
           messagesParsed += 1;
           eventsCreated += stored.created;
-          eventsUpdated += stored.updated;
+          eventsSkippedDuplicate += stored.skippedDuplicate;
         } catch (error) {
           await ctx.runMutation(internal.parser.markMessageFailed, {
             messageId: message._id,
@@ -170,14 +246,14 @@ export const runParseNow = action({
         messagesScanned,
         messagesParsed,
         eventsCreated,
-        eventsUpdated,
+        eventsSkippedDuplicate,
         messagesIgnored,
       });
       return {
         messagesScanned,
         messagesParsed,
         eventsCreated,
-        eventsUpdated,
+        eventsSkippedDuplicate,
         messagesIgnored,
       };
     } catch (error) {
@@ -187,7 +263,7 @@ export const runParseNow = action({
         messagesScanned,
         messagesParsed,
         eventsCreated,
-        eventsUpdated,
+        eventsSkippedDuplicate,
         messagesIgnored,
         error: formatError(error),
       });
@@ -198,84 +274,338 @@ export const runParseNow = action({
 
 export const publishEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const now = Date.now();
+    await publishEventById(ctx, args.eventId);
+    return null;
+  },
+});
 
-    await ctx.db.patch(args.eventId, {
-      visibility: "published",
-      updatedAt: now,
-    });
-
-    // Insert the eventOrgs join so the org name appears in the feed post header.
-    // organizationId now points directly to `orgs`, so no cross-table sync needed.
-    const event = await ctx.db.get(args.eventId);
-    if (!event?.organizationId) return;
-
-    const existing = await ctx.db
-      .query("eventOrgs")
-      .withIndex("by_event", (q) => q.eq("eventId", args.eventId))
-      .filter((q) => q.eq(q.field("orgId"), event.organizationId!))
-      .unique();
-
-    if (existing === null) {
-      await ctx.db.insert("eventOrgs", {
-        eventId: args.eventId,
-        orgId: event.organizationId,
-        eventCreationTime: event._creationTime,
-      });
+/**
+ * Publish several drafts in one call, so approving a parse run's worth of
+ * items doesn't require one click per draft. Reuses `publishEventById` so the
+ * `eventOrgs` write and the draft-only guard stay identical to the
+ * single-event path.
+ */
+export const publishEvents = mutation({
+  args: { token: v.string(), eventIds: v.array(v.id("events")) },
+  returns: v.object({ published: v.number(), skipped: v.number() }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    let published = 0;
+    let skipped = 0;
+    for (const eventId of args.eventIds) {
+      if (await publishEventById(ctx, eventId)) {
+        published += 1;
+      } else {
+        skipped += 1;
+      }
     }
+    return { published, skipped };
+  },
+});
+
+/**
+ * Publish one event, or no-op if it is not currently a draft. Returns whether
+ * it published, so a bulk caller can report a per-item outcome.
+ *
+ * The guard matters because a `hidden` event is a decision an admin already
+ * made — rejecting it — and without checking the current visibility a stale
+ * client reference or a race with another admin tab could silently undo
+ * that.
+ */
+async function publishEventById(ctx: MutationCtx, eventId: Id<"events">) {
+  const event = await ctx.db.get(eventId);
+  if (!event || event.visibility !== "draft") return false;
+
+  const now = Date.now();
+  await ctx.db.patch(eventId, {
+    visibility: "published",
+    updatedAt: now,
+  });
+
+  // Insert the eventOrgs join so the org name appears in the feed post header.
+  // organizationId now points directly to `orgs`, so no cross-table sync needed.
+  if (!event.organizationId) return true;
+
+  const existing = await ctx.db
+    .query("eventOrgs")
+    .withIndex("by_event", (q) => q.eq("eventId", eventId))
+    .filter((q) => q.eq(q.field("orgId"), event.organizationId!))
+    .unique();
+
+  if (existing === null) {
+    await ctx.db.insert("eventOrgs", {
+      eventId,
+      orgId: event.organizationId,
+      eventCreationTime: event._creationTime,
+    });
+  }
+  return true;
+}
+
+/**
+ * Move a message back to `processingStatus: "new"` so the next parse run
+ * picks it up again. Without this, recovering a `failed` or `ignored`
+ * message meant opening the Convex dashboard by hand.
+ */
+export const requeueMessage = mutation({
+  args: { token: v.string(), messageId: v.id("listservMessages") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const message = await ctx.db.get(args.messageId);
+    if (!message) throw new Error("Message not found.");
+    if (message.processingStatus === "new") return null;
+
+    await ctx.db.patch(args.messageId, {
+      processingStatus: "new",
+      parseError: undefined,
+    });
+    return null;
   },
 });
 
 export const hideEvent = mutation({
   args: { token: v.string(), eventId: v.id("events") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
     await ctx.db.patch(args.eventId, {
       visibility: "hidden",
       updatedAt: Date.now(),
     });
+    return null;
   },
+});
+
+/**
+ * Hides every draft whose dates are all in the past, across the whole draft
+ * backlog rather than only the page the admin has loaded. Drafts only, so
+ * nothing already published is touched.
+ *
+ * Capped at {@link HIDE_PAST_BATCH} hides per call; `remaining` says whether
+ * another click is needed.
+ */
+export const hidePastDrafts = mutation({
+  args: { token: v.string() },
+  returns: v.object({ hidden: v.number(), remaining: v.boolean() }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const now = Date.now();
+
+    // Read before writing: each patch moves a row out of the very index range
+    // being scanned.
+    const drafts = await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .take(DRAFT_COUNT_SCAN_LIMIT);
+    const past = drafts.filter((draft) => isPastEvent(draft.dates, now));
+    const batch = past.slice(0, HIDE_PAST_BATCH);
+
+    for (const draft of batch) {
+      await ctx.db.patch(draft._id, { visibility: "hidden", updatedAt: now });
+    }
+
+    return {
+      hidden: batch.length,
+      // A truncated scan only counts as "more to do" if this call hid
+      // something, since hiding is what makes room to scan further; otherwise
+      // a backlog of current drafts past the scan limit would ask for another
+      // click forever.
+      remaining:
+        past.length > batch.length ||
+        (drafts.length === DRAFT_COUNT_SCAN_LIMIT && batch.length > 0),
+    };
+  },
+});
+
+/** True if `value` is a well-formed http(s) URL. */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export const updateDraftEvent = mutation({
+  args: {
+    token: v.string(),
+    eventId: v.id("events"),
+    title: v.string(),
+    description: v.string(),
+    aiDescription: v.string(),
+    eventType: v.union(
+      v.literal("event"),
+      v.literal("opportunity"),
+      v.literal("hackathon"),
+      v.literal("courses"),
+      v.literal("fundraiser"),
+      v.literal("info"),
+    ),
+    dates: v.array(
+      v.object({
+        timestamp: v.number(),
+        type: v.union(
+          v.literal("start"),
+          v.literal("end"),
+          v.literal("deadline"),
+          v.literal("single"),
+        ),
+      }),
+    ),
+    location: v.optional(
+      v.object({
+        displayText: v.string(),
+        address: v.optional(v.string()),
+        isVirtual: v.boolean(),
+        buildingCode: v.optional(v.string()),
+      }),
+    ),
+    links: v.array(
+      v.object({
+        url: v.string(),
+        type: v.union(
+          v.literal("registration"),
+          v.literal("application"),
+          v.literal("rsvp"),
+          v.literal("info"),
+          v.literal("social"),
+        ),
+        label: v.optional(v.string()),
+      }),
+    ),
+    tags: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const event = await ctx.db.get(args.eventId);
+    if (!event) throw new Error("Event not found.");
+    if (event.visibility !== "draft") {
+      throw new Error("Only draft events can be edited.");
+    }
+
+    // Drop blank rows (e.g. an "Add link" row left empty) and reject anything
+    // left over that isn't a well-formed http(s) URL — never trust the client
+    // for this even though the admin UI validates the same thing.
+    const links = args.links
+      .map((link) => ({
+        url: link.url.trim(),
+        type: link.type,
+        label: link.label?.trim() || undefined,
+      }))
+      .filter((link) => link.url.length > 0);
+    const invalidLink = links.find((link) => !isValidHttpUrl(link.url));
+    if (invalidLink) {
+      throw new Error(
+        `"${invalidLink.url}" is not a valid http(s) URL. Fix or remove it before saving.`,
+      );
+    }
+
+    await ctx.db.patch(args.eventId, {
+      title: args.title.trim(),
+      description: args.description.trim(),
+      aiDescription: args.aiDescription.trim(),
+      eventType: args.eventType,
+      dates: args.dates,
+      location: args.location,
+      links,
+      tags: normalizeTags(args.tags),
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+const PARSE_MESSAGE_PROJECTION_VALIDATOR = v.object({
+  _id: v.id("listservMessages"),
+  _creationTime: v.number(),
+  subject: v.string(),
+  senderEmail: v.string(),
+  processingStatus: v.union(
+    v.literal("new"),
+    v.literal("parsed"),
+    v.literal("ignored"),
+    v.literal("failed"),
+  ),
+  parseError: v.optional(v.string()),
+  organizationId: v.optional(v.id("orgs")),
+  listservId: v.optional(v.id("listservs")),
+  receivedAt: v.number(),
 });
 
 export const overview = query({
   args: { token: v.string() },
+  returns: v.object({
+    runs: v.array(parseRunDocValidator),
+    failedMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    ignoredMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    needsAssignmentCount: v.number(),
+    readyCount: v.number(),
+    readyScanTruncated: v.boolean(),
+    draftCount: v.number(),
+    pastDraftCount: v.number(),
+    draftScanTruncated: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const [runs, drafts, failedMessages, newMessages] = await Promise.all([
-      ctx.db
-        .query("parseRuns")
-        .withIndex("by_started_at")
-        .order("desc")
-        .take(20),
-      ctx.db
-        .query("events")
-        .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
-        .order("desc")
-        .take(50),
-      ctx.db
-        .query("listservMessages")
-        .withIndex("by_processing_status", (q) =>
-          q.eq("processingStatus", "failed"),
-        )
-        .order("desc")
-        .take(25),
-      ctx.db
-        .query("listservMessages")
-        .withIndex("by_processing_status", (q) =>
-          q.eq("processingStatus", "new"),
-        )
-        .order("desc")
-        .take(200),
-    ]);
+    const [runs, drafts, failedMessages, ignoredMessages, newMessages] =
+      await Promise.all([
+        ctx.db
+          .query("parseRuns")
+          .withIndex("by_started_at")
+          .order("desc")
+          .take(20),
+        // Counted only — the list an admin reviews is `listDrafts`, which
+        // paginates, so the header can say how big the backlog is while the
+        // page loads it a screenful at a time.
+        ctx.db
+          .query("events")
+          .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+          .take(DRAFT_COUNT_SCAN_LIMIT),
+        ctx.db
+          .query("listservMessages")
+          .withIndex("by_processing_status", (q) =>
+            q.eq("processingStatus", "failed"),
+          )
+          .order("desc")
+          .take(25),
+        // No mutation used to move a message off `ignored` until `requeueMessage`
+        // — surfaced here so there's somewhere in the UI to click it.
+        ctx.db
+          .query("listservMessages")
+          .withIndex("by_processing_status", (q) =>
+            q.eq("processingStatus", "ignored"),
+          )
+          .order("desc")
+          .take(25),
+        // Bounded window behind both of the header's "new" message counts: how
+        // many are blocked on sender assignment, and how many are ready to
+        // parse. The ready *queue* is still paginated by `listReadyMessages`,
+        // because listing it is a different job from counting it.
+        ctx.db
+          .query("listservMessages")
+          .withIndex("by_processing_status", (q) =>
+            q.eq("processingStatus", "new"),
+          )
+          .order("desc")
+          .take(NEEDS_ASSIGNMENT_SCAN_LIMIT),
+      ]);
 
-    const readyMessages = newMessages.filter(
-      (m) => m.organizationId !== undefined,
-    );
     const needsAssignment = newMessages.filter(
       (m) => m.organizationId === undefined,
     );
+    // Counted here rather than from the first page of `listReadyMessages`,
+    // which filters unassigned rows out *after* paginating: when the newest 25
+    // "new" messages are all unassigned — the normal state while the Sources
+    // backlog is large — that page comes back empty and the admin page
+    // concluded there was nothing to parse, disabling the only control that
+    // runs the parser.
+    const readyCount = newMessages.length - needsAssignment.length;
 
     // Project only what the admin UI needs — no email body content sent to client.
     const projectMessage = (m: (typeof failedMessages)[number]) => ({
@@ -290,12 +620,91 @@ export const overview = query({
       receivedAt: m.receivedAt,
     });
 
+    // Convex does not re-run a query as the clock moves, so a draft that ages
+    // past its last date is counted as past on the next change to `events`
+    // or the next page load — soon enough for a backlog count.
+    const now = Date.now();
+    const pastDraftCount = drafts.filter((draft) =>
+      isPastEvent(draft.dates, now),
+    ).length;
+
     return {
       runs,
-      drafts,
       failedMessages: failedMessages.map(projectMessage),
-      readyMessages: readyMessages.map(projectMessage),
+      ignoredMessages: ignoredMessages.map(projectMessage),
       needsAssignmentCount: needsAssignment.length,
+      readyCount,
+      // Both counts above describe the newest `NEEDS_ASSIGNMENT_SCAN_LIMIT`
+      // messages only, so the UI can show them as "at least this many".
+      readyScanTruncated: newMessages.length === NEEDS_ASSIGNMENT_SCAN_LIMIT,
+      draftCount: drafts.length,
+      pastDraftCount,
+      draftScanTruncated: drafts.length === DRAFT_COUNT_SCAN_LIMIT,
+    };
+  },
+});
+
+/**
+ * The drafts awaiting review, newest first. Paginated so a backlog past one
+ * screenful is reachable through "Load more" rather than silently cut off,
+ * which is what the previous fixed `take(50)` did.
+ */
+export const listDrafts = query({
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(eventDocValidator),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .order("desc")
+      .paginate(args.paginationOpts);
+  },
+});
+
+/**
+ * The actual ready-to-parse queue: `processingStatus: "new"` messages that
+ * already have an organization assigned. Paginated rather than capped, so a
+ * real backlog is both visible and inspectable rather than showing a number
+ * that quietly stopped counting past 200.
+ *
+ * `by_processing_status` has no compound index on `organizationId`, so the
+ * organization filter runs per page in TypeScript. Convex pagination
+ * tolerates this — a filtered page can come back shorter than requested —
+ * which is an acceptable trade at this table's size.
+ */
+export const listReadyMessages = query({
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  // `paginate()` returns `splitCursor`/`pageStatus` alongside `page`,
+  // `isDone`, and `continueCursor` — a hand-rolled v.object() that omits
+  // them fails ReturnsValidationError on every call. Convex ships this
+  // factory precisely so the validator stays in sync with what
+  // `.paginate()` actually returns.
+  returns: paginationResultValidator(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const result = await ctx.db
+      .query("listservMessages")
+      .withIndex("by_processing_status", (q) => q.eq("processingStatus", "new"))
+      .order("desc")
+      .paginate(args.paginationOpts);
+
+    return {
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+      page: result.page
+        .filter((m) => m.organizationId !== undefined)
+        .map((m) => ({
+          _id: m._id,
+          _creationTime: m._creationTime,
+          subject: m.subject,
+          senderEmail: m.senderEmail,
+          processingStatus: m.processingStatus,
+          parseError: m.parseError,
+          organizationId: m.organizationId,
+          listservId: m.listservId,
+          receivedAt: m.receivedAt,
+        })),
     };
   },
 });
@@ -371,7 +780,7 @@ export const finishParseRun = internalMutation({
     messagesScanned: v.number(),
     messagesParsed: v.number(),
     eventsCreated: v.number(),
-    eventsUpdated: v.number(),
+    eventsSkippedDuplicate: v.number(),
     messagesIgnored: v.number(),
     error: v.optional(v.string()),
   },
@@ -382,7 +791,10 @@ export const finishParseRun = internalMutation({
       messagesScanned: args.messagesScanned,
       messagesParsed: args.messagesParsed,
       eventsCreated: args.eventsCreated,
-      eventsUpdated: args.eventsUpdated,
+      // Always 0 going forward — a dedupe hit is now reported as a skip
+      // (eventsSkippedDuplicate), not an "update", since nothing is written.
+      eventsUpdated: 0,
+      eventsSkippedDuplicate: args.eventsSkippedDuplicate,
       messagesIgnored: args.messagesIgnored,
       error: args.error,
     });
@@ -412,10 +824,9 @@ export const markMessageFailed = internalMutation({
 export const storeParsedEvents = internalMutation({
   args: {
     messageId: v.id("listservMessages"),
-    confidence: v.number(),
-    warnings: v.array(v.string()),
-    items: v.array(v.any()),
+    items: v.array(parsedItemValidator),
   },
+  returns: v.object({ created: v.number(), skippedDuplicate: v.number() }),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) throw new Error("Message not found.");
@@ -427,13 +838,29 @@ export const storeParsedEvents = internalMutation({
       : null;
     if (!organization) throw new Error("Message has no organization.");
 
+    // Reparsing an already-parsed message would otherwise insert a second
+    // copy of every item and leave the first behind. Clear this message's
+    // own prior drafts before storing the fresh parse — never `published` or
+    // `hidden` ones, since those are decisions an admin already made.
+    const priorDrafts = await ctx.db
+      .query("events")
+      .withIndex("by_source_message", (q) =>
+        q.eq("sourceMessageId", args.messageId),
+      )
+      .collect();
+    for (const draft of priorDrafts) {
+      if (draft.visibility === "draft") await ctx.db.delete(draft._id);
+    }
+
     const now = Date.now();
     let created = 0;
-    let updated = 0;
+    let skippedDuplicate = 0;
 
-    for (const rawItem of args.items) {
-      const item = rawItem as ParsedItem;
-      const dedupeKey = buildDedupeKey(item);
+    for (const item of args.items) {
+      // Scoped to the organization: two orgs can legitimately announce the
+      // same career fair, and without organizationId in the key the second
+      // one collided with the first and was dropped.
+      const dedupeKey = buildDedupeKey(item, message.organizationId);
       const existing = dedupeKey
         ? await ctx.db
             .query("events")
@@ -441,7 +868,7 @@ export const storeParsedEvents = internalMutation({
             .first()
         : null;
       if (existing) {
-        updated += 1;
+        skippedDuplicate += 1;
         continue;
       }
 
@@ -466,8 +893,10 @@ export const storeParsedEvents = internalMutation({
         targetAudience: item.targetAudience,
         perks: item.perks,
         visibility: "draft",
-        parseConfidence: args.confidence,
-        parseWarnings: args.warnings,
+        // Per item: `args.confidence` / `args.warnings` describe the message
+        // as a whole and are already folded into each item's own values.
+        parseConfidence: item.confidence,
+        parseWarnings: item.warnings,
         dedupeKey,
         createdAt: now,
         updatedAt: now,
@@ -479,14 +908,296 @@ export const storeParsedEvents = internalMutation({
       processingStatus: "parsed",
       parseError: undefined,
     });
-    return { created, updated };
+    return { created, skippedDuplicate };
   },
 });
+
+/**
+ * One-off repair for drafts parsed before the year moved server-side: every
+ * date whose year predates the year its source email arrived in is shifted
+ * onto the year {@link resolveYear} would pick today, keeping the same
+ * wall-clock month/day/time. Drafts only — `published` and `hidden` are
+ * decisions an admin already made.
+ *
+ * Run `npx convex run parser:fixDraftEventYears '{"dryRun": true}'` first and
+ * read `samples`; re-run without `dryRun` to write. Anything this can't fix
+ * (a wrong day, not just a wrong year) is better handled by requeueing the
+ * source message with `requeueMessage` and reparsing it.
+ */
+export const fixDraftEventYears = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    scanned: v.number(),
+    changed: v.number(),
+    skippedNoSource: v.number(),
+    samples: v.array(
+      v.object({
+        title: v.string(),
+        before: v.array(v.string()),
+        after: v.array(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const samples: Array<{ title: string; before: string[]; after: string[] }> =
+      [];
+    let scanned = 0;
+    let changed = 0;
+    let skippedNoSource = 0;
+
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    for await (const draft of drafts) {
+      scanned += 1;
+      if (draft.dates.length === 0) continue;
+
+      const message = draft.sourceMessageId
+        ? await ctx.db.get(draft.sourceMessageId)
+        : null;
+      if (!message) {
+        skippedNoSource += 1;
+        continue;
+      }
+
+      const receivedYear = epochMsToLocalParts(message.receivedAt).year;
+      const dates = draft.dates.map((date) => {
+        const parts = epochMsToLocalParts(date.timestamp);
+        if (parts.year >= receivedYear) return date;
+        const year = resolveYear(
+          { statedYear: null, month: parts.month, day: parts.day },
+          message.receivedAt,
+        );
+        return {
+          timestamp: localPartsToEpochMs({ ...parts, year }),
+          type: date.type,
+        };
+      });
+
+      if (dates.every((date, i) => date.timestamp === draft.dates[i].timestamp))
+        continue;
+
+      changed += 1;
+      if (samples.length < 20) {
+        samples.push({
+          title: draft.title,
+          before: draft.dates.map((date) => formatSampleDate(date.timestamp)),
+          after: dates.map((date) => formatSampleDate(date.timestamp)),
+        });
+      }
+      if (args.dryRun) continue;
+
+      // Recomputed because the key embeds the first date, so leaving the old
+      // one in place would let a reparse of the same email insert a second
+      // copy rather than dedupe against this draft.
+      await ctx.db.patch(draft._id, {
+        dates,
+        dedupeKey: buildDedupeKey(
+          { title: draft.title, dates, links: draft.links },
+          draft.organizationId,
+        ),
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { scanned, changed, skippedNoSource, samples };
+  },
+});
+
+/**
+ * One-off rescore for drafts stored before confidence became a measure of the
+ * extraction rather than the model's self-report. Reads the same fields
+ * `scoreParseQuality` reads at parse time, so a rescored draft and a freshly
+ * parsed one are directly comparable. Drafts only.
+ *
+ * Run `npx convex run parser:rescoreDraftConfidence '{"dryRun": true}'` first
+ * and read `samples`; re-run without `dryRun` to write.
+ */
+export const rescoreDraftConfidence = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    scanned: v.number(),
+    changed: v.number(),
+    samples: v.array(
+      v.object({
+        title: v.string(),
+        before: v.number(),
+        after: v.number(),
+        reasons: v.array(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const samples: Array<{
+      title: string;
+      before: number;
+      after: number;
+      reasons: string[];
+    }> = [];
+    let scanned = 0;
+    let changed = 0;
+
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    for await (const draft of drafts) {
+      scanned += 1;
+      const before = draft.parseConfidence ?? 0;
+      // `droppedDate` is unknowable after the fact — whatever was dropped is
+      // gone — so it is left false here. Those items already carry the
+      // parser's own warning about it.
+      const quality = scoreParseQuality(
+        draft,
+        normalizeModelConfidence(before),
+      );
+      if (quality.confidence === before) continue;
+
+      changed += 1;
+      if (samples.length < 20) {
+        samples.push({
+          title: draft.title,
+          before,
+          after: quality.confidence,
+          reasons: quality.reasons,
+        });
+      }
+      if (args.dryRun) continue;
+
+      await ctx.db.patch(draft._id, {
+        parseConfidence: quality.confidence,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { scanned, changed, samples };
+  },
+});
+
+/**
+ * One-off repair for drafts whose `hour`/`minute` (and, in principle,
+ * `month`/`day`) came from the model computing its own epoch timestamp —
+ * the pre-fix pipeline this file used to run. {@link fixDraftEventYears}
+ * only ever corrects the year and keeps the rest of the stored timestamp,
+ * so a draft whose time was wrong for some other reason than the year stays
+ * wrong after it. The only trustworthy fix for that is re-deriving the whole
+ * date from the source email under the current prompt and
+ * {@link normalizeDates}, which means a full reparse rather than a patch.
+ *
+ * This only requeues the *message* (`processingStatus: "new"`, mirroring
+ * `requeueMessage`) — it does not touch the draft. `storeParsedEvents`
+ * already deletes a message's prior `draft`-visibility events before
+ * inserting the fresh parse, so nothing here needs to delete anything, and a
+ * draft an admin already published or hid is left alone because its message
+ * is never requeued.
+ *
+ * Requeuing alone does not reparse anything: after this runs, trigger a
+ * parse run (the admin page's "Run parser" button, or
+ * `npx convex run parser:runParseInternal '{"trigger": "manual"}'`) to
+ * actually regenerate the drafts.
+ *
+ * A draft already entirely in the past is excluded rather than requeued: its
+ * event already happened, so a corrected hour is not worth an AI call. Only
+ * every date on a draft being past excludes it — one still-future date among
+ * several (a multi-date item, or another item from the same email) keeps the
+ * whole message in, since reparsing it is one call that fixes every item it
+ * contains anyway.
+ *
+ * Run `npx convex run parser:requeueDraftMessagesForReparse '{"dryRun": true}'`
+ * first and read `samples`; re-run without `dryRun` to requeue for real.
+ */
+export const requeueDraftMessagesForReparse = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    draftsAffected: v.number(),
+    skippedPast: v.number(),
+    messagesRequeued: v.number(),
+    skippedNoSource: v.number(),
+    samples: v.array(
+      v.object({
+        messageId: v.id("listservMessages"),
+        subject: v.string(),
+        draftTitles: v.array(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const samples: Array<{
+      messageId: Id<"listservMessages">;
+      subject: string;
+      draftTitles: string[];
+    }> = [];
+    let draftsAffected = 0;
+    let skippedPast = 0;
+    let skippedNoSource = 0;
+
+    const now = Date.now();
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    const messageTitles = new Map<Id<"listservMessages">, string[]>();
+    for await (const draft of drafts) {
+      draftsAffected += 1;
+
+      if (isPastEvent(draft.dates, now)) {
+        skippedPast += 1;
+        continue;
+      }
+
+      if (!draft.sourceMessageId) {
+        skippedNoSource += 1;
+        continue;
+      }
+      const titles = messageTitles.get(draft.sourceMessageId) ?? [];
+      titles.push(draft.title);
+      messageTitles.set(draft.sourceMessageId, titles);
+    }
+
+    let messagesRequeued = 0;
+    for (const [messageId, draftTitles] of messageTitles) {
+      const message = await ctx.db.get(messageId);
+      if (!message) {
+        skippedNoSource += draftTitles.length;
+        continue;
+      }
+
+      if (samples.length < 20) {
+        samples.push({ messageId, subject: message.subject, draftTitles });
+      }
+      if (args.dryRun) continue;
+
+      messagesRequeued += 1;
+      await ctx.db.patch(messageId, {
+        processingStatus: "new",
+        parseError: undefined,
+      });
+    }
+
+    return {
+      draftsAffected,
+      skippedPast,
+      messagesRequeued,
+      skippedNoSource,
+      samples,
+    };
+  },
+});
+
+/** Human-readable Cornell-local date for the backfill's dry-run output. */
+function formatSampleDate(timestamp: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SOURCE_TIMEZONE,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
 
 async function parseMessageWithAI(
   message: SourceMessage,
   config: AIConfig,
-): Promise<ParseResult> {
+): Promise<unknown> {
   const prompt = buildParsePrompt(message);
   try {
     return await callAIProvider(prompt, config.provider, config.model);
@@ -510,7 +1221,7 @@ async function callAIProvider(
   prompt: string,
   provider: AIProvider,
   model: string,
-): Promise<ParseResult> {
+): Promise<unknown> {
   if (provider === "openai") return parseWithOpenAI(prompt, model);
   return parseWithGemini(prompt, model);
 }
@@ -518,7 +1229,7 @@ async function callAIProvider(
 async function parseWithOpenAI(
   prompt: string,
   model: string,
-): Promise<ParseResult> {
+): Promise<unknown> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
 
@@ -552,13 +1263,14 @@ async function parseWithOpenAI(
 
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new Error("OpenAI returned no content.");
-  return JSON.parse(text) as ParseResult;
+  const parsed: unknown = JSON.parse(text);
+  return parsed;
 }
 
 async function parseWithGemini(
   prompt: string,
   model: string,
-): Promise<ParseResult> {
+): Promise<unknown> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
 
@@ -582,7 +1294,8 @@ async function parseWithGemini(
 
   const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned no text.");
-  return JSON.parse(text) as ParseResult;
+  const parsed: unknown = JSON.parse(text);
+  return parsed;
 }
 
 function getAIConfig(): AIConfig {
@@ -615,13 +1328,14 @@ function getGeminiConfig(): AIConfig | null {
 }
 
 function buildParsePrompt(message: SourceMessage) {
+  const receivedAtIso = new Date(message.receivedAt).toISOString();
   const input = {
     sourceOrganization: message.organization?.name,
     sourceOrganizationType: message.organization?.orgType,
     sourceEmail: message.senderEmail,
     sourceName: message.listserv?.name,
     subject: message.subject,
-    receivedAt: new Date(message.receivedAt).toISOString(),
+    receivedAt: receivedAtIso,
     bodyText: message.bodyText.slice(0, 12000),
     links: extractLinks(`${message.bodyText}\n${message.bodyHtml}`).slice(
       0,
@@ -629,14 +1343,24 @@ function buildParsePrompt(message: SourceMessage) {
     ),
   };
 
+  // The model reports the date parts it read and nothing more: asking
+  // gpt-4o-mini for epoch milliseconds produced numbers from its own training
+  // era instead of the year this email arrived in. Verified against prod: ~35
+  // of 36 sampled drafts had every date land in 2023 despite every source
+  // message arriving in 2025/2026, and telling the model to anchor on the
+  // received date did not fix it, because the arithmetic step is where the
+  // stale year crept back in. `normalizeDates` resolves the year and the
+  // timestamp server-side instead.
   return `Extract Cornell student-relevant feed items from this listserv email. Return strict JSON only. Do not invent details. The source organization advertised the item but may not be the host.
+
+This email was received on ${receivedAtIso} (Cornell/Ithaca local time is ${SOURCE_TIMEZONE}). Report dates exactly as the email writes them — do not compute timestamps, offsets, or epoch values, and do not convert timezones. Set "year" only when the email itself states a year; otherwise set it to null. Set "hour"/"minute" only when the email states a time; otherwise null. Times are assumed to be ${SOURCE_TIMEZONE}.
 
 Return this exact shape:
 {
   "messageType": "events" | "opportunities" | "newsletter" | "admin" | "irrelevant",
   "shouldPublish": false,
   "summary": string,
-  "confidence": number,
+  "confidence": number,  // whole number 0-100, not a fraction
   "warnings": string[],
   "items": [{
     "title": string,
@@ -644,7 +1368,7 @@ Return this exact shape:
     "aiDescription": string,
     "eventType": "event" | "opportunity" | "hackathon" | "courses" | "fundraiser" | "info",
     "hosts": [{"name": string, "kind": "club" | "company" | "external_org", "role": "primary" | "cohost" | "sponsor"}],
-    "dates": [{"timestamp": number, "type": "start" | "end" | "deadline" | "single"}],
+    "dates": [{"year": number | null, "month": number, "day": number, "hour": number | null, "minute": number | null, "type": "start" | "end" | "deadline" | "single"}],
     "isRecurring": boolean,
     "recurrenceNote": string | null,
     "location": {"displayText": string, "address": string | null, "isVirtual": boolean, "buildingCode": string | null} | null,
@@ -656,85 +1380,181 @@ Return this exact shape:
   }]
 }
 
-Rules: ignore unsubscribe text, confirmations, and admin/list-manager mail. Use timestamps in milliseconds since epoch. If no useful item exists, return items: [] and messageType "irrelevant" or "admin". Drafts are reviewed by admins, so shouldPublish must always be false.
+Tags: choose 0-3 tags for each item, copied exactly from this list and no others: ${CANONICAL_TAGS.join(", ")}.
+
+Confidence: an integer from 0 to 100 (a whole-number percentage, so 85 means 85% — never 0.85), for how well this email supports the items you extracted.
+
+Rules: ignore unsubscribe text, confirmations, and admin/list-manager mail. In "dates", "month" is 1-12, "day" is 1-31, "hour" is 0-23 on a 24-hour clock, and "minute" is 0-59. If no useful item exists, return items: [] and messageType "irrelevant" or "admin". Drafts are reviewed by admins, so shouldPublish must always be false.
 
 Email input:
 ${JSON.stringify(input, null, 2)}`;
 }
 
-function normalizeParseResult(result: ParseResult): ParseResult {
-  const warnings = Array.isArray(result.warnings)
-    ? result.warnings.map(String).slice(0, 20)
+function normalizeParseResult(
+  result: unknown,
+  receivedAt: number,
+): ParseResult {
+  const raw = isRecord(result) ? result : {};
+  const warnings = Array.isArray(raw.warnings)
+    ? raw.warnings.map(String).slice(0, 20)
     : [];
-  const items = Array.isArray(result.items)
-    ? result.items.flatMap((item) => normalizeItem(item, warnings))
+  // Rescaled rather than clamped: the prompt used to leave the scale unstated
+  // and the model answered 0-1, which `clampNumber(…, 0, 100)` passed through
+  // untouched and the admin badge then rendered as "0.9%".
+  const modelConfidence = normalizeModelConfidence(Number(raw.confidence));
+  const items = Array.isArray(raw.items)
+    ? raw.items.flatMap((item) =>
+        normalizeItem(item, warnings, receivedAt, modelConfidence),
+      )
     : [];
   return {
-    messageType: normalizeMessageType(result.messageType),
+    messageType: normalizeMessageType(raw.messageType),
     shouldPublish: false,
-    summary: String(result.summary ?? "").slice(0, 500),
-    confidence: clampNumber(result.confidence, 0, 100),
+    summary: String(raw.summary ?? "").slice(0, 500),
+    confidence: modelConfidence,
     warnings,
     items,
   };
 }
 
-function normalizeItem(item: ParsedItem, warnings: string[]): ParsedItem[] {
+function normalizeItem(
+  item: unknown,
+  messageWarnings: string[],
+  receivedAt: number,
+  modelConfidence: number,
+): ParsedItem[] {
+  if (!isRecord(item)) return [];
   const title = String(item.title ?? "").trim();
   const description = String(item.description ?? "").trim();
   if (!title || !description) return [];
-  const dates = Array.isArray(item.dates)
-    ? item.dates
-        .filter((date) => Number.isFinite(date.timestamp) && date.timestamp > 0)
-        .slice(0, 8)
-    : [];
-  if (
-    dates.length === 0 &&
-    (!Array.isArray(item.links) || item.links.length === 0)
-  ) {
-    warnings.push(`Low detail item: ${title}`);
+
+  // Collected per item, then merged with the message-level ones, so a warning
+  // about this item's dates lands on this item rather than on every draft the
+  // email produced.
+  const itemWarnings: string[] = [];
+  const dates = normalizeDates(item.dates, receivedAt, title, itemWarnings);
+  const droppedDate = itemWarnings.some((warning) =>
+    warning.startsWith("Dropped impossible date"),
+  );
+
+  const scored: Omit<ParsedItem, "confidence" | "warnings"> = {
+    title,
+    description,
+    aiDescription: String(item.aiDescription ?? description).slice(0, 220),
+    eventType: normalizeEventType(item.eventType),
+    hosts: normalizeHosts(item.hosts),
+    dates,
+    isRecurring: Boolean(item.isRecurring),
+    recurrenceNote: optionalString(item.recurrenceNote),
+    location: normalizeLocation(item.location),
+    links: normalizeLinks(item.links),
+    contacts: normalizeContacts(item.contacts),
+    tags: Array.isArray(item.tags) ? normalizeTags(item.tags.map(String)) : [],
+    targetAudience: normalizeAudience(item.targetAudience),
+    perks: normalizePerks(item.perks),
+  };
+
+  const quality = scoreParseQuality(scored, modelConfidence, { droppedDate });
+  if (quality.reasons.length > 0) {
+    itemWarnings.push(`Missing: ${quality.reasons.join(", ")}`);
   }
 
   return [
     {
-      title,
-      description,
-      aiDescription: String(item.aiDescription ?? description).slice(0, 220),
-      eventType: normalizeEventType(item.eventType),
-      hosts: normalizeHosts(item.hosts),
-      dates,
-      isRecurring: Boolean(item.isRecurring),
-      recurrenceNote: optionalString(item.recurrenceNote),
-      location: normalizeLocation(item.location),
-      links: normalizeLinks(item.links),
-      contacts: normalizeContacts(item.contacts),
-      tags: Array.isArray(item.tags)
-        ? item.tags
-            .map(String)
-            .map((tag) => tag.trim())
-            .filter(Boolean)
-            .slice(0, 12)
-        : [],
-      targetAudience: normalizeAudience(item.targetAudience),
-      perks: normalizePerks(item.perks),
+      ...scored,
+      confidence: quality.confidence,
+      warnings: [...itemWarnings, ...messageWarnings].slice(0, 20),
     },
   ];
 }
 
-function shouldIgnoreMessage(message: SourceMessage) {
-  const text =
-    `${message.senderEmail}\n${message.subject}\n${message.bodyText}`.toLowerCase();
-  return /lyris-confirm-|confirm your subscription|unsubscribe request|delivery status notification/.test(
-    text,
-  );
+/**
+ * Turn the date parts the model read off the email into stored timestamps.
+ *
+ * A date with no usable month/day is dropped rather than guessed at, and so is
+ * one whose parts don't name a real calendar day — `Date.UTC` would silently
+ * roll "February 30" into March, which reads as a confident wrong answer in
+ * the admin editor. A date with no stated time becomes local noon, far enough
+ * from either midnight that no timezone rendering can shift it onto the
+ * neighbouring day.
+ */
+function normalizeDates(
+  value: unknown,
+  receivedAt: number,
+  title: string,
+  warnings: string[],
+): ParsedItem["dates"] {
+  if (!Array.isArray(value)) return [];
+
+  const dates: ParsedItem["dates"] = [];
+  let missingTime = false;
+
+  for (const raw of value.slice(0, 8)) {
+    if (!isRecord(raw)) continue;
+    const month = integerIn(raw.month, 1, 12);
+    const day = integerIn(raw.day, 1, 31);
+    if (month === null || day === null) continue;
+
+    const hour = integerIn(raw.hour, 0, 23);
+    if (hour === null) missingTime = true;
+
+    const parts = {
+      year: resolveYear(
+        { statedYear: integerIn(raw.year, 1970, 2100), month, day },
+        receivedAt,
+      ),
+      month,
+      day,
+      hour: hour ?? 12,
+      minute: hour === null ? 0 : (integerIn(raw.minute, 0, 59) ?? 0),
+    };
+
+    const timestamp = localPartsToEpochMs(parts);
+    const roundTrip = epochMsToLocalParts(timestamp);
+    if (roundTrip.month !== month || roundTrip.day !== day) {
+      warnings.push(`Dropped impossible date ${month}/${day} for ${title}`);
+      continue;
+    }
+
+    dates.push({ timestamp, type: normalizeDateType(raw.type) });
+  }
+
+  if (missingTime) warnings.push(`No time given for ${title}`);
+  return dates;
 }
 
-function buildDedupeKey(item: ParsedItem) {
+function normalizeDateType(
+  value: unknown,
+): ParsedItem["dates"][number]["type"] {
+  return value === "start" ||
+    value === "end" ||
+    value === "deadline" ||
+    value === "single"
+    ? value
+    : "single";
+}
+
+/** `value` as an integer within `[min, max]`, or null if it is neither. */
+function integerIn(value: unknown, min: number, max: number): number | null {
+  const number = Number(value);
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (!Number.isInteger(number)) return null;
+  return number >= min && number <= max ? number : null;
+}
+
+function shouldIgnoreMessage(message: SourceMessage) {
+  return isListAdminNoise(message);
+}
+
+function buildDedupeKey(
+  item: Pick<ParsedItem, "title" | "dates" | "links">,
+  organizationId?: Id<"orgs">,
+) {
   const firstDate = item.dates[0]?.timestamp
     ? new Date(item.dates[0].timestamp).toISOString().slice(0, 10)
     : "no-date";
   const firstLink = item.links[0]?.url ?? "no-link";
-  return `${normalizeKey(item.title)}:${firstDate}:${normalizeKey(firstLink)}`.slice(
+  return `${organizationId ?? "no-org"}:${normalizeKey(item.title)}:${firstDate}:${normalizeKey(firstLink)}`.slice(
     0,
     240,
   );
@@ -744,50 +1564,52 @@ function extractLinks(value: string) {
   return [...new Set(value.match(/https?:\/\/[^\s"'<>]+/g) ?? [])];
 }
 
-function normalizeMessageType(value: string): ParseResult["messageType"] {
-  return [
-    "events",
-    "opportunities",
-    "newsletter",
-    "admin",
-    "irrelevant",
-  ].includes(value)
-    ? (value as ParseResult["messageType"])
+function normalizeMessageType(value: unknown): ParseResult["messageType"] {
+  return value === "events" ||
+    value === "opportunities" ||
+    value === "newsletter" ||
+    value === "admin" ||
+    value === "irrelevant"
+    ? value
     : "irrelevant";
 }
 
-function normalizeEventType(value: string): ParsedItem["eventType"] {
-  return [
-    "event",
-    "opportunity",
-    "hackathon",
-    "courses",
-    "fundraiser",
-    "info",
-  ].includes(value)
-    ? (value as ParsedItem["eventType"])
+function normalizeEventType(value: unknown): ParsedItem["eventType"] {
+  return value === "event" ||
+    value === "opportunity" ||
+    value === "hackathon" ||
+    value === "courses" ||
+    value === "fundraiser" ||
+    value === "info"
+    ? value
     : "info";
 }
 
-function normalizeHosts(hosts: ParsedItem["hosts"]) {
-  return Array.isArray(hosts)
-    ? hosts
-        .filter((host) => host?.name)
-        .slice(0, 6)
-        .map((host) => ({
-          name: String(host.name),
-          kind: ["club", "company", "external_org"].includes(host.kind)
-            ? host.kind
-            : "external_org",
-          role: ["primary", "cohost", "sponsor"].includes(host.role)
-            ? host.role
-            : "primary",
-        }))
-    : [];
+function normalizeHosts(hosts: unknown): ParsedItem["hosts"] {
+  if (!Array.isArray(hosts)) return [];
+  return hosts
+    .filter(isRecord)
+    .filter((host) => host.name)
+    .slice(0, 6)
+    .map((host) => ({
+      name: String(host.name),
+      kind:
+        host.kind === "club" ||
+        host.kind === "company" ||
+        host.kind === "external_org"
+          ? host.kind
+          : "external_org",
+      role:
+        host.role === "primary" ||
+        host.role === "cohost" ||
+        host.role === "sponsor"
+          ? host.role
+          : "primary",
+    }));
 }
 
-function normalizeLocation(location: ParsedItem["location"]) {
-  if (!location?.displayText) return undefined;
+function normalizeLocation(location: unknown): ParsedItem["location"] {
+  if (!isRecord(location) || !location.displayText) return undefined;
   return {
     displayText: String(location.displayText),
     address: optionalString(location.address),
@@ -796,71 +1618,70 @@ function normalizeLocation(location: ParsedItem["location"]) {
   };
 }
 
-function normalizeLinks(links: ParsedItem["links"]) {
-  return Array.isArray(links)
-    ? links
-        .filter((link) => link?.url)
-        .slice(0, 12)
-        .map((link) => ({
-          url: String(link.url),
-          type: [
-            "registration",
-            "application",
-            "rsvp",
-            "info",
-            "social",
-          ].includes(link.type)
-            ? link.type
-            : "info",
-          label: optionalString(link.label),
-        }))
-    : [];
+function normalizeLinks(links: unknown): ParsedItem["links"] {
+  if (!Array.isArray(links)) return [];
+  return links
+    .filter(isRecord)
+    .filter((link) => link.url)
+    .slice(0, 12)
+    .map((link) => ({
+      url: String(link.url),
+      type:
+        link.type === "registration" ||
+        link.type === "application" ||
+        link.type === "rsvp" ||
+        link.type === "info" ||
+        link.type === "social"
+          ? link.type
+          : "info",
+      label: optionalString(link.label),
+    }));
 }
 
-function normalizeContacts(contacts: ParsedItem["contacts"]) {
-  return Array.isArray(contacts)
-    ? contacts
-        .filter((contact) => contact?.value)
-        .slice(0, 8)
-        .map((contact) => ({
-          type: ["email", "instagram", "website"].includes(contact.type)
-            ? contact.type
-            : "website",
-          value: String(contact.value),
-        }))
-    : [];
+function normalizeContacts(contacts: unknown): ParsedItem["contacts"] {
+  if (!Array.isArray(contacts)) return [];
+  return contacts
+    .filter(isRecord)
+    .filter((contact) => contact.value)
+    .slice(0, 8)
+    .map((contact) => ({
+      type:
+        contact.type === "email" ||
+        contact.type === "instagram" ||
+        contact.type === "website"
+          ? contact.type
+          : "website",
+      value: String(contact.value),
+    }));
 }
 
-function normalizeAudience(
-  value: unknown,
-): ParsedItem["targetAudience"] | undefined {
-  return typeof value === "string" &&
-    [
-      "all",
-      "first_year",
-      "women_nonbinary",
-      "international",
-      "graduate",
-    ].includes(value)
-    ? (value as ParsedItem["targetAudience"])
+function normalizeAudience(value: unknown): ParsedItem["targetAudience"] {
+  return value === "all" ||
+    value === "first_year" ||
+    value === "women_nonbinary" ||
+    value === "international" ||
+    value === "graduate"
+    ? value
     : undefined;
 }
 
-function normalizePerks(perks: ParsedItem["perks"]) {
-  const allowed = new Set(["food", "swag", "prizes", "travel_covered", "paid"]);
-  return Array.isArray(perks)
-    ? perks.filter((perk) => allowed.has(perk)).slice(0, 6)
-    : [];
+function normalizePerks(perks: unknown): ParsedItem["perks"] {
+  if (!Array.isArray(perks)) return [];
+  return perks.filter(isPerk).slice(0, 6);
+}
+
+function isPerk(value: unknown): value is ParsedItem["perks"][number] {
+  return (
+    value === "food" ||
+    value === "swag" ||
+    value === "prizes" ||
+    value === "travel_covered" ||
+    value === "paid"
+  );
 }
 
 function optionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function clampNumber(value: unknown, min: number, max: number) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return min;
-  return Math.max(min, Math.min(max, number));
 }
 
 function normalizeKey(value: string) {

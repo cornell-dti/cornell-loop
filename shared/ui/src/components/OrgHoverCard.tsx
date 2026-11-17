@@ -101,8 +101,8 @@ export function OrgHoverCard({
           }
         />
         {/* Top row: avatar + name + follow button */}
-        <div className="flex items-center justify-between gap-[var(--space-2)]">
-          <div className="flex items-center gap-[var(--space-2)]">
+        <div className="flex items-start justify-between gap-[var(--space-2)]">
+          <div className="flex min-w-0 items-start gap-[var(--space-2)]">
             {/* 24px avatar circle */}
             <span
               className={[
@@ -133,7 +133,7 @@ export function OrgHoverCard({
             {/* Org name — bold 18px body1 */}
             <span
               className={
-                "font-[family-name:var(--font-body)] font-bold " +
+                "min-w-0 font-[family-name:var(--font-body)] font-bold " +
                 "text-[length:var(--font-size-body1)] leading-[var(--line-height-body1)] " +
                 "tracking-[var(--letter-spacing-body1)] " +
                 "text-[color:var(--color-neutral-700)]"

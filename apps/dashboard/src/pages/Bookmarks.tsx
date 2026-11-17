@@ -18,7 +18,6 @@ import {
   SideBar,
   SearchBar,
   SearchPanel,
-  Tag,
   DashboardPost,
   Button,
 } from "@app/ui";
@@ -35,13 +34,12 @@ import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
+import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
-
-export interface FeedTagItem {
-  label: string;
-}
 
 export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
@@ -52,11 +50,6 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   searchValue?: string;
   onSearchChange?: (value: string) => void;
   onSearchClear?: () => void;
-
-  // ── Tag filter bar ──
-  feedTags?: FeedTagItem[];
-  onTagClick?: (label: string) => void;
-  onAddTag?: () => void;
 
   // ── Bookmarked posts ──
   posts?: DashboardPostProps[];
@@ -69,13 +62,8 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   onOrgClick?: (org: Organization) => void;
 }
 
-const DEFAULT_FEED_TAGS: FeedTagItem[] = [
-  { label: "Recruitment" },
-  { label: "Early Career" },
-  { label: "Tech" },
-  { label: "Mentorship" },
-  { label: "Just for Fun" },
-];
+// Stable empty fallback so the filtered-posts memo doesn't recompute each render.
+const EMPTY_POSTS: DashboardPostProps[] = [];
 
 // ─── Bookmarks ────────────────────────────────────────────────────────────────
 
@@ -85,9 +73,6 @@ export function Bookmarks({
   searchValue,
   onSearchChange,
   onSearchClear,
-  feedTags = DEFAULT_FEED_TAGS,
-  onTagClick,
-  onAddTag,
   posts: postsOverride,
   rsvpGroups: rsvpGroupsOverride,
   clubs: clubsOverride,
@@ -106,10 +91,7 @@ export function Bookmarks({
 
   const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
   const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const followedOrgIdSet = useMemo<ReadonlySet<Id<"orgs">>>(() => {
-    if (!followedOrgIds) return new Set<Id<"orgs">>();
-    return new Set<Id<"orgs">>(followedOrgIds);
-  }, [followedOrgIds]);
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
 
   // Optimistic-removal set: bookmarks that the user just unbookmarked but
   // whose mutation hasn't yet round-tripped. Visually filter these out so the
@@ -169,14 +151,12 @@ export function Bookmarks({
           orgs: row.orgs,
           isBookmarked: true,
         });
-        const organizations = base.organizations.map((org, i) => {
-          const matched = row.orgs[i];
-          return {
-            ...org,
-            following:
-              matched !== undefined ? followedOrgIdSet.has(matched._id) : false,
-          };
-        });
+        const organizations = stampFollowState(
+          base.organizations,
+          row.orgs,
+          followedOrgIdSet,
+          toggleFollow,
+        );
         return {
           ...base,
           organizations,
@@ -190,6 +170,7 @@ export function Bookmarks({
     handleRemoveBookmark,
     handleRsvp,
     optimisticallyRemoved,
+    toggleFollow,
   ]);
 
   const queriedRsvpGroups = useMemo(
@@ -198,7 +179,27 @@ export function Bookmarks({
   );
   const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
 
-  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
+
+  const posts: DashboardPostProps[] =
+    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
+
+  // Selected filter tag — narrows the bookmarks to posts carrying that tag.
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const visiblePosts = useMemo(() => {
+    if (!selectedTag) return posts;
+    return posts.filter((post) =>
+      post.tags?.some((tag) => tag.label === selectedTag),
+    );
+  }, [posts, selectedTag]);
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -268,27 +269,10 @@ export function Bookmarks({
             className="w-full shrink-0"
           />
 
-          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-            {feedTags.map((tag) => (
-              <Tag
-                key={tag.label}
-                color="neutral"
-                onClick={() => onTagClick?.(tag.label)}
-                className="shrink-0 cursor-pointer"
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                {tag.label}
-              </Tag>
-            ))}
-            <Tag
-              color="neutral"
-              onClick={onAddTag}
-              className="shrink-0 cursor-pointer"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              +
-            </Tag>
-          </div>
+          <FeedTagFilterBar
+            selectedTag={selectedTag}
+            onSelectedTagChange={setSelectedTag}
+          />
         </div>
 
         {/* Divider */}
@@ -305,7 +289,7 @@ export function Bookmarks({
           )}
           {feedLoading && <BookmarksLoadingState />}
           {!feedLoading && feedEmpty && <BookmarksEmptyState />}
-          {posts.map((post, i) => (
+          {visiblePosts.map((post, i) => (
             <DashboardPost
               key={i}
               {...post}
@@ -326,6 +310,7 @@ export function Bookmarks({
           rsvpGroups={rsvpGroups}
           clubs={clubs}
           onClubClick={onClubClick}
+          onToggleFollow={handleClubToggleFollow}
           className="hidden h-full shrink-0 overflow-visible lg:flex"
         />
       )}

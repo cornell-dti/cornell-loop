@@ -30,6 +30,16 @@ function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
 }
 
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
+}
+
 /**
  * RejectedDomainGate — shared guard behind both ProtectedRoute (via
  * OnboardingGate below) and AuthOnlyRoute. Renders a bare loading state
@@ -167,12 +177,13 @@ function useOrgClick() {
 
 function RoutedHome() {
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
   const onOrgClick = useOrgClick();
   return (
     <Home
       activeNavItem="home"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
+      onNavigate={onNavigate}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
       // Pressing Enter from /home pushes to /search?q=… so the search has a
@@ -187,13 +198,13 @@ function RoutedSearch() {
 }
 
 function RoutedBookmarks() {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
   const onOrgClick = useOrgClick();
   return (
     <Bookmarks
       activeNavItem="bookmarks"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
+      onNavigate={onNavigate}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
     />
@@ -203,13 +214,13 @@ function RoutedBookmarks() {
 const SORT_OPTIONS = ["Alphabetical", "Most emails", "Recently added"] as const;
 
 function RoutedSubscriptions() {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
   const [sortIndex, setSortIndex] = useState(0);
   return (
     <Subscriptions
       activeNavItem="subscriptions"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
+      onNavigate={onNavigate}
       sortLabel={SORT_OPTIONS[sortIndex]}
       onSortChange={() => setSortIndex((i) => (i + 1) % SORT_OPTIONS.length)}
       onClubClick={onClubClick}
@@ -237,15 +248,13 @@ function RoutedOrg() {
  */
 function RoutedProfile() {
   const navigate = useNavigate();
-  const handleDismiss = () => navigate("/home");
+  const location = useLocation();
+  const backgroundLocation = location.state?.backgroundLocation;
+  const handleDismiss = () =>
+    backgroundLocation ? navigate(-1) : navigate("/home", { replace: true });
   return (
     <>
-      {/*
-       * Render the Home dashboard underneath so the modal floats over it,
-       * matching Figma node 633:4436. The modal's z-50 backdrop captures all
-       * pointer events so the dashboard is visual-only while the modal is open.
-       */}
-      <RoutedHome />
+      {!backgroundLocation && <RoutedHome />}
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
         onClick={(e) => {
@@ -263,78 +272,95 @@ function App() {
 }
 
 function AppRoutes() {
+  const location = useLocation();
+  const backgroundLocation = location.state?.backgroundLocation;
+
   return (
-    <Routes>
-      {/* Public */}
-      <Route path="/" element={<Landing />} />
+    <>
+      <Routes location={backgroundLocation ?? location}>
+        {/* Public */}
+        <Route path="/" element={<Landing />} />
 
-      {/* Protected dashboard routes */}
-      <Route
-        path="/home"
-        element={
-          <ProtectedRoute>
-            <RoutedHome />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/bookmarks"
-        element={
-          <ProtectedRoute>
-            <RoutedBookmarks />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/subscriptions"
-        element={
-          <ProtectedRoute>
-            <RoutedSubscriptions />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/orgs/:slug"
-        element={
-          <ProtectedRoute>
-            <RoutedOrg />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/profile"
-        element={
-          <ProtectedRoute>
-            <RoutedProfile />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/search"
-        element={
-          <ProtectedRoute>
-            <RoutedSearch />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/onboarding"
-        element={
-          <AuthOnlyRoute>
-            <Onboarding />
-          </AuthOnlyRoute>
-        }
-      />
-      <Route path="/admin" element={<Admin />} />
+        {/* Protected dashboard routes */}
+        <Route
+          path="/home"
+          element={
+            <ProtectedRoute>
+              <RoutedHome />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/bookmarks"
+          element={
+            <ProtectedRoute>
+              <RoutedBookmarks />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscriptions"
+          element={
+            <ProtectedRoute>
+              <RoutedSubscriptions />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/orgs/:slug"
+          element={
+            <ProtectedRoute>
+              <RoutedOrg />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <RoutedProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/search"
+          element={
+            <ProtectedRoute>
+              <RoutedSearch />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/onboarding"
+          element={
+            <AuthOnlyRoute>
+              <Onboarding />
+            </AuthOnlyRoute>
+          }
+        />
+        <Route path="/admin" element={<Admin />} />
 
-      {/* Dev-only design system page */}
-      {import.meta.env.DEV && (
-        <Route path="/design-system" element={<DesignSystem />} />
+        {/* Dev-only design system page */}
+        {import.meta.env.DEV && (
+          <Route path="/design-system" element={<DesignSystem />} />
+        )}
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {backgroundLocation && (
+        <Routes>
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <RoutedProfile />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
       )}
-
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    </>
   );
 }
 

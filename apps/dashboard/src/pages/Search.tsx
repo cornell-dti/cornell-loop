@@ -21,9 +21,9 @@
  * src/styles/tokens.css.
  */
 
-import { useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "convex/react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
   SearchBar,
@@ -39,12 +39,15 @@ import type {
   Organization,
 } from "@app/ui";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -54,6 +57,16 @@ const MIN_QUERY_LENGTH = 2;
 
 function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
+}
+
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
 }
 
 // ─── Shared typography ───────────────────────────────────────────────────────
@@ -164,6 +177,7 @@ function OrgCard({ org, onClick }: OrgCardProps) {
 
 export function Search() {
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";
   const trimmed = q.trim();
@@ -184,16 +198,106 @@ export function Search() {
   const followedOrgs = useQuery(api.orgs.listFollowed, {});
   const myRsvps = useQuery(api.rsvps.myRsvps, {});
 
+  const followedOrgIds = useMemo(
+    () => followedOrgs?.map((org) => org._id),
+    [followedOrgs],
+  );
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
+
+  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
+  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
+  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
+
+  // Optimistic bookmark overrides — mirrors the Home page pattern.
+  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
+    ReadonlyMap<Id<"events">, boolean>
+  >(() => new Map());
+  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
+
+  const handleBookmarkToggle = useCallback(
+    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
+      const next = !currentlyBookmarked;
+      setOptimisticBookmarks((prev) => {
+        const m = new Map(prev);
+        m.set(eventId, next);
+        return m;
+      });
+      const promise = next
+        ? bookmarkMutation({ eventId })
+        : unbookmarkMutation({ eventId });
+      void promise.catch(() => {
+        setOptimisticBookmarks((prev) => {
+          const m = new Map(prev);
+          m.delete(eventId);
+          return m;
+        });
+      });
+    },
+    [bookmarkMutation, unbookmarkMutation],
+  );
+
+  const handleRsvp = useCallback(
+    (eventId: Id<"events">) => {
+      if (inFlightRsvps.current.has(eventId)) return;
+      inFlightRsvps.current.add(eventId);
+      void setRsvpMutation({ eventId, status: "going" })
+        .catch(() => {
+          // No visible state to roll back beyond freeing the dedupe slot.
+        })
+        .finally(() => {
+          inFlightRsvps.current.delete(eventId);
+        });
+    },
+    [setRsvpMutation],
+  );
+
   const eventPosts: DashboardPostProps[] = useMemo(() => {
     if (!eventResults) return [];
-    return eventResults.map(eventToPost);
-  }, [eventResults]);
+    return eventResults.map((hydrated) => {
+      const base = eventToPost(hydrated);
+      const organizations = stampFollowState(
+        base.organizations,
+        hydrated.orgs,
+        followedOrgIdSet,
+        toggleFollow,
+      );
+      const optimisticBookmark = optimisticBookmarks.get(hydrated.event._id);
+      const bookmarked =
+        optimisticBookmark !== undefined
+          ? optimisticBookmark
+          : hydrated.isBookmarked;
+      return {
+        ...base,
+        organizations,
+        bookmarked,
+        onBookmark: () => handleBookmarkToggle(hydrated.event._id, bookmarked),
+        onRsvp: () => handleRsvp(hydrated.event._id),
+      };
+    });
+  }, [
+    eventResults,
+    followedOrgIdSet,
+    toggleFollow,
+    optimisticBookmarks,
+    handleBookmarkToggle,
+    handleRsvp,
+  ]);
 
   const clubs: Club[] = useMemo(
     () => orgsToClubs(followedOrgs),
     [followedOrgs],
   );
   const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   const handleQueryChange = (next: string) => {
     const nextParams = new URLSearchParams(params);
@@ -237,7 +341,7 @@ export function Search() {
     >
       {/* ── Left sidebar ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
 
       {/* ── Main column ── */}
@@ -397,6 +501,7 @@ export function Search() {
         rsvpGroups={rsvpGroups}
         clubs={clubs}
         onClubClick={handleClubClick}
+        onToggleFollow={handleClubToggleFollow}
         className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>
