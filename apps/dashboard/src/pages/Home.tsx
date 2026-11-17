@@ -178,17 +178,15 @@ function HomeInner({
   // Latch onboarding visibility after the initial profile load.
   const { loading, isOnboarded } = useCurrentProfile();
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  const [shouldShowOnboarding, setShouldShowOnboarding] = useState(false);
-  const [onboardingInitialized, setOnboardingInitialized] = useState(false);
+  const [initialOnboardingStatus, setInitialOnboardingStatus] = useState<
+    boolean | null
+  >(null);
 
-  useEffect(() => {
-    if (!loading && !onboardingInitialized) {
-      setShouldShowOnboarding(!isOnboarded);
-      setOnboardingInitialized(true);
-    }
-  }, [loading, isOnboarded, onboardingInitialized]);
-
-  const showOnboarding = shouldShowOnboarding && !onboardingDismissed;
+  if (!loading && initialOnboardingStatus === null) {
+    setInitialOnboardingStatus(isOnboarded);
+  }
+  const showOnboarding =
+    initialOnboardingStatus === false && !onboardingDismissed;
 
   // ── Convex-backed feed data ────────────────────────────────────────────
   // Default to "followed" scope; the server transparently falls back to "all"
