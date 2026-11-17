@@ -19,9 +19,13 @@ export type SubscribeVerdict = {
   message: string;
 };
 
-/** Phrases Simplelists uses when a confirmation mail has been dispatched. */
-const CONFIRMATION_WORDING =
-  /(confirm(ation)?\s+(e-?mail|message|link)|check\s+your\s+(e-?mail|inbox)|has\s+been\s+sent)/i;
+/**
+ * Phrases reporting that a confirmation mail *has* gone out. Deliberately not
+ * a bare "confirmation email": the subscribe form itself explains that one
+ * will be sent, and matching that would read the instructions as an outcome.
+ */
+const CONFIRMATION_SENT_WORDING =
+  /\b(has|have)\s+been\s+sent\b|\bwe(\s+have|'ve)\s+sent\b|\bcheck\s+your\s+(e-?mail|inbox)\b/i;
 
 const SUBSCRIBE_FORM_TAG = /<form[^>]+action=["'][^"']*\/subscribe\/["']/i;
 
@@ -39,6 +43,8 @@ export function isRedirect(status: number) {
  * 2. An alert block in the body, whose Bootstrap class states the outcome
  *    outright and whose text is the server's own wording.
  * 3. The subscribe form appearing again, which is what a re-render looks like.
+ * 4. Wording that says a confirmation mail has been sent, on a page that is
+ *    not the form.
  *
  * Anything else is `unknown` rather than assumed good, because a false "sent"
  * is the failure this function exists to prevent.
@@ -73,18 +79,20 @@ export function classifySubscribeResponse(input: {
     };
   }
 
-  if (CONFIRMATION_WORDING.test(stripTags(input.html))) {
-    return {
-      outcome: "accepted",
-      message: "Simplelists reported that a confirmation email is on its way.",
-    };
-  }
-
+  // Checked before the wording below, because the form's own help text can
+  // talk about confirmation mail without anything having been sent.
   if (SUBSCRIBE_FORM_TAG.test(input.html)) {
     return {
       outcome: "rejected",
       message:
         "Simplelists returned the subscribe form again instead of a confirmation, so the submission was not accepted.",
+    };
+  }
+
+  if (CONFIRMATION_SENT_WORDING.test(stripTags(input.html))) {
+    return {
+      outcome: "accepted",
+      message: "Simplelists reported that a confirmation email has been sent.",
     };
   }
 

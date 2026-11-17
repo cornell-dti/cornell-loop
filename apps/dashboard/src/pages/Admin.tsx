@@ -4373,8 +4373,10 @@ function PublishTab({
               <DraftCard
                 key={event._id}
                 event={event}
-                selected={liveSelected.has(event._id)}
-                onToggleSelect={() => toggleSelected(event._id)}
+                selection={{
+                  selected: liveSelected.has(event._id),
+                  onToggle: () => toggleSelected(event._id),
+                }}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
@@ -4412,20 +4414,26 @@ function PublishTab({
           <div className="mt-3 grid gap-2">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-secondary)]">
-                Every date on these is already in the past. Publish one if it's
-                worth keeping as a recap; otherwise hide them all at once,
-                including any not loaded below.
+                Every date on these is already in the past. If the parser got a
+                date wrong, edit or reparse the draft and it moves back up;
+                otherwise hide them all at once, including any not loaded below.
               </p>
               <Btn onClick={onHidePast} className="shrink-0">
                 Hide all past
               </Btn>
             </div>
             {pastDrafts.map((event) => (
-              <PastDraftRow
+              <DraftCard
                 key={event._id}
                 event={event}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
+                onReparse={
+                  event.sourceMessageId
+                    ? () => onReparse(event.sourceMessageId!)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -4494,16 +4502,15 @@ function PublishTab({
 
 function DraftCard({
   event,
-  selected,
-  onToggleSelect,
+  selection,
   onPublish,
   onHide,
   onEdit,
   onReparse,
 }: {
   event: EventDoc;
-  selected: boolean;
-  onToggleSelect: () => void;
+  /** Omitted where bulk publish doesn't apply, which also drops the checkbox. */
+  selection?: { selected: boolean; onToggle: () => void };
   onPublish: () => void;
   onHide: () => void;
   onEdit: (patch: DraftEditPatch) => void;
@@ -4594,11 +4601,11 @@ function DraftCard({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
-        {!editing && (
+        {!editing && selection && (
           <input
             type="checkbox"
-            checked={selected}
-            onChange={onToggleSelect}
+            checked={selection.selected}
+            onChange={selection.onToggle}
             className="mt-1 size-4 shrink-0"
             aria-label={`Select ${event.title} for bulk publish`}
           />
@@ -5044,35 +5051,6 @@ function Field({
 }
 
 /** Toggle for a single-choice filter, styled like `TagPicker`'s buttons. */
-function PastDraftRow({
-  event,
-  onPublish,
-  onHide,
-}: {
-  event: EventDoc;
-  onPublish: () => void;
-  onHide: () => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]">
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-semibold text-[color:var(--color-text-muted)]">
-          {event.title}
-        </div>
-        <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-          {event.listserv}
-          {event.dates.length > 0 &&
-            ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
-        </div>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        <Btn onClick={onPublish}>Publish anyway</Btn>
-        <Btn onClick={onHide}>Hide</Btn>
-      </div>
-    </div>
-  );
-}
-
 function FilterChip({
   active,
   onClick,
