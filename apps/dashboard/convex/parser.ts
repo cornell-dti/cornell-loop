@@ -18,6 +18,7 @@ import { isListAdminNoise } from "./lib/cornellLists";
 import {
   SOURCE_TIMEZONE,
   epochMsToLocalParts,
+  isPastEvent,
   localPartsToEpochMs,
   resolveYear,
 } from "./lib/eventDates";
@@ -41,6 +42,13 @@ const DEFAULT_GEMINI_PARSE_MODEL = "gemini-2.5-flash";
 const MAX_MESSAGES_PER_RUN = 10;
 /** Bound on the "how many need assignment" estimate — see `overview`. */
 const NEEDS_ASSIGNMENT_SCAN_LIMIT = 500;
+/** Bound on the draft counts in `overview`; the list itself is paginated. */
+const DRAFT_COUNT_SCAN_LIMIT = 1000;
+/**
+ * Drafts hidden per `hidePastDrafts` call, keeping one call well inside a
+ * mutation's write limits. A larger backlog reports `remaining` instead.
+ */
+const HIDE_PAST_BATCH = 500;
 
 type AIProvider = "openai" | "gemini";
 type AIConfig = {
@@ -372,6 +380,47 @@ export const hideEvent = mutation({
   },
 });
 
+/**
+ * Hides every draft whose dates are all in the past, across the whole draft
+ * backlog rather than only the page the admin has loaded. Drafts only, so
+ * nothing already published is touched.
+ *
+ * Capped at {@link HIDE_PAST_BATCH} hides per call; `remaining` says whether
+ * another click is needed.
+ */
+export const hidePastDrafts = mutation({
+  args: { token: v.string() },
+  returns: v.object({ hidden: v.number(), remaining: v.boolean() }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const now = Date.now();
+
+    // Read before writing: each patch moves a row out of the very index range
+    // being scanned.
+    const drafts = await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .take(DRAFT_COUNT_SCAN_LIMIT);
+    const past = drafts.filter((draft) => isPastEvent(draft.dates, now));
+    const batch = past.slice(0, HIDE_PAST_BATCH);
+
+    for (const draft of batch) {
+      await ctx.db.patch(draft._id, { visibility: "hidden", updatedAt: now });
+    }
+
+    return {
+      hidden: batch.length,
+      // A truncated scan only counts as "more to do" if this call hid
+      // something, since hiding is what makes room to scan further; otherwise
+      // a backlog of current drafts past the scan limit would ask for another
+      // click forever.
+      remaining:
+        past.length > batch.length ||
+        (drafts.length === DRAFT_COUNT_SCAN_LIMIT && batch.length > 0),
+    };
+  },
+});
+
 /** True if `value` is a well-formed http(s) URL. */
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -493,12 +542,14 @@ export const overview = query({
   args: { token: v.string() },
   returns: v.object({
     runs: v.array(parseRunDocValidator),
-    drafts: v.array(eventDocValidator),
     failedMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     ignoredMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     needsAssignmentCount: v.number(),
     readyCount: v.number(),
     readyScanTruncated: v.boolean(),
+    draftCount: v.number(),
+    pastDraftCount: v.number(),
+    draftScanTruncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
@@ -509,11 +560,13 @@ export const overview = query({
           .withIndex("by_started_at")
           .order("desc")
           .take(20),
+        // Counted only — the list an admin reviews is `listDrafts`, which
+        // paginates, so the header can say how big the backlog is while the
+        // page loads it a screenful at a time.
         ctx.db
           .query("events")
           .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
-          .order("desc")
-          .take(50),
+          .take(DRAFT_COUNT_SCAN_LIMIT),
         ctx.db
           .query("listservMessages")
           .withIndex("by_processing_status", (q) =>
@@ -567,9 +620,16 @@ export const overview = query({
       receivedAt: m.receivedAt,
     });
 
+    // Convex does not re-run a query as the clock moves, so a draft that ages
+    // past its last date is counted as past on the next change to `events`
+    // or the next page load — soon enough for a backlog count.
+    const now = Date.now();
+    const pastDraftCount = drafts.filter((draft) =>
+      isPastEvent(draft.dates, now),
+    ).length;
+
     return {
       runs,
-      drafts,
       failedMessages: failedMessages.map(projectMessage),
       ignoredMessages: ignoredMessages.map(projectMessage),
       needsAssignmentCount: needsAssignment.length,
@@ -577,7 +637,28 @@ export const overview = query({
       // Both counts above describe the newest `NEEDS_ASSIGNMENT_SCAN_LIMIT`
       // messages only, so the UI can show them as "at least this many".
       readyScanTruncated: newMessages.length === NEEDS_ASSIGNMENT_SCAN_LIMIT,
+      draftCount: drafts.length,
+      pastDraftCount,
+      draftScanTruncated: drafts.length === DRAFT_COUNT_SCAN_LIMIT,
     };
+  },
+});
+
+/**
+ * The drafts awaiting review, newest first. Paginated so a backlog past one
+ * screenful is reachable through "Load more" rather than silently cut off,
+ * which is what the previous fixed `take(50)` did.
+ */
+export const listDrafts = query({
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(eventDocValidator),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -991,6 +1072,116 @@ export const rescoreDraftConfidence = internalMutation({
     }
 
     return { scanned, changed, samples };
+  },
+});
+
+/**
+ * One-off repair for drafts whose `hour`/`minute` (and, in principle,
+ * `month`/`day`) came from the model computing its own epoch timestamp —
+ * the pre-fix pipeline this file used to run. {@link fixDraftEventYears}
+ * only ever corrects the year and keeps the rest of the stored timestamp,
+ * so a draft whose time was wrong for some other reason than the year stays
+ * wrong after it. The only trustworthy fix for that is re-deriving the whole
+ * date from the source email under the current prompt and
+ * {@link normalizeDates}, which means a full reparse rather than a patch.
+ *
+ * This only requeues the *message* (`processingStatus: "new"`, mirroring
+ * `requeueMessage`) — it does not touch the draft. `storeParsedEvents`
+ * already deletes a message's prior `draft`-visibility events before
+ * inserting the fresh parse, so nothing here needs to delete anything, and a
+ * draft an admin already published or hid is left alone because its message
+ * is never requeued.
+ *
+ * Requeuing alone does not reparse anything: after this runs, trigger a
+ * parse run (the admin page's "Run parser" button, or
+ * `npx convex run parser:runParseInternal '{"trigger": "manual"}'`) to
+ * actually regenerate the drafts.
+ *
+ * A draft already entirely in the past is excluded rather than requeued: its
+ * event already happened, so a corrected hour is not worth an AI call. Only
+ * every date on a draft being past excludes it — one still-future date among
+ * several (a multi-date item, or another item from the same email) keeps the
+ * whole message in, since reparsing it is one call that fixes every item it
+ * contains anyway.
+ *
+ * Run `npx convex run parser:requeueDraftMessagesForReparse '{"dryRun": true}'`
+ * first and read `samples`; re-run without `dryRun` to requeue for real.
+ */
+export const requeueDraftMessagesForReparse = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    draftsAffected: v.number(),
+    skippedPast: v.number(),
+    messagesRequeued: v.number(),
+    skippedNoSource: v.number(),
+    samples: v.array(
+      v.object({
+        messageId: v.id("listservMessages"),
+        subject: v.string(),
+        draftTitles: v.array(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const samples: Array<{
+      messageId: Id<"listservMessages">;
+      subject: string;
+      draftTitles: string[];
+    }> = [];
+    let draftsAffected = 0;
+    let skippedPast = 0;
+    let skippedNoSource = 0;
+
+    const now = Date.now();
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    const messageTitles = new Map<Id<"listservMessages">, string[]>();
+    for await (const draft of drafts) {
+      draftsAffected += 1;
+
+      if (isPastEvent(draft.dates, now)) {
+        skippedPast += 1;
+        continue;
+      }
+
+      if (!draft.sourceMessageId) {
+        skippedNoSource += 1;
+        continue;
+      }
+      const titles = messageTitles.get(draft.sourceMessageId) ?? [];
+      titles.push(draft.title);
+      messageTitles.set(draft.sourceMessageId, titles);
+    }
+
+    let messagesRequeued = 0;
+    for (const [messageId, draftTitles] of messageTitles) {
+      const message = await ctx.db.get(messageId);
+      if (!message) {
+        skippedNoSource += draftTitles.length;
+        continue;
+      }
+
+      if (samples.length < 20) {
+        samples.push({ messageId, subject: message.subject, draftTitles });
+      }
+      if (args.dryRun) continue;
+
+      messagesRequeued += 1;
+      await ctx.db.patch(messageId, {
+        processingStatus: "new",
+        parseError: undefined,
+      });
+    }
+
+    return {
+      draftsAffected,
+      skippedPast,
+      messagesRequeued,
+      skippedNoSource,
+      samples,
+    };
   },
 });
 

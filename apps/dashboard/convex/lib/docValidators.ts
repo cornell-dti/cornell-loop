@@ -184,6 +184,7 @@ export const joinAttemptDocValidator = v.object({
   httpStatus: v.optional(v.number()),
   subscribeUrl: v.optional(v.string()),
   error: v.optional(v.string()),
+  responseExcerpt: v.optional(v.string()),
   createdAt: v.number(),
 });
 

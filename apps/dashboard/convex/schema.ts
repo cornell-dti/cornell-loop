@@ -361,6 +361,10 @@ export default defineSchema({
     httpStatus: v.optional(v.number()),
     subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
+    // What the subscribe form actually replied, as text. A web-form attempt
+    // can only be diagnosed from the page the server returned, and the status
+    // code is 200 whether or not the submission was accepted.
+    responseExcerpt: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_listserv", ["listservId"])

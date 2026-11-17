@@ -17,6 +17,7 @@ import {
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
+import { isPastEvent } from "../../convex/lib/eventDates";
 import {
   normalizeModelConfidence,
   scoreParseQuality,
@@ -40,6 +41,9 @@ type Candidate = Doc<"listservCandidates">;
  * confidence; without a cap they turn the review queue into an endless scroll.
  */
 const CANDIDATE_PREVIEW_COUNT = 25;
+
+/** Drafts loaded per page on the Publish tab, and per "Load more" click. */
+const DRAFT_PAGE_SIZE = 50;
 
 /**
  * Where a candidate address is hosted. Derived from the address rather than
@@ -429,6 +433,7 @@ export default function Admin() {
   const publishEvent = useMutation(api.parser.publishEvent);
   const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
+  const hidePastDrafts = useMutation(api.parser.hidePastDrafts);
   const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
   const requeueMessage = useMutation(api.parser.requeueMessage);
   const updateListservEmail = useMutation(
@@ -517,7 +522,11 @@ export default function Admin() {
   const unassignedTruncated: boolean = sourceData?.unassignedTruncated ?? false;
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
-  const drafts: EventDoc[] = parseData?.drafts ?? [];
+  const draftCounts = {
+    total: parseData?.draftCount ?? 0,
+    past: parseData?.pastDraftCount ?? 0,
+    truncated: parseData?.draftScanTruncated ?? false,
+  };
   const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
     []) as ParseMessage[];
   const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
@@ -541,6 +550,14 @@ export default function Admin() {
   // Stable identity: PublishTab drives this from an effect, and a fresh arrow
   // on every render would re-fire it before the in-flight page lands.
   const onLoadMoreReady = useCallback(() => loadMoreReady(25), [loadMoreReady]);
+
+  const {
+    results: drafts,
+    status: draftsStatus,
+    loadMore: loadMoreDrafts,
+  } = usePaginatedQuery(api.parser.listDrafts, token ? { token } : "skip", {
+    initialNumItems: DRAFT_PAGE_SIZE,
+  });
 
   // The review queue, paginated for the same reason: `dashboard.candidates`
   // stops at 150 and directory discovery seeds roughly 600.
@@ -917,6 +934,9 @@ export default function Admin() {
           <PublishTab
             runs={parseRuns}
             drafts={drafts}
+            draftsStatus={draftsStatus}
+            onLoadMoreDrafts={() => loadMoreDrafts(DRAFT_PAGE_SIZE)}
+            draftCounts={draftCounts}
             failedMessages={failedMessages}
             ignoredMessages={ignoredMessages}
             readyMessages={readyMessages}
@@ -942,6 +962,22 @@ export default function Admin() {
             onHide={(id) =>
               act("Hidden.", () => hideEvent({ token, eventId: id }))
             }
+            onHidePast={async () => {
+              try {
+                const result = await hidePastDrafts({ token });
+                const noun = `past draft${result.hidden !== 1 ? "s" : ""}`;
+                showToast(
+                  result.remaining
+                    ? `Hid ${result.hidden} ${noun}. More remain — click again.`
+                    : `Hid ${result.hidden} ${noun}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Action failed.",
+                  false,
+                );
+              }
+            }}
             onEdit={(id, patch) =>
               act("Event updated.", () =>
                 updateDraftEvent({ token, eventId: id, ...patch }),
@@ -2934,21 +2970,35 @@ function JoinTab({
             {joinAttempts.map((a) => (
               <div
                 key={a._id}
-                className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                className="rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
               >
-                <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
-                <span className="truncate font-semibold">
-                  {a.recipient ?? a.subscribeUrl ?? "—"}
-                </span>
-                <span className="truncate text-[color:var(--color-text-muted)]">
-                  {a.error ??
-                    a.subject ??
-                    (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
-                </span>
-                <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
-                  {fmtDate(a.createdAt)}
-                </span>
+                <div className="flex items-center gap-3">
+                  <StatusDot status={a.status === "sent" ? "green" : "red"} />
+                  <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
+                  <span className="truncate font-semibold">
+                    {a.recipient ?? a.subscribeUrl ?? "—"}
+                  </span>
+                  <span className="truncate text-[color:var(--color-text-muted)]">
+                    {a.error ??
+                      a.subject ??
+                      (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
+                    {fmtDate(a.createdAt)}
+                  </span>
+                </div>
+                {/* What the subscribe form replied. A web-form attempt can
+                    only be diagnosed from the page the server returned. */}
+                {a.responseExcerpt && (
+                  <details className="mt-1 pl-6">
+                    <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                      Server response
+                    </summary>
+                    <p className="mt-1 text-[length:var(--font-size-body3)] break-words text-[color:var(--color-text-muted)]">
+                      {a.responseExcerpt}
+                    </p>
+                  </details>
+                )}
               </div>
             ))}
           </div>
@@ -3999,6 +4049,9 @@ function ImagePickButton({
 function PublishTab({
   runs,
   drafts,
+  draftsStatus,
+  onLoadMoreDrafts,
+  draftCounts,
   failedMessages,
   ignoredMessages,
   readyMessages,
@@ -4011,6 +4064,7 @@ function PublishTab({
   onPublish,
   onPublishMany,
   onHide,
+  onHidePast,
   onEdit,
   onReparse,
   onRequeue,
@@ -4018,6 +4072,15 @@ function PublishTab({
 }: {
   runs: ParseRun[];
   drafts: EventDoc[];
+  draftsStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreDrafts: () => void;
+  // Counted server-side over every draft, not just the loaded pages, so the
+  // header shows the real backlog.
+  draftCounts: { total: number; past: number; truncated: boolean };
   failedMessages: ParseMessage[];
   ignoredMessages: ParseMessage[];
   readyMessages: ParseMessage[];
@@ -4033,6 +4096,7 @@ function PublishTab({
   onPublish: (id: Id<"events">) => void;
   onPublishMany: (ids: Id<"events">[]) => void;
   onHide: (id: Id<"events">) => void;
+  onHidePast: () => void;
   onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
   onReparse: (id: Id<"listservMessages">) => void;
   onRequeue: (id: Id<"listservMessages">) => void;
@@ -4059,15 +4123,30 @@ function PublishTab({
     onLoadMoreReady();
   }, [showReady, loadedReadyCount, readyStatus, onLoadMoreReady]);
 
+  // Every date on a draft already behind "now" means the event (or deadline)
+  // it describes already happened — reviewing it just adds backlog noise, so
+  // it moves to its own collapsed section instead of the main review list.
+  // "now" is captured once per mount rather than read directly during render
+  // (an impure call React's rules reject there) — this only needs to be
+  // fresh enough that a draft ages into this bucket the next time the admin
+  // page is opened, not live within an open session.
+  const [now] = useState(() => Date.now());
+  const currentDrafts = drafts.filter(
+    (draft) => !isPastEvent(draft.dates, now),
+  );
+  const pastDrafts = drafts.filter((draft) => isPastEvent(draft.dates, now));
+  const currentDraftTotal = draftCounts.total - draftCounts.past;
+  const plus = draftCounts.truncated ? "+" : "";
+
   // Publishing a draft removes it from `drafts`, as does hiding one, so the
   // stored set is narrowed to what is still on screen rather than pruned in an
   // effect: otherwise the "N selected" count keeps counting rows nobody can
   // see any more.
   const liveSelected = new Set(
-    drafts.map((draft) => draft._id).filter((id) => selected.has(id)),
+    currentDrafts.map((draft) => draft._id).filter((id) => selected.has(id)),
   );
 
-  const cleanDrafts = drafts.filter(
+  const cleanDrafts = currentDrafts.filter(
     (draft) => (draft.parseWarnings ?? []).length === 0,
   );
 
@@ -4125,7 +4204,8 @@ function PublishTab({
               </div>
               <div>
                 <div className="text-[length:var(--font-size-sub2)] font-bold">
-                  {drafts.length}
+                  {currentDraftTotal}
+                  {plus}
                 </div>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   drafts
@@ -4223,15 +4303,19 @@ function PublishTab({
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardHeader
-            title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
-            subtitle="Review each item before publishing. Published items appear in the user-facing feed."
+            title={`${currentDraftTotal}${plus} draft${currentDraftTotal !== 1 ? "s" : ""}`}
+            subtitle={
+              currentDrafts.length < currentDraftTotal
+                ? `Showing the newest ${currentDrafts.length}. Review each item before publishing. Published items appear in the user-facing feed.`
+                : "Review each item before publishing. Published items appear in the user-facing feed."
+            }
           />
-          {drafts.length > 0 && (
+          {currentDrafts.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-[length:var(--font-size-body2)] font-semibold">
                 <input
                   type="checkbox"
-                  checked={liveSelected.size === drafts.length}
+                  checked={liveSelected.size === currentDrafts.length}
                   // Indeterminate can't be expressed in JSX, so it is set on
                   // the node: without it a partial selection renders as
                   // unchecked and reads as "nothing selected".
@@ -4239,29 +4323,34 @@ function PublishTab({
                     if (node) {
                       node.indeterminate =
                         liveSelected.size > 0 &&
-                        liveSelected.size < drafts.length;
+                        liveSelected.size < currentDrafts.length;
                     }
                   }}
                   onChange={(e) =>
                     setSelected(
                       e.target.checked
-                        ? new Set(drafts.map((draft) => draft._id))
+                        ? new Set(currentDrafts.map((draft) => draft._id))
                         : new Set(),
                     )
                   }
                   className="size-4"
                 />
-                Select all ({drafts.length})
+                {currentDrafts.length < currentDraftTotal
+                  ? `Select all loaded (${currentDrafts.length})`
+                  : `Select all (${currentDrafts.length})`}
               </label>
-              {cleanDrafts.length > 0 && cleanDrafts.length < drafts.length && (
-                <Btn
-                  onClick={() =>
-                    setSelected(new Set(cleanDrafts.map((draft) => draft._id)))
-                  }
-                >
-                  Select {cleanDrafts.length} without warnings
-                </Btn>
-              )}
+              {cleanDrafts.length > 0 &&
+                cleanDrafts.length < currentDrafts.length && (
+                  <Btn
+                    onClick={() =>
+                      setSelected(
+                        new Set(cleanDrafts.map((draft) => draft._id)),
+                      )
+                    }
+                  >
+                    Select {cleanDrafts.length} without warnings
+                  </Btn>
+                )}
               {liveSelected.size > 0 && (
                 <Btn primary onClick={publishSelected}>
                   Publish {liveSelected.size} selected
@@ -4270,18 +4359,24 @@ function PublishTab({
             </div>
           )}
         </div>
-        {drafts.length === 0 ? (
+        {currentDrafts.length === 0 ? (
           <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
-            No drafts. Run the parser after assigning sources to organizations.
+            {draftsStatus === "LoadingFirstPage"
+              ? "Loading…"
+              : currentDraftTotal > 0
+                ? "Everything loaded so far is past-dated. Load more to reach current drafts."
+                : "No drafts. Run the parser after assigning sources to organizations."}
           </p>
         ) : (
           <div className="mt-4 grid gap-3">
-            {drafts.map((event) => (
+            {currentDrafts.map((event) => (
               <DraftCard
                 key={event._id}
                 event={event}
-                selected={liveSelected.has(event._id)}
-                onToggleSelect={() => toggleSelected(event._id)}
+                selection={{
+                  selected: liveSelected.has(event._id),
+                  onToggle: () => toggleSelected(event._id),
+                }}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
@@ -4294,7 +4389,56 @@ function PublishTab({
             ))}
           </div>
         )}
+        {(draftsStatus === "CanLoadMore" || draftsStatus === "LoadingMore") && (
+          <Btn
+            onClick={onLoadMoreDrafts}
+            disabled={draftsStatus === "LoadingMore"}
+            className="mt-3"
+          >
+            {draftsStatus === "LoadingMore" ? "Loading…" : "Load more drafts"}
+          </Btn>
+        )}
       </Card>
+
+      {/* Past drafts — every date already behind "now", so reviewing them is
+          pure backlog. Kept reachable rather than auto-hidden, since an admin
+          may still want to publish a recap or correct the date instead. The
+          count and "Hide all" cover every draft; the rows are only the loaded
+          ones. */}
+      {(draftCounts.past > 0 || pastDrafts.length > 0) && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
+            Past drafts ({Math.max(draftCounts.past, pastDrafts.length)}
+            {plus}) — already happened
+          </summary>
+          <div className="mt-3 grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-secondary)]">
+                Every date on these is already in the past. If the parser got a
+                date wrong, edit or reparse the draft and it moves back up;
+                otherwise hide them all at once, including any not loaded below.
+              </p>
+              <Btn onClick={onHidePast} className="shrink-0">
+                Hide all past
+              </Btn>
+            </div>
+            {pastDrafts.map((event) => (
+              <DraftCard
+                key={event._id}
+                event={event}
+                onPublish={() => onPublish(event._id)}
+                onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
+                onReparse={
+                  event.sourceMessageId
+                    ? () => onReparse(event.sourceMessageId!)
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* Failed */}
       {failedMessages.length > 0 && (
@@ -4358,16 +4502,15 @@ function PublishTab({
 
 function DraftCard({
   event,
-  selected,
-  onToggleSelect,
+  selection,
   onPublish,
   onHide,
   onEdit,
   onReparse,
 }: {
   event: EventDoc;
-  selected: boolean;
-  onToggleSelect: () => void;
+  /** Omitted where bulk publish doesn't apply, which also drops the checkbox. */
+  selection?: { selected: boolean; onToggle: () => void };
   onPublish: () => void;
   onHide: () => void;
   onEdit: (patch: DraftEditPatch) => void;
@@ -4458,11 +4601,11 @@ function DraftCard({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
-        {!editing && (
+        {!editing && selection && (
           <input
             type="checkbox"
-            checked={selected}
-            onChange={onToggleSelect}
+            checked={selection.selected}
+            onChange={selection.onToggle}
             className="mt-1 size-4 shrink-0"
             aria-label={`Select ${event.title} for bulk publish`}
           />
