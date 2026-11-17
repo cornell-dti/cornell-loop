@@ -7,19 +7,19 @@ import { ConvexReactClient } from "convex/react";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import App from "./App.tsx";
+import { initAnalytics } from "./lib/analytics.ts";
+import { AnalyticsIdentity } from "./lib/AnalyticsIdentity.tsx";
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
-posthog.init(import.meta.env.VITE_POSTHOG_KEY, {
-  api_host: import.meta.env.VITE_POSTHOG_HOST,
-  defaults: "2026-05-30",
-});
+initAnalytics();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <PostHogProvider client={posthog}>
       <ConvexAuthProvider client={convex}>
         <BrowserRouter>
+          <AnalyticsIdentity />
           <App />
         </BrowserRouter>
       </ConvexAuthProvider>

@@ -31,10 +31,18 @@ import {
   type ProfileFieldsValue,
 } from "../components/ProfileFields";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
+import { consumeFirstAction, track } from "../lib/analytics";
 
 type OnboardingStep = 1 | 2 | 3;
 
 const TOTAL_STEPS = 3;
+
+/** Human-readable step labels, so PostHog funnels don't read as bare numbers. */
+const STEP_NAMES: Record<OnboardingStep, string> = {
+  1: "profile",
+  2: "suggested_clubs",
+  3: "confirmation",
+};
 
 const HEADING_CLASS =
   "font-[family-name:var(--font-heading)] font-bold " +
@@ -177,8 +185,8 @@ function StepProfile({ initialValue, userName, onContinue }: StepProfileProps) {
 // ─── Step 2 — Suggested clubs ────────────────────────────────────────────────
 
 interface StepClubsProps {
-  onContinue: () => void;
-  onBack: () => void;
+  onContinue: (clubsFollowed: number) => void;
+  onBack: (clubsFollowed: number) => void;
 }
 
 interface ClubCardProps {
@@ -263,6 +271,12 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
       } else {
         await unfollowMutation({ orgId });
       }
+      track("club_followed", {
+        org_id: orgId,
+        surface: "onboarding",
+        action: nextFollowing ? "follow" : "unfollow",
+        is_first_action: nextFollowing ? consumeFirstAction() : false,
+      });
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -333,13 +347,17 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
       )}
 
       <div className="flex justify-between">
-        <Button variant="secondary" size="md" onClick={onBack}>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => onBack(followedCount)}
+        >
           Back
         </Button>
         <Button
           variant="primary"
           size="md"
-          onClick={onContinue}
+          onClick={() => onContinue(followedCount)}
           disabled={!canContinue}
         >
           Continue
@@ -422,6 +440,59 @@ export default function Onboarding() {
     }
   }, [loading, isOnboarded, navigate]);
 
+  // ─── Funnel instrumentation ────────────────────────────────────────────
+  // `stepStartedAt` is reset on every transition so each step reports its own
+  // duration, while `startedAt` survives to give the end-to-end time that
+  // feeds time-to-activation.
+  const startedAt = useRef<number | null>(null);
+  const stepStartedAt = useRef<number | null>(null);
+  const clubsFollowedAtExit = useRef(0);
+  const funnelResolved = useRef(false);
+
+  useEffect(() => {
+    if (loading) return;
+    // Don't start a funnel for someone who is only passing through on their
+    // way to the redirect above.
+    if (initiallyOnboarded.current !== false) return;
+    if (startedAt.current !== null) return;
+
+    startedAt.current = Date.now();
+    stepStartedAt.current = startedAt.current;
+    track("onboarding_started", { entry_point: "wizard" });
+  }, [loading]);
+
+  // Leaving the wizard before the final CTA counts as a skip, whether the user
+  // navigated away or closed the tab. `funnelResolved` makes the two paths
+  // mutually exclusive and also absorbs StrictMode's extra dev unmount.
+  const stepRef = useRef<OnboardingStep>(1);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+  useEffect(() => {
+    const emitSkip = () => {
+      if (funnelResolved.current) return;
+      if (startedAt.current === null) return;
+      funnelResolved.current = true;
+      track("onboarding_skipped", { at_step: stepRef.current, via: "exit" });
+    };
+    window.addEventListener("pagehide", emitSkip);
+    return () => {
+      window.removeEventListener("pagehide", emitSkip);
+      emitSkip();
+    };
+  }, []);
+
+  const completeStep = (stepNumber: OnboardingStep, clubsFollowed: number) => {
+    const now = Date.now();
+    track("onboarding_step_completed", {
+      step: stepNumber,
+      step_name: STEP_NAMES[stepNumber],
+      duration_ms: now - (stepStartedAt.current ?? now),
+      clubs_followed: clubsFollowed,
+    });
+    stepStartedAt.current = now;
+  };
+
   const initialValue = useMemo<ProfileFieldsValue>(
     () => ({
       major: profile?.major,
@@ -454,14 +525,30 @@ export default function Onboarding() {
       minor: value.minor,
       interests: value.interests,
     });
+    completeStep(1, 0);
     setStep(2);
   };
 
-  const handleStep2Continue = () => setStep(3);
-  const handleStep2Back = () => setStep(1);
+  const handleStep2Continue = (clubsFollowed: number) => {
+    clubsFollowedAtExit.current = clubsFollowed;
+    completeStep(2, clubsFollowed);
+    setStep(3);
+  };
+  const handleStep2Back = (clubsFollowed: number) => {
+    clubsFollowedAtExit.current = clubsFollowed;
+    stepStartedAt.current = Date.now();
+    setStep(1);
+  };
 
   const handleFinish = async () => {
     await completeOnboarding();
+    const clubsFollowed = clubsFollowedAtExit.current;
+    completeStep(3, clubsFollowed);
+    funnelResolved.current = true;
+    track("onboarding_completed", {
+      total_duration_ms: Date.now() - (startedAt.current ?? Date.now()),
+      clubs_followed: clubsFollowed,
+    });
     navigate("/home", { replace: true });
   };
 

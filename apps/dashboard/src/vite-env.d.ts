@@ -3,6 +3,20 @@
 
 import type * as React from "react";
 
+declare global {
+  interface ImportMetaEnv {
+    readonly VITE_CONVEX_URL: string;
+    readonly VITE_CONVEX_SITE_URL?: string;
+    /** Absent in local/preview builds — analytics silently no-ops. */
+    readonly VITE_POSTHOG_KEY?: string;
+    readonly VITE_POSTHOG_HOST?: string;
+  }
+
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+}
+
 type SvgReactComponent = React.FunctionComponent<
   React.ComponentProps<"svg"> & {
     title?: string;
