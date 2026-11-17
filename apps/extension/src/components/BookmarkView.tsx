@@ -29,6 +29,15 @@ import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";
 import { useFilterTags } from "../data/useFilterTags";
 import type { CanonicalTag } from "@app/convex/lib/tags";
+import { EventImpression } from "../analytics/EventImpression";
+import {
+  trackBookmarkToggle,
+  trackCalendarAdd,
+  trackFilter,
+  trackLinkClick,
+} from "../analytics/eventTracking";
+
+const SURFACE = "bookmarks";
 
 // ── Typography ─────────────────────────────────────────────────────────────
 
@@ -76,6 +85,7 @@ export default function BookmarkView({
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
   const handleTagToggle = (tag: string) => {
+    trackFilter(tag, activeTags.includes(tag) ? "deselect" : "select", SURFACE);
     setActiveTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
@@ -83,11 +93,13 @@ export default function BookmarkView({
 
   const handleTagAdd = (tag: CanonicalTag) => {
     addTag(tag);
+    trackFilter(tag, "pin", SURFACE);
     setActiveTags((prev) => [...prev, tag]);
   };
 
   const handleTagRemove = (tag: CanonicalTag) => {
     removeTag(tag);
+    trackFilter(tag, "unpin", SURFACE);
     setActiveTags((prev) => prev.filter((t) => t !== tag));
   };
 
@@ -138,45 +150,57 @@ export default function BookmarkView({
             const primaryAction = primaryLink
               ? {
                   label: getLinkLabel(primaryLink),
-                  onClick: () => openExternalUrl(primaryLink.url),
+                  onClick: () => {
+                    trackLinkClick(event, SURFACE, primaryLink.type);
+                    openExternalUrl(primaryLink.url);
+                  },
                 }
               : undefined;
 
             const onAddToCalendar = event.calendarEvent
               ? () => {
+                  trackCalendarAdd(event, SURFACE);
                   removeSlotPreview();
                   openExternalUrl(buildGCalUrl(event.calendarEvent!));
                 }
               : undefined;
 
             return (
-              <BookmarkCard
+              <EventImpression
                 key={event.id}
-                orgName={event.orgName}
-                orgAvatarUrl={event.orgAvatarUrl}
-                thumbnailVariant={event.thumbnailVariant}
-                day={event.day}
-                month={event.month}
-                title={event.title}
-                subtitle={event.subtitle}
-                onSubtitleClick={
-                  event.isEdgeCase ? () => onEmailView(event) : undefined
-                }
-                tags={event.tags}
-                primaryAction={primaryAction}
-                onAddToCalendar={onAddToCalendar}
-                onUnbookmark={() => onUnbookmark(event.id)}
-                onPreviewEnter={
-                  pageContext === "gcal" && event.calendarEvent
-                    ? () => onPreviewSlot?.(event)
-                    : undefined
-                }
-                onPreviewLeave={
-                  pageContext === "gcal" && event.calendarEvent
-                    ? () => onPreviewSlot?.(null)
-                    : undefined
-                }
-              />
+                events={[event]}
+                surface={SURFACE}
+              >
+                <BookmarkCard
+                  orgName={event.orgName}
+                  orgAvatarUrl={event.orgAvatarUrl}
+                  thumbnailVariant={event.thumbnailVariant}
+                  day={event.day}
+                  month={event.month}
+                  title={event.title}
+                  subtitle={event.subtitle}
+                  onSubtitleClick={
+                    event.isEdgeCase ? () => onEmailView(event) : undefined
+                  }
+                  tags={event.tags}
+                  primaryAction={primaryAction}
+                  onAddToCalendar={onAddToCalendar}
+                  onUnbookmark={() => {
+                    trackBookmarkToggle(event, SURFACE, "remove");
+                    onUnbookmark(event.id);
+                  }}
+                  onPreviewEnter={
+                    pageContext === "gcal" && event.calendarEvent
+                      ? () => onPreviewSlot?.(event)
+                      : undefined
+                  }
+                  onPreviewLeave={
+                    pageContext === "gcal" && event.calendarEvent
+                      ? () => onPreviewSlot?.(null)
+                      : undefined
+                  }
+                />
+              </EventImpression>
             );
           })}
         </div>

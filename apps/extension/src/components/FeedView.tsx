@@ -12,6 +12,8 @@ import { useState } from "react";
 import { ExtensionEventCard } from "@app/ui";
 import type { EventId, EventItem } from "../data/types";
 import { useFeedSections, useTrendingEvents } from "../data/useEvents";
+import { EventImpression } from "../analytics/EventImpression";
+import { trackBookmarkToggle } from "../analytics/eventTracking";
 
 // ── Typography ─────────────────────────────────────────────────────────────
 
@@ -24,6 +26,8 @@ const SECTION_HEADING =
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MAX_VISIBLE = 3;
+
+const SURFACE = "feed";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -86,28 +90,40 @@ export default function FeedView({
             : events.slice(0, MAX_VISIBLE);
 
           return (
-            <ExtensionEventCard
+            <EventImpression
               key={orgId}
-              orgName={orgName}
-              events={visibleEvents.map((event) => ({
-                thumbnailVariant: event.thumbnailVariant,
-                day: event.day,
-                month: event.month,
-                title: event.title,
-                description: toRowDescription(event),
-                bookmarked: bookmarkedIds.has(event.id),
-                onBookmark: () => onBookmark(event.id),
-                onRowClick: event.isEdgeCase
-                  ? () => onEmailView(event)
-                  : undefined,
-              }))}
-              onViewMore={
-                !isExpanded && events.length > MAX_VISIBLE
-                  ? () => toggleExpand(orgId)
-                  : undefined
-              }
-              onViewLess={isExpanded ? () => toggleExpand(orgId) : undefined}
-            />
+              events={visibleEvents}
+              surface={SURFACE}
+            >
+              <ExtensionEventCard
+                orgName={orgName}
+                events={visibleEvents.map((event) => ({
+                  thumbnailVariant: event.thumbnailVariant,
+                  day: event.day,
+                  month: event.month,
+                  title: event.title,
+                  description: toRowDescription(event),
+                  bookmarked: bookmarkedIds.has(event.id),
+                  onBookmark: () => {
+                    trackBookmarkToggle(
+                      event,
+                      SURFACE,
+                      bookmarkedIds.has(event.id) ? "remove" : "add",
+                    );
+                    onBookmark(event.id);
+                  },
+                  onRowClick: event.isEdgeCase
+                    ? () => onEmailView(event)
+                    : undefined,
+                }))}
+                onViewMore={
+                  !isExpanded && events.length > MAX_VISIBLE
+                    ? () => toggleExpand(orgId)
+                    : undefined
+                }
+                onViewLess={isExpanded ? () => toggleExpand(orgId) : undefined}
+              />
+            </EventImpression>
           );
         })}
       </section>
@@ -118,24 +134,32 @@ export default function FeedView({
           <p className={SECTION_HEADING}>New This Week</p>
 
           {trendingEvents.map((event) => (
-            <ExtensionEventCard
-              key={event.id}
-              orgName={event.orgName}
-              events={[
-                {
-                  thumbnailVariant: event.thumbnailVariant,
-                  day: event.day,
-                  month: event.month,
-                  title: event.title,
-                  description: toRowDescription(event),
-                  bookmarked: bookmarkedIds.has(event.id),
-                  onBookmark: () => onBookmark(event.id),
-                  onRowClick: event.isEdgeCase
-                    ? () => onEmailView(event)
-                    : undefined,
-                },
-              ]}
-            />
+            <EventImpression key={event.id} events={[event]} surface={SURFACE}>
+              <ExtensionEventCard
+                orgName={event.orgName}
+                events={[
+                  {
+                    thumbnailVariant: event.thumbnailVariant,
+                    day: event.day,
+                    month: event.month,
+                    title: event.title,
+                    description: toRowDescription(event),
+                    bookmarked: bookmarkedIds.has(event.id),
+                    onBookmark: () => {
+                      trackBookmarkToggle(
+                        event,
+                        SURFACE,
+                        bookmarkedIds.has(event.id) ? "remove" : "add",
+                      );
+                      onBookmark(event.id);
+                    },
+                    onRowClick: event.isEdgeCase
+                      ? () => onEmailView(event)
+                      : undefined,
+                  },
+                ]}
+              />
+            </EventImpression>
           ))}
         </section>
       )}

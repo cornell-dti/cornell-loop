@@ -15,6 +15,7 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
+    "@app/analytics": "workspace:*",
     "@app/ui": "workspace:*",
     "@auth/core": "^0.41.3",
     "@convex-dev/auth": "^0.0.95",

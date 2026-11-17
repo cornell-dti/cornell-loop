@@ -8,6 +8,7 @@ import FeedView from "./components/FeedView";
 import BookmarkView from "./components/BookmarkView";
 import SearchView from "./components/SearchView";
 import OriginalEmailView from "./components/OriginalEmailView";
+import PrivacyNote from "./components/PrivacyNote";
 import type { EventId, EventItem } from "./data/types";
 import { useBookmarks } from "./data/useEvents";
 import { openExternalUrl } from "./utils/linkUtils";
@@ -269,6 +270,7 @@ export default function App({
               >
                 Sign out
               </Button>
+              <PrivacyNote />
             </div>
           </div>
         </div>
@@ -322,6 +324,7 @@ export default function App({
             >
               Sign out
             </Button>
+            <PrivacyNote />
           </div>
         </div>
       )}

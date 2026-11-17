@@ -6,6 +6,7 @@ import FloatingPanel from "./components/FloatingPanel.tsx";
 import contentStyles from "./content.css?inline";
 import { showSlotPreview, removeSlotPreview } from "./gcalHighlight";
 import { panelEvents } from "./panelBridge";
+import { AnalyticsIdentity } from "./analytics/AnalyticsIdentity";
 import type { EventItem } from "./data/types";
 import type { PageContext } from "./App";
 import {
@@ -85,6 +86,7 @@ function mount() {
         storageNamespace={convexUrl}
         shouldHandleCode={false}
       >
+        <AnalyticsIdentity />
         <FloatingPanel
           pageContext={pageContext}
           onPreviewSlot={handlePreviewSlot}
