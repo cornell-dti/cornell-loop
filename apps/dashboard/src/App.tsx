@@ -97,34 +97,6 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * AuthOnlyRoute — gates on auth without applying the onboarding redirect.
- * Used for /onboarding so an unfinished user can stay on the page instead of
- * being bounced into a redirect loop.
- *
- * Also gates on `rejectedDomain` (see `RejectedDomainGate`) so a non-Cornell
- * session that lands here directly can't mount `Onboarding`'s authed
- * queries (`orgs.getSuggestedForOnboarding`, `follows.myFollows`) before
- * `useCurrentProfile` finishes signing it out.
- */
-function AuthOnlyRoute({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <AuthLoading>
-        <div className="flex h-screen w-screen items-center justify-center">
-          <p>Loading…</p>
-        </div>
-      </AuthLoading>
-      <Authenticated>
-        <RejectedDomainGate>{children}</RejectedDomainGate>
-      </Authenticated>
-      <Unauthenticated>
-        <Navigate to="/" replace />
-      </Unauthenticated>
-    </>
-  );
-}
-
 // ─── Route wrappers ──────────────────────────────────────────────────────────
 // Each dashboard page accepts optional `activeNavItem` and `onNavigate` props.
 // These small wrappers wire the router-aware values in once so the page files
