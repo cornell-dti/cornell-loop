@@ -2934,21 +2934,35 @@ function JoinTab({
             {joinAttempts.map((a) => (
               <div
                 key={a._id}
-                className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                className="rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
               >
-                <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
-                <span className="truncate font-semibold">
-                  {a.recipient ?? a.subscribeUrl ?? "—"}
-                </span>
-                <span className="truncate text-[color:var(--color-text-muted)]">
-                  {a.error ??
-                    a.subject ??
-                    (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
-                </span>
-                <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
-                  {fmtDate(a.createdAt)}
-                </span>
+                <div className="flex items-center gap-3">
+                  <StatusDot status={a.status === "sent" ? "green" : "red"} />
+                  <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
+                  <span className="truncate font-semibold">
+                    {a.recipient ?? a.subscribeUrl ?? "—"}
+                  </span>
+                  <span className="truncate text-[color:var(--color-text-muted)]">
+                    {a.error ??
+                      a.subject ??
+                      (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
+                    {fmtDate(a.createdAt)}
+                  </span>
+                </div>
+                {/* What the subscribe form replied. A web-form attempt can
+                    only be diagnosed from the page the server returned. */}
+                {a.responseExcerpt && (
+                  <details className="mt-1 pl-6">
+                    <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                      Server response
+                    </summary>
+                    <p className="mt-1 text-[length:var(--font-size-body3)] break-words text-[color:var(--color-text-muted)]">
+                      {a.responseExcerpt}
+                    </p>
+                  </details>
+                )}
               </div>
             ))}
           </div>

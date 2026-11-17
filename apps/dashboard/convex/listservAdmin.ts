@@ -29,6 +29,15 @@ import {
   buildLyrisJoinDefaults,
   lyrisDetectionReasons,
 } from "./lib/legacyLyris";
+import {
+  classifySubscribeResponse,
+  excerptFrom,
+  hasCaptcha,
+  inputValueFrom,
+  isRedirect,
+  submitValueFrom,
+  subscribeFormFrom,
+} from "./lib/simplelistsForm";
 import { UNKNOWN_LIST_REASON } from "./ingestion";
 import {
   discoveryRunDocValidator,
@@ -817,7 +826,7 @@ export const submitSimplelistsSubscribe = action({
     const connection = await getGmailConnection(ctx);
 
     try {
-      const { sessionCookie, csrfToken, listField } =
+      const { sessionCookie, csrfToken, listField, submitField } =
         await fetchSubscribeForm(subscribeUrl);
 
       const form = new URLSearchParams({
@@ -826,6 +835,7 @@ export const submitSimplelistsSubscribe = action({
         email: connection.email,
         list: listField ?? listAddress,
         action: "subscribe",
+        submit: submitField,
       });
 
       const response = await fetch(`${SIMPLELISTS_ORIGIN}/subscribe/`, {
@@ -839,12 +849,48 @@ export const submitSimplelistsSubscribe = action({
           Referer: subscribeUrl,
         },
         body: form.toString(),
+        // Simplelists redirects after a successful post, and following that
+        // silently turns both outcomes into an indistinguishable 200. The
+        // Location header is the clearest signal the server gives us.
+        redirect: "manual",
       });
 
-      if (!response.ok) {
-        throw new Error(
-          `Subscribe POST failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+      if (!response.ok && !isRedirect(response.status)) {
+        throw new SubscribeHttpError(
+          response.status,
+          `Subscribe POST failed (${response.status}): ${excerptFrom(await response.text())}`,
         );
+      }
+
+      const html = isRedirect(response.status) ? "" : await response.text();
+      const verdict = classifySubscribeResponse({
+        status: response.status,
+        location: response.headers.get("location"),
+        html,
+        subscribeUrl,
+      });
+      const responseExcerpt = excerptFrom(html);
+
+      // Anything short of a recognised acceptance is recorded as a failure.
+      // Reporting an unread 200 as "sent" is what let every rejected
+      // submission look successful while no confirmation mail ever arrived.
+      if (verdict.outcome !== "accepted") {
+        await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
+          listservId: args.listservId,
+          status: "failed",
+          method: "web_form",
+          httpStatus: response.status,
+          subscribeUrl,
+          recipient: listAddress,
+          error: verdict.message,
+          responseExcerpt,
+        });
+        return {
+          ok: false,
+          httpStatus: response.status,
+          subscribeUrl,
+          error: verdict.message,
+        };
       }
 
       await ctx.runMutation(internal.listservAdmin.recordJoinAttempt, {
@@ -854,6 +900,7 @@ export const submitSimplelistsSubscribe = action({
         httpStatus: response.status,
         subscribeUrl,
         recipient: listAddress,
+        responseExcerpt,
       });
 
       return { ok: true, httpStatus: response.status, subscribeUrl };
@@ -1663,6 +1710,7 @@ export const recordJoinAttempt = internalMutation({
     httpStatus: v.optional(v.number()),
     subscribeUrl: v.optional(v.string()),
     error: v.optional(v.string()),
+    responseExcerpt: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1679,6 +1727,7 @@ export const recordJoinAttempt = internalMutation({
       httpStatus: args.httpStatus,
       subscribeUrl: args.subscribeUrl,
       error: args.error,
+      responseExcerpt: args.responseExcerpt,
       createdAt: now,
     });
 
@@ -2510,6 +2559,14 @@ async function fetchSubscribeForm(subscribeUrl: string) {
     );
   }
 
+  // No amount of form-posting gets past a captcha, so a list that gates its
+  // form behind one is reported as needing the link rather than attempted.
+  if (hasCaptcha(html)) {
+    throw new Error(
+      "This list's subscribe form is protected by a captcha, which cannot be submitted automatically. Use the subscribe link to join by hand.",
+    );
+  }
+
   // The form carries the list address in its own casing (`WICC-L@…`, not
   // `wicc-l@…`). It is submitted verbatim rather than rebuilt from the
   // lowercased list name, so this cannot break if Simplelists ever compares it
@@ -2518,36 +2575,12 @@ async function fetchSubscribeForm(subscribeUrl: string) {
     sessionCookie,
     csrfToken,
     listField: inputValueFrom(form, "list"),
+    // A browser sends the clicked submit control as a field of its own. The
+    // form's button is `<button type="submit" name="submit" value="submit">`,
+    // and omitting it is indistinguishable, server-side, from never pressing
+    // the button.
+    submitField: submitValueFrom(form) ?? "submit",
   };
-}
-
-/**
- * The subscribe form's markup. The page also contains an unrelated `/subs/`
- * form, so the fields are read from this block rather than the whole document.
- */
-function subscribeFormFrom(html: string) {
-  const match = html.match(
-    /<form[^>]+action=["'][^"']*\/subscribe\/["'][^>]*>([\s\S]*?)<\/form>/i,
-  );
-  return match?.[1] ?? html;
-}
-
-function inputValueFrom(html: string, field: string) {
-  const name = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match =
-    html.match(
-      new RegExp(
-        `<input[^>]+name=["']${name}["'][^>]+value=["']([^"']*)["']`,
-        "i",
-      ),
-    ) ??
-    html.match(
-      new RegExp(
-        `<input[^>]+value=["']([^"']*)["'][^>]+name=["']${name}["']`,
-        "i",
-      ),
-    );
-  return match?.[1] ?? null;
 }
 
 /**
