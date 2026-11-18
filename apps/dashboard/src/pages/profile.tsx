@@ -35,6 +35,7 @@ import {
 } from "../components/ProfileFields";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
 import { track } from "../lib/analytics";
+import { PRIVACY_POLICY_URL } from "../lib/links";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 
@@ -223,25 +224,45 @@ export function Profile({
             </p>
           )}
 
-          <div className="flex items-center gap-[var(--space-3)]">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => onSave?.()}
-              disabled={saving}
+          <div className="flex w-full items-center justify-between gap-[var(--space-3)]">
+            <a
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={
+                "font-[family-name:var(--font-body)] font-normal " +
+                "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+                "tracking-[var(--letter-spacing-body2)] " +
+                "text-[color:var(--color-neutral-700)] underline-offset-2 " +
+                "transition-colors hover:text-[color:var(--color-neutral-900)] hover:underline " +
+                "focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 " +
+                "focus-visible:outline-[var(--color-primary-700)]"
+              }
+              style={{ fontVariationSettings: "'opsz' 14" }}
             >
-              Save changes
-            </Button>
-            {onSignOut !== undefined && (
+              Privacy Policy
+            </a>
+
+            <div className="flex items-center gap-[var(--space-3)]">
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={onSignOut}
+                onClick={() => onSave?.()}
                 disabled={saving}
               >
-                Sign out
+                Save changes
               </Button>
-            )}
+              {onSignOut !== undefined && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onSignOut}
+                  disabled={saving}
+                >
+                  Sign out
+                </Button>
+              )}
+            </div>
           </div>
         </>
       )}

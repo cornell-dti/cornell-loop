@@ -4,6 +4,7 @@ import { useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { LoopLogo } from "@app/ui";
 import { X, Mail } from "lucide-react";
+import { PRIVACY_POLICY_URL } from "../lib/links";
 
 // ─── Image assets ────────────────────────────────────────────────────────────
 import bgTexture from "../assets/landing/bg-texture.png";
@@ -353,9 +354,6 @@ function ClubDiscoveryMockup({ ieeeSrc }: { ieeeSrc: string }) {
 }
 
 // ─── Footer ──────────────────────────────────────────────────────────────────
-
-const PRIVACY_POLICY_URL =
-  "https://numerous-name-b50.notion.site/Loop-Privacy-Policy-3de0ad723ce1800faf4bdc308a4ed893";
 
 const FOOTER_EMAIL_HREF = "mailto:hello@cornelldti.org";
 
