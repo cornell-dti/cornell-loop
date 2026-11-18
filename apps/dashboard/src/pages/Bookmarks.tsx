@@ -34,6 +34,7 @@ import { useFollowToggle } from "../lib/useFollowToggle";
 import { useEventActions } from "../lib/useEventActions";
 import { EventImpression } from "../components/EventImpression";
 import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
+import { FeedNoMatchesState } from "../components/FeedNoMatchesState";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -229,8 +230,8 @@ export function Bookmarks({
           <h1
             className={
               "font-[family-name:var(--font-brand)] font-bold " +
-              "leading-[normal] text-[var(--font-size-wordmark)] " +
-              "whitespace-nowrap text-[var(--color-black)]"
+              "text-[length:var(--font-size-wordmark)] leading-[normal] " +
+              "whitespace-nowrap text-[color:var(--color-black)]"
             }
           >
             Bookmarks
@@ -265,6 +266,15 @@ export function Bookmarks({
           )}
           {feedLoading && <BookmarksLoadingState />}
           {!feedLoading && feedEmpty && <BookmarksEmptyState />}
+          {!feedLoading &&
+            !feedEmpty &&
+            selectedTag &&
+            visiblePosts.length === 0 && (
+              <FeedNoMatchesState
+                tag={selectedTag}
+                onClear={() => setSelectedTag(null)}
+              />
+            )}
           {visiblePosts.map((post, i) => (
             <EventImpression
               key={i}
