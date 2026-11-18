@@ -295,10 +295,12 @@ function ProfileModalInner({
     setError(null);
     setSaving(true);
     try {
+      // `null` means "clear it". An `undefined` field is dropped from the
+      // mutation args, which the server reads as "leave unchanged".
       await updateProfile({
-        major: value.major,
+        major: value.major ?? null,
         gradYear: value.gradYear,
-        minor: value.minor,
+        minor: value.minor ?? null,
         interests: value.interests,
       });
       setSaving(false);
