@@ -3,6 +3,11 @@
 
 import type * as React from "react";
 
+interface ImportMetaEnv {
+  /** OAuth client id used by useGmailScan.ts's Google Identity Services token client. */
+  readonly VITE_GOOGLE_GMAIL_CLIENT_ID?: string;
+}
+
 type SvgReactComponent = React.FunctionComponent<
   React.ComponentProps<"svg"> & {
     title?: string;

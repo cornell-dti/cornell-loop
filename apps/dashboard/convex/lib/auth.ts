@@ -20,14 +20,18 @@
 
 import { ConvexError } from "convex/values";
 import {
+  customAction,
   customMutation,
   customQuery,
 } from "convex-helpers/server/customFunctions";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import {
+  action,
   mutation,
   query,
+  type ActionCtx,
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
@@ -90,6 +94,47 @@ export const authedMutation = customMutation(mutation, {
   args: {},
   input: async (ctx) => {
     const user = await requireCornellUser(ctx);
+    return { ctx: { ...ctx, user }, args: {} };
+  },
+});
+
+/**
+ * Drop-in replacement for `action` that requires a signed-in Cornell user.
+ * Handlers get `ctx.user: Doc<"users">` in addition to the normal ctx.
+ *
+ * Actions have no `ctx.db` of their own, so the Cornell-domain check runs via
+ * `ctx.runQuery(internal.users.getCornellUser, ...)` — that query lives in
+ * `users.ts`, not here, because referencing `internal.lib.auth.*` from
+ * inside this file would make this module's own type depend on itself.
+ */
+export const authedAction = customAction(action, {
+  args: {},
+  // Explicit annotations below are required, not stylistic: this function
+  // calls `internal.users.getCornellUser`, and `internal`'s type is built
+  // from every module under convex/ including this one, which would
+  // otherwise make `authedAction`'s type depend on itself.
+  input: async (
+    ctx: ActionCtx,
+  ): Promise<{ ctx: ActionCtx & { user: Doc<"users"> }; args: object }> => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new ConvexError({
+        code: "UNAUTHENTICATED",
+        message: "You must be signed in to do that.",
+      });
+    }
+
+    const user: Doc<"users"> | null = await ctx.runQuery(
+      internal.users.getCornellUser,
+      { userId },
+    );
+    if (user === null) {
+      throw new ConvexError({
+        code: "NON_CORNELL_EMAIL",
+        message: "Loop is open to Cornell students only.",
+      });
+    }
+
     return { ctx: { ...ctx, user }, args: {} };
   },
 });

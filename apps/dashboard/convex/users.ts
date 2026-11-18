@@ -1,9 +1,28 @@
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  internalQuery,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { authedMutation, isCornellEmail } from "./lib/auth";
 import { normalizeTags } from "./lib/tags";
+
+/**
+ * Looked up via `ctx.runQuery` from {@link authedAction} in `lib/auth.ts` —
+ * actions have no `ctx.db` of their own, so the Cornell-domain check has to
+ * cross the action/query boundary. Lives here rather than in `lib/auth.ts`
+ * itself to avoid a self-referential `internal.*` type in that module.
+ */
+export const getCornellUser = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    return user !== null && isCornellEmail(user.email) ? user : null;
+  },
+});
 
 type CurrentUserResult = {
   user: Doc<"users"> | null;

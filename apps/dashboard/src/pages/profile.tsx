@@ -13,6 +13,10 @@
  * greeting, save button, saved-state animation) and wires the form to
  * `users.updateProfile`.
  *
+ * Also hosts a "Find clubs from Gmail" toggle (`GmailScanPanel`) — the same
+ * optional listserv scan offered during onboarding, reachable here for
+ * anyone who skipped it or wants to re-run it later.
+ *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing else is hardcoded.
  */
@@ -29,6 +33,7 @@ import { useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { Button } from "@app/ui";
 import { api } from "../../convex/_generated/api";
+import { GmailScanPanel } from "../components/GmailScanPanel";
 import {
   ProfileFieldsForm,
   type ProfileFieldsValue,
@@ -146,6 +151,8 @@ export function Profile({
   className,
   ...rest
 }: ProfileProps) {
+  const [showGmailScan, setShowGmailScan] = useState(false);
+
   return (
     <div
       className={[
@@ -241,6 +248,17 @@ export function Profile({
                 Sign out
               </Button>
             )}
+          </div>
+
+          <div className="flex w-full flex-col items-start gap-[var(--space-3)]">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowGmailScan((prev) => !prev)}
+            >
+              {showGmailScan ? "Hide Gmail scan" : "Find clubs from Gmail"}
+            </Button>
+            {showGmailScan && <GmailScanPanel />}
           </div>
         </>
       )}

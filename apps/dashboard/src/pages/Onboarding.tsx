@@ -1,5 +1,5 @@
 /**
- * Onboarding — three-step full-screen first-login flow.
+ * Onboarding — four-step full-screen first-login flow.
  *
  * Step 1: Profile fields (major / grad year / minor / interests).
  *         Continue requires major, gradYear, and ≥1 interest. On click, save
@@ -11,7 +11,14 @@
  *         `follows.myFollows` so it stays accurate even if the user toggles
  *         orgs across multiple sessions).
  *
- * Step 3: "You're all set" confirmation. Single CTA marks onboarding complete
+ * Step 3: Optional Gmail scan. Matches recent senders against known listservs
+ *         (`gmailMatches.scanRecentSenders`) and offers to follow the orgs
+ *         found via `GmailOrgMatches`. Never blocks Continue — a user can
+ *         skip it outright, or scan and decide on zero of the matches. The
+ *         same scan is reachable again later from the Profile page for users
+ *         who skip it here.
+ *
+ * Step 4: "You're all set" confirmation. Single CTA marks onboarding complete
  *         (`users.completeOnboarding`) and navigates to /home.
  *
  * Layout matches the visual language of the Profile modal and Landing page —
@@ -26,15 +33,16 @@ import { Avatar, Button, LoopLogo, Tag } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicOrg } from "../../convex/orgs";
+import { GmailScanPanel } from "../components/GmailScanPanel";
 import {
   ProfileFieldsForm,
   type ProfileFieldsValue,
 } from "../components/ProfileFields";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
 
-type OnboardingStep = 1 | 2 | 3;
+type OnboardingStep = 1 | 2 | 3 | 4;
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4;
 
 const HEADING_CLASS =
   "font-[family-name:var(--font-heading)] font-bold " +
@@ -349,7 +357,49 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
   );
 }
 
-// ─── Step 3 — Done ────────────────────────────────────────────────────────────
+// ─── Step 3 — Gmail scan (optional) ──────────────────────────────────────────
+
+interface StepGmailScanProps {
+  onContinue: () => void;
+  onBack: () => void;
+}
+
+function StepGmailScan({ onContinue, onBack }: StepGmailScanProps) {
+  return (
+    <>
+      <div className="flex flex-col gap-[var(--space-2)]">
+        <h1
+          className={HEADING_CLASS}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          Already on a club&apos;s mailing list?
+        </h1>
+        <p
+          className={SUBTITLE_CLASS}
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          We can check your Gmail for clubs you&apos;re already subscribed to
+          and suggest following them here. This is completely optional — we only
+          look at the last 12 months of senders, and nothing from your inbox is
+          ever stored.
+        </p>
+      </div>
+
+      <GmailScanPanel />
+
+      <div className="flex justify-between">
+        <Button variant="secondary" size="md" onClick={onBack}>
+          Back
+        </Button>
+        <Button variant="primary" size="md" onClick={onContinue}>
+          Continue
+        </Button>
+      </div>
+    </>
+  );
+}
+
+// ─── Step 4 — Done ────────────────────────────────────────────────────────────
 
 interface StepDoneProps {
   onFinish: () => Promise<void>;
@@ -459,6 +509,8 @@ export default function Onboarding() {
 
   const handleStep2Continue = () => setStep(3);
   const handleStep2Back = () => setStep(1);
+  const handleStep3Continue = () => setStep(4);
+  const handleStep3Back = () => setStep(2);
 
   const handleFinish = async () => {
     await completeOnboarding();
@@ -477,7 +529,13 @@ export default function Onboarding() {
       {step === 2 && (
         <StepClubs onContinue={handleStep2Continue} onBack={handleStep2Back} />
       )}
-      {step === 3 && <StepDone onFinish={handleFinish} />}
+      {step === 3 && (
+        <StepGmailScan
+          onContinue={handleStep3Continue}
+          onBack={handleStep3Back}
+        />
+      )}
+      {step === 4 && <StepDone onFinish={handleFinish} />}
     </OnboardingShell>
   );
 }

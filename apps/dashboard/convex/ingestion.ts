@@ -12,6 +12,14 @@ import {
   listNameFromConfirmationSender,
   simplelistsAddressForList,
 } from "./lib/cornellLists";
+import {
+  GmailApiError,
+  batchFetchMessages,
+  extractEmailAddress,
+  extractEmails,
+  gmailFetch,
+  normalizeEmail,
+} from "./lib/gmailBatch";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -24,7 +32,6 @@ const GMAIL_HISTORY_URL =
   "https://gmail.googleapis.com/gmail/v1/users/me/history";
 const GMAIL_PROFILE_URL =
   "https://gmail.googleapis.com/gmail/v1/users/me/profile";
-const GMAIL_BATCH_ENDPOINT = "https://www.googleapis.com/batch/gmail/v1";
 const HISTORY_STATE_KEY = "gmail_history_id";
 const MESSAGES_PER_PAGE = 100;
 const MAX_BOOTSTRAP_MESSAGES = 250;
@@ -191,7 +198,10 @@ export const pollListservInbox = internalAction({
 
       if (unseenIds.length > 0) {
         const [messages, listservs] = (await Promise.all([
-          batchFetchMessages(unseenIds, accessToken),
+          batchFetchMessages<GmailFullMessage>(unseenIds, accessToken, {
+            format: "full",
+            batchSize: BATCH_SIZE,
+          }),
           ctx.runQuery(internal.ingestion.getMatchableListservs),
         ])) as [GmailFullMessage[], MatchableListserv[]];
 
@@ -886,89 +896,6 @@ async function fetchRecentMessages(accessToken: string) {
   return { messageIds: [...new Set(ids)], historyId: profile.historyId };
 }
 
-async function batchFetchMessages(ids: string[], accessToken: string) {
-  const messages: GmailFullMessage[] = [];
-
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const chunk = ids.slice(i, i + BATCH_SIZE);
-    const boundary = `batch_${crypto.randomUUID()}`;
-    const body =
-      chunk
-        .map(
-          (id) =>
-            `--${boundary}\r\nContent-Type: application/http\r\n\r\nGET /gmail/v1/users/me/messages/${id}?format=full HTTP/1.1\r\n\r\n`,
-        )
-        .join("") + `--${boundary}--`;
-
-    const response = await fetch(GMAIL_BATCH_ENDPOINT, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": `multipart/mixed; boundary=${boundary}`,
-      },
-      body,
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Gmail batch fetch failed (${response.status}): ${await response.text()}`,
-      );
-    }
-
-    messages.push(...parseBatchResponse(await response.text()));
-  }
-
-  return messages;
-}
-
-async function gmailFetch<T>(url: string, accessToken: string) {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!response.ok) {
-    throw new GmailApiError(response.status, await response.text());
-  }
-
-  return (await response.json()) as T;
-}
-
-/**
- * Carries the HTTP status so callers can react to specific failures — notably
- * the 404 Gmail returns for an expired `startHistoryId`.
- */
-class GmailApiError extends Error {
-  readonly status: number;
-
-  constructor(status: number, body: string) {
-    super(`Gmail API error ${status}: ${body}`);
-    this.name = "GmailApiError";
-    this.status = status;
-  }
-}
-
-function parseBatchResponse(responseText: string) {
-  const results: GmailFullMessage[] = [];
-  const parts = responseText.split(/--batch_[^\r\n]+/);
-
-  for (const part of parts) {
-    const jsonStart = part.indexOf("{");
-    const jsonEnd = part.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) continue;
-
-    try {
-      const message = JSON.parse(
-        part.slice(jsonStart, jsonEnd + 1),
-      ) as GmailFullMessage;
-      if (message.id) results.push(message);
-    } catch {
-      continue;
-    }
-  }
-
-  return results;
-}
-
 function parseGmailMessage(message: GmailFullMessage): ParsedEmail | null {
   if (!message.id) return null;
 
@@ -1114,25 +1041,6 @@ function headerValue(
   return (
     headers.find((header) => header.name.toLowerCase() === name)?.value ?? ""
   );
-}
-
-function extractEmailAddress(value: string) {
-  const angleMatch = value.match(/<([^>]+)>/);
-  if (angleMatch) return normalizeEmail(angleMatch[1]);
-
-  const bareMatch = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-  if (bareMatch) return normalizeEmail(bareMatch[0]);
-
-  return normalizeEmail(value);
-}
-
-function extractEmails(value: string) {
-  const matches = value.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi);
-  return matches ? matches.map(normalizeEmail) : [];
-}
-
-function normalizeEmail(value: string) {
-  return value.trim().toLowerCase();
 }
 
 function parseDate(value: string | undefined) {
