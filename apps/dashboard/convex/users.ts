@@ -69,9 +69,9 @@ export const currentUser = query({
 
 export const updateProfile = authedMutation({
   args: {
-    major: v.optional(v.string()),
+    major: v.optional(v.union(v.string(), v.null())),
     gradYear: v.optional(v.string()),
-    minor: v.optional(v.string()),
+    minor: v.optional(v.union(v.string(), v.null())),
     interests: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
@@ -91,9 +91,9 @@ export const updateProfile = authedMutation({
     if (existing === null) {
       await ctx.db.insert("userProfiles", {
         userId: ctx.user._id,
-        major: args.major,
+        major: args.major ?? undefined,
         gradYear: args.gradYear,
-        minor: args.minor,
+        minor: args.minor ?? undefined,
         interests: interests ?? [],
         onboardingCompletedAt: shouldCompleteOnboarding
           ? Date.now()
@@ -103,9 +103,9 @@ export const updateProfile = authedMutation({
     }
 
     const patch: Partial<Doc<"userProfiles">> = {};
-    if (args.major !== undefined) patch.major = args.major;
+    if (args.major !== undefined) patch.major = args.major ?? undefined;
     if (args.gradYear !== undefined) patch.gradYear = args.gradYear;
-    if (args.minor !== undefined) patch.minor = args.minor;
+    if (args.minor !== undefined) patch.minor = args.minor ?? undefined;
     if (interests !== undefined) patch.interests = interests;
     if (shouldCompleteOnboarding) patch.onboardingCompletedAt = Date.now();
 
