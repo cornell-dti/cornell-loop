@@ -138,7 +138,6 @@ function SearchResultsState({
 
   const handleTagAdd = (tag: CanonicalTag) => {
     addTag(tag);
-    setActiveTags((prev) => [...prev, tag]);
   };
 
   const handleTagRemove = (tag: CanonicalTag) => {

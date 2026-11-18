@@ -27,7 +27,7 @@ const DASHBOARD_URL = (() => {
   const value = import.meta.env.VITE_DASHBOARD_URL;
   return typeof value === "string" && value.length > 0
     ? value
-    : "https://cornell-loop.com";
+    : "https://cornell-loop.com/home";
 })();
 
 // ── Auth gate sub-components ───────────────────────────────────────────────

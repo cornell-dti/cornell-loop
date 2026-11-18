@@ -65,7 +65,7 @@ export function SortByTags({
             onClick={() => setShowPicker((open) => !open)}
             className="cursor-pointer"
           >
-            <Tag color={showPicker ? "blue" : "neutral"}>+</Tag>
+            <Tag color="neutral">+</Tag>
           </button>
         )}
 
@@ -111,7 +111,7 @@ export function SortByTags({
               }}
               className="cursor-pointer"
             >
-              <Tag color="neutral">{label}</Tag>
+              <Tag color="neutral">+ {label}</Tag>
             </button>
           ))}
         </div>
