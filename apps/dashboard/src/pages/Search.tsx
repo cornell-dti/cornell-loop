@@ -21,9 +21,9 @@
  * src/styles/tokens.css.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import {
   SideBar,
   SearchBar,
@@ -32,26 +32,31 @@ import {
   Tag,
   fallbackColorsForName,
 } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { SideBarItemId, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
   stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
+import { track } from "../lib/analytics";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const MIN_QUERY_LENGTH = 2;
+
+/**
+ * The search box rewrites `?q=` on every keystroke, so each prefix would
+ * otherwise count as its own search. Waiting for the query to settle means one
+ * event per thing the user actually looked for.
+ */
+const SEARCH_TRACK_DEBOUNCE_MS = 800;
 
 // ─── Sidebar nav ─────────────────────────────────────────────────────────────
 
@@ -194,6 +199,26 @@ export function Search() {
     isQueryActive ? { q: trimmed } : "skip",
   );
 
+  // Fire once per settled query, and only after both result sets have landed
+  // so `result_count` reflects what the user actually saw. The raw query text
+  // is deliberately not sent — only its length.
+  const lastTrackedQuery = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isQueryActive) return;
+    if (eventResults === undefined || orgResults === undefined) return;
+    if (lastTrackedQuery.current === trimmed) return;
+    const resultCount = eventResults.length + orgResults.length;
+    const timer = window.setTimeout(() => {
+      lastTrackedQuery.current = trimmed;
+      track("search_performed", {
+        query_length: trimmed.length,
+        result_count: resultCount,
+        surface: "search",
+      });
+    }, SEARCH_TRACK_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [isQueryActive, trimmed, eventResults, orgResults]);
+
   // Right-rail data
   const followedOrgs = useQuery(api.orgs.listFollowed, {});
   const myRsvps = useQuery(api.rsvps.myRsvps, {});
@@ -202,56 +227,17 @@ export function Search() {
     () => followedOrgs?.map((org) => org._id),
     [followedOrgs],
   );
-  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
-
-  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
-  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
-  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-
-  // Optimistic bookmark overrides — mirrors the Home page pattern.
-  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
-    ReadonlyMap<Id<"events">, boolean>
-  >(() => new Map());
-  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
-
-  const handleBookmarkToggle = useCallback(
-    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
-      const next = !currentlyBookmarked;
-      setOptimisticBookmarks((prev) => {
-        const m = new Map(prev);
-        m.set(eventId, next);
-        return m;
-      });
-      const promise = next
-        ? bookmarkMutation({ eventId })
-        : unbookmarkMutation({ eventId });
-      void promise.catch(() => {
-        setOptimisticBookmarks((prev) => {
-          const m = new Map(prev);
-          m.delete(eventId);
-          return m;
-        });
-      });
-    },
-    [bookmarkMutation, unbookmarkMutation],
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "search",
   );
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("search");
 
-  const handleRsvp = useCallback(
-    (eventId: Id<"events">) => {
-      if (inFlightRsvps.current.has(eventId)) return;
-      inFlightRsvps.current.add(eventId);
-      void setRsvpMutation({ eventId, status: "going" })
-        .catch(() => {
-          // No visible state to roll back beyond freeing the dedupe slot.
-        })
-        .finally(() => {
-          inFlightRsvps.current.delete(eventId);
-        });
-    },
-    [setRsvpMutation],
-  );
-
-  const eventPosts: DashboardPostProps[] = useMemo(() => {
+  const eventPosts: FeedPost[] = useMemo(() => {
     if (!eventResults) return [];
     return eventResults.map((hydrated) => {
       const base = eventToPost(hydrated);
@@ -261,25 +247,29 @@ export function Search() {
         followedOrgIdSet,
         toggleFollow,
       );
-      const optimisticBookmark = optimisticBookmarks.get(hydrated.event._id);
+      const optimisticBookmark = bookmarkOverrides.get(hydrated.event._id);
       const bookmarked =
         optimisticBookmark !== undefined
           ? optimisticBookmark
           : hydrated.isBookmarked;
+      const orgIds = hydrated.orgs.map((org) => org._id);
       return {
         ...base,
         organizations,
         bookmarked,
-        onBookmark: () => handleBookmarkToggle(hydrated.event._id, bookmarked),
-        onRsvp: () => handleRsvp(hydrated.event._id),
+        eventId: hydrated.event._id,
+        orgIds,
+        onBookmark: () =>
+          toggleBookmark(hydrated.event._id, bookmarked, orgIds),
+        onRsvp: () => handleRsvp(hydrated.event._id, orgIds),
       };
     });
   }, [
     eventResults,
     followedOrgIdSet,
     toggleFollow,
-    optimisticBookmarks,
-    handleBookmarkToggle,
+    bookmarkOverrides,
+    toggleBookmark,
     handleRsvp,
   ]);
 
@@ -437,11 +427,14 @@ export function Search() {
             ) : (
               <div className="flex flex-col gap-[var(--space-5)]">
                 {eventPosts.map((post, i) => (
-                  <DashboardPost
+                  <EventImpression
                     key={i}
-                    {...post}
-                    onOrgClick={handleOrgClick}
-                  />
+                    eventId={post.eventId}
+                    orgIds={post.orgIds}
+                    surface="search"
+                  >
+                    <DashboardPost {...post} onOrgClick={handleOrgClick} />
+                  </EventImpression>
                 ))}
               </div>
             )}

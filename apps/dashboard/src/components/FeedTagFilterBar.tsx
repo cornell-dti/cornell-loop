@@ -11,23 +11,48 @@ import { useEffect, useRef, useState } from "react";
 import { Tag } from "@app/ui";
 import { CANONICAL_TAGS, type CanonicalTag } from "../../convex/lib/tags";
 import { useFilterTags } from "../lib/useFilterTags";
+import { track, type AnalyticsSurface } from "../lib/analytics";
 
 export interface FeedTagFilterBarProps {
   /** Currently active filter tag, or null when the feed is unfiltered. */
   selectedTag: string | null;
   /** Called with the next active filter tag (null clears the filter). */
   onSelectedTagChange: (tag: string | null) => void;
+  /**
+   * Which page the bar is rendered on. Analytics only — this is the one
+   * filter UI shared by Home and Bookmarks, so the event needs to say which.
+   */
+  surface: AnalyticsSurface;
 }
 
 export function FeedTagFilterBar({
   selectedTag,
   onSelectedTagChange,
+  surface,
 }: FeedTagFilterBarProps) {
   const { tags, setTags } = useFilterTags();
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  // Tracked here rather than in `useFilterTags` because only this component
+  // knows which tag changed and whether the change was a pin or a selection.
+  const handleSelect = (tag: CanonicalTag) => {
+    const next = selectedTag === tag ? null : tag;
+    track("filter_used", {
+      tag,
+      action: next === null ? "deselect" : "select",
+      surface,
+    });
+    onSelectedTagChange(next);
+  };
+
   const togglePinned = (tag: CanonicalTag) => {
-    if (tags.includes(tag)) {
+    const pinned = tags.includes(tag);
+    track("filter_used", {
+      tag,
+      action: pinned ? "unpin" : "pin",
+      surface,
+    });
+    if (pinned) {
       setTags(tags.filter((t) => t !== tag));
       if (selectedTag === tag) onSelectedTagChange(null);
       return;
@@ -44,9 +69,7 @@ export function FeedTagFilterBar({
             key={tag}
             type="button"
             aria-pressed={selectedTag === tag}
-            onClick={() =>
-              onSelectedTagChange(selectedTag === tag ? null : tag)
-            }
+            onClick={() => handleSelect(tag)}
             className="shrink-0 cursor-pointer"
           >
             <Tag color={selectedTag === tag ? "blue" : "neutral"}>{tag}</Tag>

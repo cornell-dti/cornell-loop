@@ -29,25 +29,28 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { SideBar } from "@app/ui";
 import type { SideBarItemId } from "@app/ui";
 import { SearchBar } from "@app/ui";
 import { DashboardPost } from "@app/ui";
-import type { DashboardPostProps, Organization } from "@app/ui";
+import type { Organization } from "@app/ui";
 import { SearchPanel } from "@app/ui";
 import { Button } from "@app/ui";
 import type { RsvpGroup, Club } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
   stampFollowState,
+  type FeedPost,
   type HydratedEvent,
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { track } from "../lib/analytics";
+import { EventImpression } from "../components/EventImpression";
 import { SearchOverlay } from "../components/SearchOverlay";
 import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
 import { FeedNoMatchesState } from "../components/FeedNoMatchesState";
@@ -75,7 +78,7 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
 
   // ── Posts ──
   /** Feed posts rendered using the DashboardPost component. */
-  posts?: DashboardPostProps[];
+  posts?: FeedPost[];
 
   // ── Search ──
   searchValue?: string;
@@ -121,7 +124,7 @@ export interface HomeProps extends ComponentPropsWithoutRef<"div"> {
 // Stable empty-array reference so `posts` doesn't change identity on every
 // render when neither `postsOverride` nor `queriedPosts` is set — otherwise
 // the `filteredPosts` useMemo below would recompute unnecessarily.
-const EMPTY_POSTS: DashboardPostProps[] = [];
+const EMPTY_POSTS: FeedPost[] = [];
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
 
@@ -180,66 +183,17 @@ function HomeInner({
   const myRsvps = useQuery(api.rsvps.myRsvps);
   const followedOrgs = useQuery(api.orgs.listFollowed);
 
-  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
-  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
-  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
-
-  // Optimistic bookmark state. Each entry overrides the server `isBookmarked`
-  // value for that event id until the mutation resolves. Successful resolves
-  // leave the entry in place — the next feed refresh will reflect the new
-  // truth. Failed resolves remove the entry, restoring the server view.
-  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
-    ReadonlyMap<Id<"events">, boolean>
-  >(() => new Map());
-  // In-flight RSVP set — event ids whose `setRsvp` mutation is still pending.
-  // Mirrors the bookmark optimistic pattern: flip immediately (here, dedupe
-  // rapid clicks), roll back on `.catch`. A ref is used instead of state
-  // because DashboardPost has no RSVP'd visual to re-render off of yet —
-  // rendering would just churn the post list. When the design system gains
-  // a "going" pill, lift this into useState and thread it through queriedPosts.
-  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
-
-  const handleBookmarkToggle = useCallback(
-    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
-      const next = !currentlyBookmarked;
-      setOptimisticBookmarks((prev) => {
-        const m = new Map(prev);
-        m.set(eventId, next);
-        return m;
-      });
-      const promise = next
-        ? bookmarkMutation({ eventId })
-        : unbookmarkMutation({ eventId });
-      void promise.catch(() => {
-        setOptimisticBookmarks((prev) => {
-          const m = new Map(prev);
-          m.delete(eventId);
-          return m;
-        });
-      });
-    },
-    [bookmarkMutation, unbookmarkMutation],
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "feed",
   );
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("feed");
 
-  const handleRsvp = useCallback(
-    (eventId: Id<"events">) => {
-      // Dedupe rapid clicks while the mutation is in flight — equivalent to
-      // the bookmark optimistic flip from the user's perspective.
-      if (inFlightRsvps.current.has(eventId)) return;
-      inFlightRsvps.current.add(eventId);
-      void setRsvpMutation({ eventId, status: "going" })
-        .catch(() => {
-          // No visible state to roll back beyond freeing the dedupe slot.
-        })
-        .finally(() => {
-          inFlightRsvps.current.delete(eventId);
-        });
-    },
-    [setRsvpMutation],
-  );
-
-  const queriedPosts = useMemo<DashboardPostProps[] | undefined>(() => {
+  const queriedPosts = useMemo<FeedPost[] | undefined>(() => {
     if (!feedResult) return undefined;
     return feedResult.page.map((row: HydratedEvent) => {
       const base = eventToPost(row);
@@ -253,25 +207,28 @@ function HomeInner({
         followedOrgIdSet,
         toggleFollow,
       );
-      const optimisticBookmark = optimisticBookmarks.get(row.event._id);
+      const optimisticBookmark = bookmarkOverrides.get(row.event._id);
       const bookmarked =
         optimisticBookmark !== undefined
           ? optimisticBookmark
           : row.isBookmarked;
+      const orgIds = row.orgs.map((org) => org._id);
       return {
         ...base,
         organizations,
         bookmarked,
-        onBookmark: () => handleBookmarkToggle(row.event._id, bookmarked),
-        onRsvp: () => handleRsvp(row.event._id),
+        eventId: row.event._id,
+        orgIds,
+        onBookmark: () => toggleBookmark(row.event._id, bookmarked, orgIds),
+        onRsvp: () => handleRsvp(row.event._id, orgIds),
       };
     });
   }, [
     feedResult,
     followedOrgIdSet,
-    handleBookmarkToggle,
+    toggleBookmark,
     handleRsvp,
-    optimisticBookmarks,
+    bookmarkOverrides,
     toggleFollow,
   ]);
 
@@ -293,8 +250,7 @@ function HomeInner({
   );
 
   // Caller overrides take priority (used by /search and any tests).
-  const posts: DashboardPostProps[] =
-    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
+  const posts: FeedPost[] = postsOverride ?? queriedPosts ?? EMPTY_POSTS;
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -384,6 +340,17 @@ function HomeInner({
       if (!trimmed) return;
       if (!isControlled) setInternalQuery(trimmed);
       onSearchChange?.(trimmed);
+      // When a caller supplies `onSearchSubmit` (the /home route does) this
+      // navigates to /search, which tracks the search itself with a real
+      // result count. Tracking here too would double-count every search, so
+      // we only fire when Home is showing results inline.
+      if (onSearchSubmit === undefined) {
+        track("search_performed", {
+          query_length: trimmed.length,
+          result_count: null,
+          surface: "feed",
+        });
+      }
       onSearchSubmit?.(trimmed);
       setFocused(false);
       // Promote committed query into recents (front of list, dedup).
@@ -580,6 +547,7 @@ function HomeInner({
           <FeedTagFilterBar
             selectedTag={selectedTag}
             onSelectedTagChange={setSelectedTag}
+            surface="feed"
           />
         </div>
 
@@ -604,11 +572,14 @@ function HomeInner({
             />
           )}
           {feedPosts.map((post, i) => (
-            <DashboardPost
+            <EventImpression
               key={i}
-              {...post}
-              onOrgClick={handleOrgClickInternal}
-            />
+              eventId={post.eventId}
+              orgIds={post.orgIds}
+              surface="feed"
+            >
+              <DashboardPost {...post} onOrgClick={handleOrgClickInternal} />
+            </EventImpression>
           ))}
         </div>
       </main>

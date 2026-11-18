@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentPropsWithoutRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import {
   SideBar,
   SearchBar,
@@ -21,22 +21,18 @@ import {
   DashboardPost,
   Button,
 } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  RsvpGroup,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { SideBarItemId, RsvpGroup, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
   stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
 import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
 import { FeedNoMatchesState } from "../components/FeedNoMatchesState";
 
@@ -53,7 +49,7 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   onSearchClear?: () => void;
 
   // ── Bookmarked posts ──
-  posts?: DashboardPostProps[];
+  posts?: FeedPost[];
 
   // ── Right panel (shared SearchPanel) ──
   rsvpGroups?: RsvpGroup[];
@@ -64,7 +60,7 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
 }
 
 // Stable empty fallback so the filtered-posts memo doesn't recompute each render.
-const EMPTY_POSTS: DashboardPostProps[] = [];
+const EMPTY_POSTS: FeedPost[] = [];
 
 // ─── Bookmarks ────────────────────────────────────────────────────────────────
 
@@ -90,17 +86,10 @@ export function Bookmarks({
   const myRsvps = useQuery(api.rsvps.myRsvps);
   const followedOrgs = useQuery(api.orgs.listFollowed);
 
-  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
-  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
-
-  // Optimistic-removal set: bookmarks that the user just unbookmarked but
-  // whose mutation hasn't yet round-tripped. Visually filter these out so the
-  // row disappears immediately; on mutation failure we re-add the id so the
-  // row reappears.
-  const [optimisticallyRemoved, setOptimisticallyRemoved] = useState<
-    ReadonlySet<Id<"events">>
-  >(() => new Set<Id<"events">>());
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "bookmarks",
+  );
 
   // Surface a banner when the underlying queries fail to load for a
   // sustained period (still undefined after several seconds) or when a
@@ -113,64 +102,51 @@ export function Bookmarks({
     return () => window.clearTimeout(id);
   }, [queryStillLoading]);
 
-  const handleRemoveBookmark = useCallback(
-    (eventId: Id<"events">) => {
-      setOptimisticallyRemoved((prev) => {
-        const next = new Set(prev);
-        next.add(eventId);
-        return next;
-      });
-      void unbookmarkMutation({ eventId }).catch(() => {
-        setOptimisticallyRemoved((prev) => {
-          const next = new Set(prev);
-          next.delete(eventId);
-          return next;
-        });
-        setHasError(true);
-      });
-    },
-    [unbookmarkMutation],
-  );
+  const handleError = useCallback(() => setHasError(true), []);
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("bookmarks", handleError);
 
-  const handleRsvp = useCallback(
-    (eventId: Id<"events">) => {
-      void setRsvpMutation({ eventId, status: "going" }).catch(() => {
-        setHasError(true);
-      });
-    },
-    [setRsvpMutation],
-  );
-
-  const queriedPosts = useMemo<DashboardPostProps[] | undefined>(() => {
+  const queriedPosts = useMemo<FeedPost[] | undefined>(() => {
     if (!bookmarksResult) return undefined;
-    return bookmarksResult.page
-      .filter((row) => !optimisticallyRemoved.has(row.event._id))
-      .map((row) => {
-        // myBookmarks only ever returns bookmarked rows, so isBookmarked is true.
-        const base = eventToPost({
-          event: row.event,
-          orgs: row.orgs,
-          isBookmarked: true,
-        });
-        const organizations = stampFollowState(
-          base.organizations,
-          row.orgs,
-          followedOrgIdSet,
-          toggleFollow,
-        );
-        return {
-          ...base,
-          organizations,
-          onBookmark: () => handleRemoveBookmark(row.event._id),
-          onRsvp: () => handleRsvp(row.event._id),
-        };
-      });
+    return (
+      bookmarksResult.page
+        // An override of `false` is a pending un-bookmark: drop the row now so
+        // it disappears instantly, and let a failed mutation clear the override
+        // and bring it back.
+        .filter((row) => bookmarkOverrides.get(row.event._id) !== false)
+        .map((row) => {
+          // myBookmarks only ever returns bookmarked rows, so isBookmarked is true.
+          const base = eventToPost({
+            event: row.event,
+            orgs: row.orgs,
+            isBookmarked: true,
+          });
+          const organizations = stampFollowState(
+            base.organizations,
+            row.orgs,
+            followedOrgIdSet,
+            toggleFollow,
+          );
+          const orgIds = row.orgs.map((org) => org._id);
+          return {
+            ...base,
+            organizations,
+            eventId: row.event._id,
+            orgIds,
+            onBookmark: () => toggleBookmark(row.event._id, true, orgIds),
+            onRsvp: () => handleRsvp(row.event._id, orgIds),
+          };
+        })
+    );
   }, [
     bookmarksResult,
     followedOrgIdSet,
-    handleRemoveBookmark,
+    toggleBookmark,
     handleRsvp,
-    optimisticallyRemoved,
+    bookmarkOverrides,
     toggleFollow,
   ]);
 
@@ -190,8 +166,7 @@ export function Bookmarks({
     [followedOrgs, toggleFollow],
   );
 
-  const posts: DashboardPostProps[] =
-    postsOverride ?? queriedPosts ?? EMPTY_POSTS;
+  const posts: FeedPost[] = postsOverride ?? queriedPosts ?? EMPTY_POSTS;
 
   // Selected filter tag — narrows the bookmarks to posts carrying that tag.
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -273,6 +248,7 @@ export function Bookmarks({
           <FeedTagFilterBar
             selectedTag={selectedTag}
             onSelectedTagChange={setSelectedTag}
+            surface="bookmarks"
           />
         </div>
 
@@ -300,11 +276,14 @@ export function Bookmarks({
               />
             )}
           {visiblePosts.map((post, i) => (
-            <DashboardPost
+            <EventImpression
               key={i}
-              {...post}
-              onOrgClick={handleOrgClickInternal}
-            />
+              eventId={post.eventId}
+              orgIds={post.orgIds}
+              surface="bookmarks"
+            >
+              <DashboardPost {...post} onOrgClick={handleOrgClickInternal} />
+            </EventImpression>
           ))}
         </div>
       </main>
