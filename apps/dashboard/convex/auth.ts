@@ -1,5 +1,6 @@
 import Google from "@auth/core/providers/google";
 import { convexAuth } from "@convex-dev/auth/server";
+import { internal } from "./_generated/api";
 
 // Convex runtime exposes process.env. The dashboard tsconfig (bundler/browser
 // types) doesn't include @types/node, so declare the slice we need locally.
@@ -111,11 +112,22 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         typeof args.profile.name === "string" ? args.profile.name : undefined;
       const image =
         typeof args.profile.image === "string" ? args.profile.image : undefined;
-      return await ctx.db.insert("users", {
+      const userId = await ctx.db.insert("users", {
         email: email.toLowerCase(),
         name,
         image,
       });
+
+      // Only reachable on true account creation — the `existingUserId` branch
+      // above returns first on every subsequent sign-in. Scheduled rather than
+      // awaited so a PostHog outage can never block someone signing up.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.analytics.captureAccountCreated,
+        { userId, createdAtMs: Date.now() },
+      );
+
+      return userId;
     },
   },
 });

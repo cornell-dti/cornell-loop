@@ -20,6 +20,7 @@
     "paths": {
       "@app/ui": ["../../shared/ui/src/index.ts"],
       "@app/ui/*": ["../../shared/ui/src/*"],
+      "@app/analytics": ["../../shared/analytics/src/index.ts"],
       "@convex-dev/auth/react": [
         "./node_modules/@convex-dev/auth/dist/react/index.d.ts"
       ]
@@ -33,5 +34,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../../shared/ui/src"]
+  "include": ["src", "../../shared/ui/src", "../../shared/analytics/src"]
 }

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { consumeFirstAction, track, type AnalyticsSurface } from "./analytics";
 
 /**
  * Optimistic follow/unfollow toggle, shared by every page that renders
@@ -16,6 +17,7 @@ import type { Id } from "../../convex/_generated/dataModel";
  */
 export function useFollowToggle(
   followedOrgIds: readonly Id<"orgs">[] | undefined,
+  surface: AnalyticsSurface,
 ): {
   followedOrgIdSet: ReadonlySet<Id<"orgs">>;
   toggleFollow: (orgId: Id<"orgs">, currentlyFollowing: boolean) => void;
@@ -47,6 +49,12 @@ export function useFollowToggle(
         m.set(orgId, next);
         return m;
       });
+      track("club_followed", {
+        org_id: orgId,
+        surface,
+        action: next ? "follow" : "unfollow",
+        is_first_action: next ? consumeFirstAction() : false,
+      });
       const promise = next
         ? followMutation({ orgId })
         : unfollowMutation({ orgId });
@@ -58,7 +66,7 @@ export function useFollowToggle(
         });
       });
     },
-    [followMutation, unfollowMutation],
+    [followMutation, unfollowMutation, surface],
   );
 
   return { followedOrgIdSet, toggleFollow };

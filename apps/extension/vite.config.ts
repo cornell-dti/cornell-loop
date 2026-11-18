@@ -34,12 +34,18 @@ export default defineConfig({
       },
     }),
   ],
+  // E2E runs sign in and click through the whole panel. Blanking the key makes
+  // every analytics call a no-op, so test traffic never reaches PostHog.
+  define: isPlaywrightBuild()
+    ? { "import.meta.env.VITE_POSTHOG_KEY": JSON.stringify("") }
+    : {},
   build: {
     cssCodeSplit: false,
   },
   resolve: {
     alias: {
       "@app/ui": path.resolve(__dirname, "../../shared/ui/src"),
+      "@app/analytics": path.resolve(__dirname, "../../shared/analytics/src"),
       "@app/convex": path.resolve(__dirname, "../dashboard/convex"),
     },
     dedupe: ["react", "react-dom"],
