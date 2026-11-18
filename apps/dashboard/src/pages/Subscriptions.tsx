@@ -37,6 +37,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicOrg } from "../../convex/orgs";
 import type { SubscriptionInfo } from "../../convex/listservs";
 import { orgsToClubs, rsvpsToRsvpGroups } from "../lib/eventToPost";
+import { track } from "../lib/analytics";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -403,6 +404,11 @@ export function Subscriptions({
     if (subscriptionsOverride === undefined && idsForItems !== null) {
       const orgId = idsForItems[pendingUnsubscribeIndex];
       if (orgId !== undefined) {
+        track("listserv_subscribed", {
+          org_id: orgId,
+          surface: "subscriptions",
+          action: "unsubscribe",
+        });
         void unfollowMutation({ orgId });
       }
     } else {
