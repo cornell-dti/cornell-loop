@@ -50,10 +50,18 @@ import {
 } from "../components/ProfileFields";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
 import loopLogo from "../../../../shared/ui/src/assets/loop_logo.svg";
+import { consumeFirstAction, track } from "../lib/analytics";
 
 type OnboardingStep = 1 | 2 | 3;
 
 const TOTAL_STEPS = 3;
+
+/** Human-readable step labels, so PostHog funnels don't read as bare numbers. */
+const STEP_NAMES: Record<OnboardingStep, string> = {
+  1: "profile",
+  2: "suggested_clubs",
+  3: "confirmation",
+};
 
 const HEADING_CLASS =
   "font-[family-name:var(--font-heading)] font-bold " +
@@ -85,36 +93,45 @@ function OnboardingShell({ step, children, onClose }: OnboardingShellProps) {
       role="dialog"
       aria-modal="true"
     >
+      {/* Outer container preserves the rounded corners */}
       <div
-        className={`flex max-h-[85vh] w-full flex-col overflow-y-auto rounded-[var(--radius-card)] bg-[var(--color-surface)] shadow-[var(--shadow-1)] ${
-          step === 3
-            ? "max-w-[500px] gap-2 px-5 py-4"
-            : "max-w-[550px] gap-[var(--space-4)] p-[var(--space-5)]"
+        className={`flex max-h-[85vh] w-full flex-col overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface)] shadow-[var(--shadow-1)] ${
+          step === 3 ? "max-w-[500px]" : "max-w-[550px]"
         }`}
       >
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-[var(--space-4)]">
-            <span
-              className={BODY2}
-              style={{ color: "#A74409" }}
-              aria-live="polite"
-            >
-              Step {step} of {TOTAL_STEPS}
-            </span>
-          </div>
-          {onClose && step !== 3 && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close onboarding"
-              className="text-[var(--color-text-muted)] hover:text-[var(--color-neutral-900)]"
-            >
-              ✕
-            </button>
-          )}
-        </header>
+        {/* Inner container handles scrolling */}
+        <div
+          className={`flex min-h-0 flex-col overflow-y-auto ${
+            step === 3
+              ? "gap-2 px-5 py-4"
+              : "gap-[var(--space-4)] p-[var(--space-5)]"
+          }`}
+        >
+          <header className="flex items-center justify-between">
+            <div className="flex items-center gap-[var(--space-4)]">
+              <span
+                className={BODY2}
+                style={{ color: "#A74409" }}
+                aria-live="polite"
+              >
+                Step {step} of {TOTAL_STEPS}
+              </span>
+            </div>
 
-        {children}
+            {onClose && step !== 3 && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close onboarding"
+                className="cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-neutral-900)]"
+              >
+                ✕
+              </button>
+            )}
+          </header>
+
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -221,8 +238,8 @@ function StepProfile({ initialValue, userName, onContinue }: StepProfileProps) {
 // ─── Step 2 — Suggested clubs ────────────────────────────────────────────────
 
 interface StepClubsProps {
-  onContinue: () => void;
-  onBack: () => void;
+  onContinue: (clubsFollowed: number) => void;
+  onBack: (clubsFollowed: number) => void;
 }
 
 interface ClubCardProps {
@@ -248,7 +265,7 @@ function ClubCard({ org, isFollowing, onToggle, pending }: ClubCardProps) {
       </div>
 
       {/* Subscribe button */}
-      <div className="shrink-0">
+      <div className="w-[145px] shrink-0 [&_button]:w-full">
         <Button
           variant={isFollowing ? "primary" : "secondary"}
           size="sm"
@@ -290,6 +307,12 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
       } else {
         await unfollowMutation({ orgId });
       }
+      track("club_followed", {
+        org_id: orgId,
+        surface: "onboarding",
+        action: nextFollowing ? "follow" : "unfollow",
+        is_first_action: nextFollowing ? consumeFirstAction() : false,
+      });
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -386,13 +409,17 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
       )}
 
       <div className="flex justify-between">
-        <Button variant="secondary" size="md" onClick={onBack}>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => onBack(followedCount)}
+        >
           Back
         </Button>
         <Button
           variant="primary"
           size="md"
-          onClick={onContinue}
+          onClick={() => onContinue(followedCount)}
           disabled={!canContinue}
         >
           Finish Setup
@@ -496,6 +523,58 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
 
   const [step, setStep] = useState<OnboardingStep>(1);
 
+  // ─── Funnel instrumentation ────────────────────────────────────────────
+  // `stepStartedAt` is reset on every transition so each step reports its own
+  // duration, while `startedAt` survives to give the end-to-end time that
+  // feeds time-to-activation.
+  const startedAt = useRef<number | null>(null);
+  const stepStartedAt = useRef<number | null>(null);
+  const clubsFollowedAtExit = useRef(0);
+  const funnelResolved = useRef(false);
+
+  useEffect(() => {
+    if (loading) return;
+    // `Home` only mounts this modal for users who still need onboarding, so
+    // there is no already-onboarded pass-through to exclude.
+    if (startedAt.current !== null) return;
+
+    startedAt.current = Date.now();
+    stepStartedAt.current = startedAt.current;
+    track("onboarding_started", { entry_point: "wizard" });
+  }, [loading]);
+
+  // Leaving the wizard before the final CTA counts as a skip, whether the user
+  // navigated away or closed the tab. `funnelResolved` makes the two paths
+  // mutually exclusive and also absorbs StrictMode's extra dev unmount.
+  const stepRef = useRef<OnboardingStep>(1);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+  useEffect(() => {
+    const emitSkip = () => {
+      if (funnelResolved.current) return;
+      if (startedAt.current === null) return;
+      funnelResolved.current = true;
+      track("onboarding_skipped", { at_step: stepRef.current, via: "exit" });
+    };
+    window.addEventListener("pagehide", emitSkip);
+    return () => {
+      window.removeEventListener("pagehide", emitSkip);
+      emitSkip();
+    };
+  }, []);
+
+  const completeStep = (stepNumber: OnboardingStep, clubsFollowed: number) => {
+    const now = Date.now();
+    track("onboarding_step_completed", {
+      step: stepNumber,
+      step_name: STEP_NAMES[stepNumber],
+      duration_ms: now - (stepStartedAt.current ?? now),
+      clubs_followed: clubsFollowed,
+    });
+    stepStartedAt.current = now;
+  };
+
   const initialValue = useMemo<ProfileFieldsValue>(
     () => ({
       major: profile?.major,
@@ -505,10 +584,6 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
     }),
     [profile?.major, profile?.gradYear, profile?.minor, profile?.interests],
   );
-
-  const handleFinish = useCallback(async () => {
-    await completeOnboarding();
-  }, [completeOnboarding]);
 
   const handleClose = useCallback(() => {
     onClose?.();
@@ -536,12 +611,33 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
       minor: value.minor ?? null,
       interests: value.interests,
     });
-
+    completeStep(1, 0);
     setStep(2);
   };
 
-  const handleStep2Continue = () => setStep(3);
-  const handleStep2Back = () => setStep(1);
+  const handleStep2Continue = (clubsFollowed: number) => {
+    clubsFollowedAtExit.current = clubsFollowed;
+    completeStep(2, clubsFollowed);
+    setStep(3);
+  };
+  const handleStep2Back = (clubsFollowed: number) => {
+    clubsFollowedAtExit.current = clubsFollowed;
+    stepStartedAt.current = Date.now();
+    setStep(1);
+  };
+
+  // Closing the modal is the caller's job (`onClose`), so unlike the old
+  // full-page wizard this no longer navigates anywhere.
+  const handleFinish = async () => {
+    await completeOnboarding();
+    const clubsFollowed = clubsFollowedAtExit.current;
+    completeStep(3, clubsFollowed);
+    funnelResolved.current = true;
+    track("onboarding_completed", {
+      total_duration_ms: Date.now() - (startedAt.current ?? Date.now()),
+      clubs_followed: clubsFollowed,
+    });
+  };
 
   return (
     <OnboardingShell step={step} onClose={onClose}>

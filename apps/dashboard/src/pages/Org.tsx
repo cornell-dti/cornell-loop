@@ -26,7 +26,7 @@
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -40,12 +40,7 @@ import {
   Button,
 } from "@app/ui";
 import type { DropdownOption } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { SideBarItemId, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { PublicEvent } from "../../convex/events";
@@ -55,8 +50,12 @@ import {
   orgsToClubs,
   rsvpsToRsvpGroups,
   stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
 import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
+import { consumeFirstAction, track } from "../lib/analytics";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -102,7 +101,7 @@ function MailIcon({ className }: { className?: string }) {
 
 const BODY2_REGULAR =
   "font-[family-name:var(--font-body)] font-normal " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
 // ─── Tag/time filter dropdowns ────────────────────────────────────────────────
@@ -175,7 +174,7 @@ function OrgTagPill({ label, variant }: OrgTagSpec) {
         "font-[family-name:var(--font-body)] font-medium",
         "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
         "tracking-[var(--letter-spacing-body2)]",
-        "text-[var(--color-primary-900)]",
+        "text-[color:var(--color-primary-900)]",
         "whitespace-nowrap select-none",
       ].join(" ")}
       style={{ fontVariationSettings: "'opsz' 14" }}
@@ -218,7 +217,7 @@ function LoadingState() {
       <div
         className={[
           "flex flex-col items-center gap-[var(--space-3)]",
-          "text-[var(--color-text-secondary)]",
+          "text-[color:var(--color-text-secondary)]",
           BODY2_REGULAR,
         ].join(" ")}
       >
@@ -250,16 +249,17 @@ function NotFoundState({ slug }: { slug: string | undefined }) {
             "font-[family-name:var(--font-body)] font-semibold",
             "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
             "tracking-[var(--letter-spacing-body1)]",
-            "text-[var(--color-neutral-900)]",
+            "text-[color:var(--color-neutral-900)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Organization not found
         </h1>
         <p
-          className={[BODY2_REGULAR, "text-[var(--color-text-secondary)]"].join(
-            " ",
-          )}
+          className={[
+            BODY2_REGULAR,
+            "text-[color:var(--color-text-secondary)]",
+          ].join(" ")}
         >
           {slug
             ? `We couldn't find an organization with the slug "${slug}". It may have been removed or renamed.`
@@ -287,9 +287,6 @@ export function Org() {
 
   const followMutation = useMutation(api.follows.follow);
   const unfollowMutation = useMutation(api.follows.unfollow);
-  const bookmarkMutation = useMutation(api.bookmarks.bookmark);
-  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
-  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
 
   // Follow state for the org cards inside the post feed (hover-card
   // Follow/Unfollow button) — distinct from `optimisticFollowing` below,
@@ -298,7 +295,15 @@ export function Org() {
     () => followedOrgs?.map((org) => org._id),
     [followedOrgs],
   );
-  const { followedOrgIdSet, toggleFollow } = useFollowToggle(followedOrgIds);
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "org_page",
+  );
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("org_page");
 
   // Optimistic local toggle. We seed from the server result and let the
   // mutation propagate; on next query refresh the server value wins.
@@ -306,49 +311,21 @@ export function Org() {
     boolean | null
   >(null);
 
-  // Optimistic bookmark overrides for posts in this org's feed — mirrors the
-  // Home page pattern (flip immediately, roll back on mutation failure).
-  const [optimisticBookmarks, setOptimisticBookmarks] = useState<
-    ReadonlyMap<Id<"events">, boolean>
-  >(() => new Map());
-  const inFlightRsvps = useRef<Set<Id<"events">>>(new Set());
-
-  const handleBookmarkToggle = useCallback(
-    (eventId: Id<"events">, currentlyBookmarked: boolean) => {
-      const next = !currentlyBookmarked;
-      setOptimisticBookmarks((prev) => {
-        const m = new Map(prev);
-        m.set(eventId, next);
-        return m;
-      });
-      const promise = next
-        ? bookmarkMutation({ eventId })
-        : unbookmarkMutation({ eventId });
-      void promise.catch(() => {
-        setOptimisticBookmarks((prev) => {
-          const m = new Map(prev);
-          m.delete(eventId);
-          return m;
-        });
-      });
-    },
-    [bookmarkMutation, unbookmarkMutation],
-  );
-
-  const handleRsvp = useCallback(
-    (eventId: Id<"events">) => {
-      if (inFlightRsvps.current.has(eventId)) return;
-      inFlightRsvps.current.add(eventId);
-      void setRsvpMutation({ eventId, status: "going" })
-        .catch(() => {
-          // No visible state to roll back beyond freeing the dedupe slot.
-        })
-        .finally(() => {
-          inFlightRsvps.current.delete(eventId);
-        });
-    },
-    [setRsvpMutation],
-  );
+  // One `club_viewed` per org actually rendered. Keyed on the resolved org id
+  // rather than the slug so a redirect or slug change doesn't double-count,
+  // and skipped entirely while the query is in flight or the org is missing.
+  const viewedOrgId = useRef<Id<"orgs"> | null>(null);
+  const resolvedOrg = orgQuery?.org ?? null;
+  useEffect(() => {
+    if (resolvedOrg === null) return;
+    if (viewedOrgId.current === resolvedOrg._id) return;
+    viewedOrgId.current = resolvedOrg._id;
+    track("club_viewed", {
+      org_id: resolvedOrg._id,
+      slug: resolvedOrg.slug,
+      surface: "org_page",
+    });
+  }, [resolvedOrg]);
 
   const [tagFilter, setTagFilter] = useState("all");
   const [timeFilter, setTimeFilter] = useState("all");
@@ -373,7 +350,7 @@ export function Org() {
     ];
   }, [eventsQuery]);
 
-  const posts: DashboardPostProps[] = useMemo(() => {
+  const posts: FeedPost[] = useMemo(() => {
     if (!eventsQuery) return [];
     const trimmedSearch = feedSearchValue.trim().toLowerCase();
     return eventsQuery.page
@@ -406,18 +383,21 @@ export function Org() {
           followedOrgIdSet,
           toggleFollow,
         );
-        const optimisticBookmark = optimisticBookmarks.get(hydrated.event._id);
+        const optimisticBookmark = bookmarkOverrides.get(hydrated.event._id);
         const bookmarked =
           optimisticBookmark !== undefined
             ? optimisticBookmark
             : hydrated.isBookmarked;
+        const orgIds = hydrated.orgs.map((o) => o._id);
         return {
           ...base,
           organizations,
           bookmarked,
+          eventId: hydrated.event._id,
+          orgIds,
           onBookmark: () =>
-            handleBookmarkToggle(hydrated.event._id, bookmarked),
-          onRsvp: () => handleRsvp(hydrated.event._id),
+            toggleBookmark(hydrated.event._id, bookmarked, orgIds),
+          onRsvp: () => handleRsvp(hydrated.event._id, orgIds),
         };
       });
   }, [
@@ -428,8 +408,8 @@ export function Org() {
     now,
     followedOrgIdSet,
     toggleFollow,
-    optimisticBookmarks,
-    handleBookmarkToggle,
+    bookmarkOverrides,
+    toggleBookmark,
     handleRsvp,
   ]);
 
@@ -467,6 +447,12 @@ export function Org() {
   const handleFollowToggle = () => {
     const next = !isFollowing;
     setOptimisticFollowing(next);
+    track("club_followed", {
+      org_id: org._id,
+      surface: "org_page",
+      action: next ? "follow" : "unfollow",
+      is_first_action: next ? consumeFirstAction() : false,
+    });
     const promise = next
       ? followMutation({ orgId: org._id })
       : unfollowMutation({ orgId: org._id });
@@ -522,22 +508,39 @@ export function Org() {
           {/*
            * Cover banner — Figma node 613:4241 shows a sky/cloud image. We render
            * a tasteful sky gradient as the no-asset fallback.
+           *
+           * Covers often come from email headers (small, wide, text-heavy), so
+           * cropping them to fill the banner blows them up and cuts off the
+           * text. Instead the image is contained at its own aspect ratio, and a
+           * blurred copy of it fills the remaining space.
            */}
           <div
-            className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
+            className="relative h-60 w-full shrink-0 overflow-hidden bg-[var(--color-surface-raised)]"
             style={
               org.coverImageUrl
-                ? {
-                    backgroundImage: `url(${org.coverImageUrl})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
+                ? undefined
                 : {
                     backgroundImage:
                       "linear-gradient(180deg, var(--color-secondary-500) 0%, var(--color-secondary-300) 100%)",
                   }
             }
-          />
+          >
+            {org.coverImageUrl && (
+              <>
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 size-full scale-110 object-cover opacity-60 blur-2xl"
+                />
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  className="relative size-full object-contain"
+                />
+              </>
+            )}
+          </div>
 
           {/*
            * Action buttons row — right-aligned below the cover banner.
@@ -556,7 +559,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -571,6 +574,14 @@ export function Org() {
                 type="button"
                 aria-label="Send email"
                 onClick={() => {
+                  // Mailing the org is how a student joins its listserv from
+                  // here, so it's the org-page counterpart to the
+                  // Subscriptions page's subscribe/unsubscribe rows.
+                  track("listserv_subscribed", {
+                    org_id: org._id,
+                    surface: "org_page",
+                    action: "subscribe",
+                  });
                   window.location.href = `mailto:${org.email}`;
                 }}
                 className={[
@@ -578,7 +589,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -624,8 +635,8 @@ export function Org() {
                   "flex size-full items-center justify-center " +
                   "bg-[var(--color-secondary-400)] " +
                   "font-[family-name:var(--font-brand)] font-bold " +
-                  "text-[var(--font-size-sub1)] " +
-                  "text-[var(--color-secondary-900)]"
+                  "text-[length:var(--font-size-sub1)] " +
+                  "text-[color:var(--color-secondary-900)]"
                 }
               >
                 {org.name.charAt(0).toUpperCase()}
@@ -644,7 +655,7 @@ export function Org() {
                     "font-[family-name:var(--font-body)] font-semibold " +
                     "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
                     "tracking-[var(--letter-spacing-body1)] " +
-                    "text-[var(--color-neutral-900)]"
+                    "text-[color:var(--color-neutral-900)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -655,7 +666,7 @@ export function Org() {
               {org.description && (
                 <p
                   className={
-                    BODY2_REGULAR + " text-[var(--color-text-secondary)]"
+                    BODY2_REGULAR + " text-[color:var(--color-text-secondary)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -715,7 +726,14 @@ export function Org() {
           {/* Post list */}
           <div className="flex flex-col gap-[var(--space-8)] pb-[var(--space-6)]">
             {posts.map((post, i) => (
-              <DashboardPost key={i} {...post} onOrgClick={handleOrgClick} />
+              <EventImpression
+                key={i}
+                eventId={post.eventId}
+                orgIds={post.orgIds}
+                surface="org_page"
+              >
+                <DashboardPost {...post} onOrgClick={handleOrgClick} />
+              </EventImpression>
             ))}
           </div>
         </div>
