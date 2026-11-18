@@ -94,7 +94,6 @@ export default function BookmarkView({
   const handleTagAdd = (tag: CanonicalTag) => {
     addTag(tag);
     trackFilter(tag, "pin", SURFACE);
-    setActiveTags((prev) => [...prev, tag]);
   };
 
   const handleTagRemove = (tag: CanonicalTag) => {
