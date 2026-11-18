@@ -10,10 +10,11 @@
  * Privacy: we identify people by their Convex `users` id and nothing else. No
  * email, name, major, grad year, or raw search text is ever attached to an
  * event — see `search_performed`, which sends `query_length` instead of the
- * query itself.
+ * query itself, and `sanitizeCapture`, which strips query strings out of the
+ * URLs posthog-js attaches on its own.
  */
 
-import posthog from "posthog-js";
+import posthog, { type CaptureResult, type Properties } from "posthog-js";
 
 /** Where in the product an interaction happened. */
 export type AnalyticsSurface =
@@ -154,6 +155,63 @@ export type AnalyticsEventName = keyof AnalyticsEventProperties;
 const posthogKey: string | undefined = import.meta.env.VITE_POSTHOG_KEY;
 const posthogHost: string | undefined = import.meta.env.VITE_POSTHOG_HOST;
 
+// ─── URL sanitisation ────────────────────────────────────────────────────────
+// posthog-js stamps the current address onto every event and onto the initial
+// person properties. Search lives at `/search?q=…`, so the raw query — the one
+// thing `search_performed` deliberately reduces to a length — would still
+// reach PostHog through `$current_url`, `$initial_current_url`,
+// `$session_entry_url`, or `$referrer`. Dropping the query string and fragment
+// from every URL-bearing property closes that path. The pathname survives, so
+// pageview reports are unaffected.
+
+const URL_PROPERTY_PATTERN = /url|referrer/i;
+
+function stripQueryAndFragment(value: string): string {
+  const cut = value.search(/[?#]/);
+  return cut === -1 ? value : value.slice(0, cut);
+}
+
+function isPropertyBag(value: unknown): value is Properties {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeUrlProperties(properties: Properties): Properties {
+  const sanitized: Properties = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (typeof value === "string" && URL_PROPERTY_PATTERN.test(key)) {
+      sanitized[key] = stripQueryAndFragment(value);
+    } else if (
+      (key === "$set" || key === "$set_once") &&
+      isPropertyBag(value)
+    ) {
+      sanitized[key] = sanitizeUrlProperties(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Runs on every event, including ones posthog-js captures on its own, which is
+ * why this belongs in `init` rather than in `track()`.
+ */
+function sanitizeCapture(result: CaptureResult | null): CaptureResult | null {
+  if (result === null) return null;
+
+  const sanitized: CaptureResult = {
+    ...result,
+    properties: sanitizeUrlProperties(result.properties),
+  };
+  if (isPropertyBag(result.$set)) {
+    sanitized.$set = sanitizeUrlProperties(result.$set);
+  }
+  if (isPropertyBag(result.$set_once)) {
+    sanitized.$set_once = sanitizeUrlProperties(result.$set_once);
+  }
+  return sanitized;
+}
+
 /**
  * PostHog only runs when a key is configured. Preview builds and contributors
  * without the env var get a silent no-op rather than a console full of errors
@@ -170,6 +228,7 @@ export function initAnalytics(): boolean {
     defaults: "2026-05-30",
     // React Router navigations are history changes, not page loads.
     capture_pageview: "history_change",
+    before_send: sanitizeCapture,
   });
 
   posthog.register({
