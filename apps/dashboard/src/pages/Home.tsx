@@ -14,6 +14,14 @@
  *
  * All colours, spacing, and font values reference CSS custom properties from
  * src/styles/tokens.css — nothing is hardcoded.
+ *
+ * Onboarding Integration:
+ *   - Renders the Onboarding modal over the Home dashboard.
+ *   - Uses useCurrentProfile to check onboarding completion status.
+ *   - Displays onboarding for users who haven't completed it.
+ *   - Uses React state and an onClose callback to manage modal visibility.
+ *   - Preserves existing dashboard functionality.
+
  */
 
 import {
@@ -60,6 +68,9 @@ import {
 } from "../components/searchOverlayUtils";
 import type { RecentSearch, SearchSuggestion } from "../data/sampleSearch";
 import { loadRecentSearches, saveRecentSearches } from "../lib/recentSearches";
+import Onboarding from "../pages/Onboarding";
+import ShadowTour from "../components/ShadowTour";
+import { useCurrentProfile } from "../lib/useCurrentProfile";
 
 const MIN_QUERY_LENGTH = 2;
 // Debounce typed-query search calls so every keystroke doesn't fire a
@@ -169,6 +180,33 @@ function HomeInner({
   className,
   ...rest
 }: HomeProps) {
+  // Latch onboarding visibility after the initial profile load.
+  const { loading, isOnboarded } = useCurrentProfile();
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  const [initialOnboardingStatus, setInitialOnboardingStatus] = useState<
+    boolean | null
+  >(null);
+
+  if (!loading && initialOnboardingStatus === null) {
+    setInitialOnboardingStatus(isOnboarded);
+  }
+  // Driven by the snapshot, not the live profile: `updateProfile` stamps
+  // onboarding complete after step 1, which would otherwise unmount the modal.
+  const showOnboarding =
+    initialOnboardingStatus === false && !onboardingDismissed;
+
+  // Start the dashboard tour after onboarding finishes
+  const handleOnboardingComplete = () => {
+    setOnboardingDismissed(true);
+    setShowTour(true);
+  };
+
+  // Finish the entire onboarding experience
+  const handleTourComplete = () => {
+    setShowTour(false);
+  };
+
   // ── Convex-backed feed data ────────────────────────────────────────────
   // Default to "followed" scope; the server transparently falls back to "all"
   // when the current user follows nothing. Callers can still inject `posts`
@@ -608,6 +646,8 @@ function HomeInner({
           className="h-full shrink-0 overflow-visible"
         />
       )}
+      {showOnboarding && <Onboarding onClose={handleOnboardingComplete} />}
+      {showTour && <ShadowTour onComplete={handleTourComplete} />}
     </div>
   );
 }
