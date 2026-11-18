@@ -15,6 +15,25 @@ crons.cron(
   { trigger: "cron" },
 );
 
+// Hides drafts that have passed: every date behind us, or undated from an
+// email over a month old. "Uncertain" drafts are never touched. 08:00 UTC is
+// the middle of the night in Ithaca.
+crons.cron(
+  "hide passed drafts",
+  "0 8 * * *",
+  internal.parser.autoHidePastDrafts,
+  {},
+);
+
+// Ahead of the draft sweep: emails older than a month leave the ready queue
+// before anyone parses them.
+crons.cron(
+  "ignore stale ready messages",
+  "30 7 * * *",
+  internal.parser.sweepStaleReadyMessages,
+  {},
+);
+
 // The parse cron is deliberately not registered for launch.
 //
 // `runParseInternal` calls a paid LLM per message and has no run lease, so the

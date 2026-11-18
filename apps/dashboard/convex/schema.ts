@@ -300,10 +300,15 @@ export default defineSchema({
       v.literal("new"),
       v.literal("parsed"),
       v.literal("ignored"),
+      // Older than the staleness cutoff; swept out of the ready queue.
+      v.literal("stale"),
       v.literal("failed"),
     ),
     parseError: v.optional(v.string()),
     confirmationClearedAt: v.optional(v.number()),
+    // Set when an admin requeues the message, exempting it from the
+    // stale-email sweep.
+    staleKeptAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_gmail_message_id", ["gmailMessageId"])
@@ -482,6 +487,9 @@ export default defineSchema({
         ),
       }),
     ),
+    // Years the email stated without a month/day ("2027–2028 program"), kept
+    // so staleness checks don't read a year-only timeline as "no date".
+    statedYears: v.optional(v.array(v.number())),
     isRecurring: v.boolean(),
     recurrenceNote: v.optional(v.string()), // "Every Wednesday 5-6:30pm"
 
@@ -542,6 +550,15 @@ export default defineSchema({
     visibility: v.optional(
       v.union(v.literal("draft"), v.literal("published"), v.literal("hidden")),
     ),
+    // When the source email arrived, copied from the message so staleness
+    // checks over a whole draft backlog needn't read every email body.
+    sourceReceivedAt: v.optional(v.number()),
+    // Set when the passed-draft sweep hid this row, so the admin page can list
+    // exactly what was auto-archived (as opposed to hidden by hand).
+    autoHiddenAt: v.optional(v.number()),
+    // Set when an admin restores an auto-hidden draft: the sweep must not
+    // hide it again.
+    keptActiveAt: v.optional(v.number()),
     parseConfidence: v.optional(v.number()),
     parseWarnings: v.optional(v.array(v.string())),
     dedupeKey: v.optional(v.string()),
@@ -553,6 +570,7 @@ export default defineSchema({
     .index("by_listserv_id", ["listservId"])
     .index("by_organization", ["organizationId"])
     .index("by_visibility", ["visibility"])
+    .index("by_auto_hidden", ["autoHiddenAt"])
     .index("by_dedupe_key", ["dedupeKey"])
     .index("by_section", ["listservSection"])
     .index("by_event_type", ["eventType"])

@@ -164,6 +164,7 @@ const CONFIRMATION_MESSAGE_VALIDATOR = v.object({
     v.literal("new"),
     v.literal("parsed"),
     v.literal("ignored"),
+    v.literal("stale"),
     v.literal("failed"),
   ),
   confirmationClearedAt: v.optional(v.number()),
@@ -183,6 +184,7 @@ const RECENT_MESSAGE_VALIDATOR = v.object({
     v.literal("new"),
     v.literal("parsed"),
     v.literal("ignored"),
+    v.literal("stale"),
     v.literal("failed"),
   ),
 });
