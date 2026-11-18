@@ -128,6 +128,7 @@ export function mapHydratedEventToEventItem(
   return {
     id: event._id,
     orgName,
+    orgIds: hydrated.orgs.map((org) => org._id),
     orgAvatarUrl,
     thumbnailVariant,
     day,

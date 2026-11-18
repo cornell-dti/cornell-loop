@@ -17,6 +17,7 @@
       "name": "@app/dashboard",
       "version": "0.0.0",
       "dependencies": {
+        "@app/analytics": "workspace:*",
         "@app/ui": "workspace:*",
         "@auth/core": "^0.41.3",
         "@convex-dev/auth": "^0.0.95",
@@ -53,6 +54,7 @@
       "name": "@app/extension",
       "version": "0.0.0",
       "dependencies": {
+        "@app/analytics": "workspace:*",
         "@app/ui": "workspace:*",
         "@auth/core": "^0.41.3",
         "@convex-dev/auth": "^0.0.95",
@@ -82,6 +84,13 @@
         "vite-plugin-web-extension": "^4.1.1",
       },
     },
+    "shared/analytics": {
+      "name": "@app/analytics",
+      "version": "0.0.0",
+      "devDependencies": {
+        "typescript": "~5.9.3",
+      },
+    },
     "shared/ui": {
       "name": "@app/ui",
       "version": "0.0.0",
@@ -101,6 +110,8 @@
     },
   },
   "packages": {
+    "@app/analytics": ["@app/analytics@workspace:shared/analytics"],
+
     "@app/dashboard": ["@app/dashboard@workspace:apps/dashboard"],
 
     "@app/extension": ["@app/extension@workspace:apps/extension"],

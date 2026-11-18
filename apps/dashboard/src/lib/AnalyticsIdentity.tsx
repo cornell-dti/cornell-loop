@@ -18,6 +18,7 @@
 
 import { useEffect, useRef } from "react";
 import { useQuery } from "convex/react";
+import { ANALYTICS_LAUNCH_AT } from "@app/analytics";
 import { api } from "../../convex/_generated/api";
 import {
   consumeFirstSession,
@@ -26,16 +27,6 @@ import {
   resetAnalytics,
   track,
 } from "./analytics";
-
-/**
- * Anyone whose account predates analytics can never produce an
- * `account_created` or `onboarding_*` event, so they'd read as a silently
- * broken funnel. Tagging them `pre_analytics` lets every acquisition and
- * retention insight filter them out.
- *
- * Set to the ship date of this integration.
- */
-const ANALYTICS_LAUNCH_AT = Date.parse("2026-11-17T00:00:00Z");
 
 const APP_OPENED_SESSION_KEY = "loop.analytics.app_opened";
 

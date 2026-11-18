@@ -1,4 +1,13 @@
 import { startOAuthInTab } from "./backgroundOAuth";
+import { parseAnalyticsMessage } from "./analytics/messages";
+import { captureInstall, handleAnalyticsMessage } from "./analytics/worker";
+
+// Registered at the top level so Chrome can replay the event to a restarted
+// worker. `install` only — an update would otherwise re-count every student.
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== "install") return;
+  void captureInstall();
+});
 
 chrome.action.onClicked.addListener((tab) => {
   if (tab.id === undefined) return;
@@ -18,6 +27,14 @@ function readStringField(value: object, key: string): string | null {
 
 chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
   if (typeof rawMessage !== "object" || rawMessage === null) return false;
+
+  // Analytics is fire-and-forget: no response, so the message channel closes
+  // immediately and a slow PostHog request can never stall the panel.
+  const analyticsMessage = parseAnalyticsMessage(rawMessage);
+  if (analyticsMessage !== null) {
+    void handleAnalyticsMessage(analyticsMessage);
+    return false;
+  }
 
   const type = readStringField(rawMessage, "type");
   if (type === "LOOP_GET_REDIRECT_URL") {

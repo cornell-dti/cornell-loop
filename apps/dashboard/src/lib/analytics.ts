@@ -1,11 +1,13 @@
 /**
- * analytics — the single typed entry point for every PostHog event Loop sends.
+ * analytics — the single typed entry point for every PostHog event the web
+ * dashboard sends.
  *
  * Everything funnels through `track()`, whose overload is keyed off
- * `AnalyticsEventProperties`. Adding an event means adding a key there; the
- * compiler then refuses any call with a misspelled name or the wrong property
- * shape, which is what keeps the dashboard definitions in PostHog aligned with
- * the code.
+ * `AnalyticsEventProperties` from `@app/analytics`. Adding an event means
+ * adding a key there; the compiler then refuses any call with a misspelled
+ * name or the wrong property shape, which is what keeps the definitions in
+ * PostHog aligned with the code — and keeps the extension sending the same
+ * shapes as the web app.
  *
  * Privacy: we identify people by their Convex `users` id and nothing else. No
  * email, name, major, grad year, or raw search text is ever attached to an
@@ -15,142 +17,20 @@
  */
 
 import posthog, { type CaptureResult, type Properties } from "posthog-js";
+import type {
+  AnalyticsEventName,
+  AnalyticsEventProperties,
+  AnalyticsPlatform,
+  IdentityProperties,
+} from "@app/analytics";
 
-/** Where in the product an interaction happened. */
-export type AnalyticsSurface =
-  | "onboarding"
-  | "feed"
-  | "bookmarks"
-  | "search"
-  | "org_page"
-  | "hovercard"
-  | "subscriptions";
-
-/**
- * Which client sent the event. Registered as a super property so every event
- * carries it; the extension phase sets `"extension"` from the same schema.
- */
-export type AnalyticsPlatform = "web" | "extension";
-
-type ToggleAction = "add" | "remove";
-
-/**
- * Event name → property shape. The source of truth for both `track()` and the
- * event definitions configured in PostHog.
- *
- * `is_first_action` marks the first meaningful interaction a user ever takes
- * (RSVP, bookmark, or follow). Paired with `onboarding_completed`, it's what
- * makes time-to-activation measurable.
- */
-export interface AnalyticsEventProperties {
-  app_opened: {
-    is_first_session: boolean;
-    onboarded: boolean;
-  };
-  /**
-   * Captured server-side from `convex/analytics.ts` so it fires exactly once,
-   * on true account creation. Listed here so the schema stays complete and the
-   * PostHog definitions can be generated from one place.
-   */
-  account_created: {
-    signup_method: "google";
-  };
-  onboarding_started: {
-    entry_point: "wizard";
-  };
-  onboarding_step_completed: {
-    step: number;
-    step_name: string;
-    duration_ms: number;
-    clubs_followed: number;
-  };
-  onboarding_completed: {
-    total_duration_ms: number;
-    clubs_followed: number;
-  };
-  onboarding_skipped: {
-    at_step: number;
-    /**
-     * `exit` — left the wizard before finishing.
-     * `profile_modal` — `users.updateProfile` auto-completed onboarding from
-     * the profile modal, so the wizard was never walked through.
-     */
-    via: "exit" | "profile_modal";
-  };
-  event_viewed: {
-    event_id: string;
-    org_ids: string[];
-    surface: AnalyticsSurface;
-  };
-  event_rsvp: {
-    event_id: string;
-    org_ids: string[];
-    surface: AnalyticsSurface;
-    status: "going";
-    is_first_action: boolean;
-  };
-  event_bookmarked: {
-    event_id: string;
-    org_ids: string[];
-    surface: AnalyticsSurface;
-    action: ToggleAction;
-    is_first_action: boolean;
-  };
-  listserv_subscribed: {
-    org_id: string;
-    surface: AnalyticsSurface;
-    action: "subscribe" | "unsubscribe";
-  };
-  search_performed: {
-    /** Length only — the raw query is deliberately never sent. */
-    query_length: number;
-    result_count: number | null;
-    surface: AnalyticsSurface;
-  };
-  filter_used: {
-    tag: string;
-    /**
-     * `select`/`deselect` narrow the feed. `pin`/`unpin` change which tags
-     * the bar offers at all, which is a different signal: it says which
-     * categories a student cares about even when they aren't filtering.
-     */
-    action: "select" | "deselect" | "pin" | "unpin";
-    surface: AnalyticsSurface;
-  };
-  club_viewed: {
-    org_id: string;
-    slug: string;
-    surface: AnalyticsSurface;
-  };
-  club_followed: {
-    org_id: string;
-    surface: AnalyticsSurface;
-    action: "follow" | "unfollow";
-    is_first_action: boolean;
-  };
-  /**
-   * Club Communities surface — defined so the schema is complete, but not yet
-   * instrumented because the UI doesn't exist.
-   */
-  post_viewed: {
-    post_id: string;
-    org_id: string;
-    surface: AnalyticsSurface;
-  };
-  /** Club Communities surface — see `post_viewed`. */
-  post_engaged: {
-    post_id: string;
-    org_id: string;
-    engagement: "like" | "comment" | "share" | "link_click";
-    surface: AnalyticsSurface;
-  };
-  /** Extension phase — fired from `chrome.runtime.onInstalled`. */
-  extension_installed: {
-    version: string;
-  };
-}
-
-export type AnalyticsEventName = keyof AnalyticsEventProperties;
+export type {
+  AnalyticsEventName,
+  AnalyticsEventProperties,
+  AnalyticsPlatform,
+  AnalyticsSurface,
+  IdentityProperties,
+} from "@app/analytics";
 
 const posthogKey: string | undefined = import.meta.env.VITE_POSTHOG_KEY;
 const posthogHost: string | undefined = import.meta.env.VITE_POSTHOG_HOST;
@@ -246,17 +126,6 @@ export function track<K extends AnalyticsEventName>(
 ): void {
   if (!initialized) return;
   posthog.capture(name, properties);
-}
-
-/**
- * Person properties set on first identify. `$set_once` means a returning user
- * keeps their original values — important here because analytics launched
- * after Loop already had real users, and `pre_analytics` is how we exclude
- * them from acquisition and retention cohorts that would otherwise be wrong.
- */
-export interface IdentityProperties {
-  cohort: "pre_analytics" | "post_analytics";
-  first_seen_at: string;
 }
 
 export function identifyUser(

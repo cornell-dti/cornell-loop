@@ -20,6 +20,7 @@
     "paths": {
       "@app/ui": ["../../shared/ui/src/index.ts"],
       "@app/ui/*": ["../../shared/ui/src/*"],
+      "@app/analytics": ["../../shared/analytics/src/index.ts"],
       "@app/convex": ["../dashboard/convex"],
       "@app/convex/*": ["../dashboard/convex/*"]
     },
@@ -32,5 +33,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../../shared/ui/src"]
+  "include": ["src", "../../shared/ui/src", "../../shared/analytics/src"]
 }
