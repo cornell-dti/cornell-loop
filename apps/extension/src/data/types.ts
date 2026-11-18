@@ -39,6 +39,12 @@ export interface EventItem {
   id: EventId;
   /** Primary host name, e.g. "Cornell DTI". From schema: hosts[0].name. */
   orgName: string;
+  /**
+   * Convex ids of every org linked to the event. Carried for analytics only —
+   * the UI shows `orgName` — so engagement can be attributed to a club
+   * without sending anything that names the student.
+   */
+  orgIds: string[];
   /** Optional org avatar URL; falls back to initial-letter avatar when absent. */
   orgAvatarUrl?: string;
   /** Controls the DateBadge style in feed/card rows. */

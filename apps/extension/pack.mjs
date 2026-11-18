@@ -44,6 +44,24 @@ if (
   process.exit(1);
 }
 
+// Analytics is silently dead without a key, and a shipped build with no
+// metrics is only discovered weeks later, so fail loudly here instead.
+if ((env.VITE_POSTHOG_KEY ?? "").length === 0) {
+  console.error(
+    "Set VITE_POSTHOG_KEY in .env.production to the production PostHog project key, then re-run pack.",
+  );
+  process.exit(1);
+}
+
+// The Store requires a privacy policy once analytics ship, and the in-panel
+// link is the user-facing half of that promise.
+if ((env.VITE_PRIVACY_POLICY_URL ?? "").length === 0) {
+  console.error(
+    "Set VITE_PRIVACY_POLICY_URL in .env.production to the published privacy policy URL, then re-run pack.",
+  );
+  process.exit(1);
+}
+
 if (existsSync(distDir)) rmSync(distDir, { recursive: true });
 
 const build = spawnSync("bunx", ["vite", "build"], {

@@ -36,6 +36,11 @@ export interface DropdownProps {
   options: Array<DropdownOption | string>;
   /** Text shown when no value is selected. Defaults to "Select…". */
   placeholder?: string;
+  /**
+   * Text shown before the selected label on the trigger only (e.g. "Sort: "
+   * renders "Sort: Alphabetical"); menu options stay unprefixed.
+   */
+  valuePrefix?: string;
   /** Additional CSS classes applied to the outermost wrapper. */
   className?: string;
 }
@@ -97,6 +102,7 @@ export function Dropdown({
   onChange,
   options,
   placeholder = "Select\u2026",
+  valuePrefix,
   className,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
@@ -106,7 +112,8 @@ export function Dropdown({
   const handleOutsideClick = useCallback((e: MouseEvent) => {
     if (
       containerRef.current &&
-      !containerRef.current.contains(e.target as Node)
+      e.target instanceof Node &&
+      !containerRef.current.contains(e.target)
     ) {
       setOpen(false);
     }
@@ -123,7 +130,9 @@ export function Dropdown({
 
   const normalized = options.map(normalizeOption);
   const selectedOption = normalized.find((o) => o.value === value);
-  const displayText = selectedOption ? selectedOption.label : placeholder;
+  const displayText = selectedOption
+    ? `${valuePrefix ?? ""}${selectedOption.label}`
+    : placeholder;
 
   return (
     <div

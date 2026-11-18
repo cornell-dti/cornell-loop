@@ -6,7 +6,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import "./App.css";
 import Landing from "./pages/Landing";
 import { Home } from "./pages/Home";
@@ -16,7 +16,6 @@ import { Org } from "./pages/Org";
 import { ProfileModalRoute } from "./pages/profile";
 import { Search } from "./pages/Search";
 import Admin from "./pages/Admin";
-import Onboarding from "./pages/Onboarding";
 import { useCurrentProfile } from "./lib/useCurrentProfile";
 import type { SideBarItemId } from "@app/ui";
 import DesignSystem from "./pages/DesignSystem";
@@ -30,10 +29,19 @@ function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
 }
 
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
+}
+
 /**
- * RejectedDomainGate — shared guard behind both ProtectedRoute (via
- * OnboardingGate below) and AuthOnlyRoute. Renders a bare loading state
- * instead of `children` while `useCurrentProfile` is still resolving *or*
+ * RejectedDomainGate — shared guard used by ProtectedRoute and AuthOnlyRoute.
+ * Renders a bare loading state instead of `children` while `useCurrentProfile` is still resolving *or*
  * has signed a non-Cornell session out and is redirecting to
  * `/?error=non-cornell`.
  *
@@ -64,61 +72,14 @@ function RejectedDomainGate({ children }: { children: ReactNode }) {
 }
 
 /**
- * OnboardingGate — renders children when the current user has completed
- * onboarding, otherwise redirects to /onboarding. Read by ProtectedRoute
- * below, nested inside `RejectedDomainGate` — by the time this runs,
- * `useCurrentProfile` has already resolved (`loading: false`) and the
- * session isn't rejected, so the `loading` check below is just defence in
- * depth for a call site that somehow skips `RejectedDomainGate`.
- */
-function OnboardingGate({ children }: { children: ReactNode }) {
-  const { user, loading, isOnboarded } = useCurrentProfile();
-  const location = useLocation();
-
-  if (loading) return <>{children}</>;
-  if (user === null) return <>{children}</>;
-  if (isOnboarded) return <>{children}</>;
-  if (location.pathname === "/onboarding") return <>{children}</>;
-
-  return <Navigate to="/onboarding" replace />;
-}
-
-/**
- * Route gate: shows a loading state while auth resolves, renders children when
- * authenticated, and redirects unauthenticated users back to the Landing page.
- * Unfinished users bounce to /onboarding via OnboardingGate.
+ * ProtectedRoute — restricts dashboard pages to authenticated Cornell users.
+ *
+ * - Displays a loading state while authentication resolves.
+ * - Redirects unauthenticated users to the landing page.
+ * - Uses RejectedDomainGate to block non-Cornell accounts.
+ * - Allows new users to reach Home, where onboarding appears as a modal.
  */
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <AuthLoading>
-        <div className="flex h-screen w-screen items-center justify-center">
-          <p>Loading…</p>
-        </div>
-      </AuthLoading>
-      <Authenticated>
-        <RejectedDomainGate>
-          <OnboardingGate>{children}</OnboardingGate>
-        </RejectedDomainGate>
-      </Authenticated>
-      <Unauthenticated>
-        <Navigate to="/" replace />
-      </Unauthenticated>
-    </>
-  );
-}
-
-/**
- * AuthOnlyRoute — gates on auth without applying the onboarding redirect.
- * Used for /onboarding so an unfinished user can stay on the page instead of
- * being bounced into a redirect loop.
- *
- * Also gates on `rejectedDomain` (see `RejectedDomainGate`) so a non-Cornell
- * session that lands here directly can't mount `Onboarding`'s authed
- * queries (`orgs.getSuggestedForOnboarding`, `follows.myFollows`) before
- * `useCurrentProfile` finishes signing it out.
- */
-function AuthOnlyRoute({ children }: { children: ReactNode }) {
   return (
     <>
       <AuthLoading>
@@ -167,12 +128,13 @@ function useOrgClick() {
 
 function RoutedHome() {
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
   const onOrgClick = useOrgClick();
   return (
     <Home
       activeNavItem="home"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
+      onNavigate={onNavigate}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
       // Pressing Enter from /home pushes to /search?q=… so the search has a
@@ -187,31 +149,26 @@ function RoutedSearch() {
 }
 
 function RoutedBookmarks() {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
   const onOrgClick = useOrgClick();
   return (
     <Bookmarks
       activeNavItem="bookmarks"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
+      onNavigate={onNavigate}
       onClubClick={onClubClick}
       onOrgClick={onOrgClick}
     />
   );
 }
 
-const SORT_OPTIONS = ["Alphabetical", "Most emails", "Recently added"] as const;
-
 function RoutedSubscriptions() {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const onClubClick = useClubClick();
-  const [sortIndex, setSortIndex] = useState(0);
   return (
     <Subscriptions
       activeNavItem="subscriptions"
-      onNavigate={(id) => navigate(pathForNavItem(id))}
-      sortLabel={SORT_OPTIONS[sortIndex]}
-      onSortChange={() => setSortIndex((i) => (i + 1) % SORT_OPTIONS.length)}
+      onNavigate={onNavigate}
       onClubClick={onClubClick}
     />
   );
@@ -237,15 +194,13 @@ function RoutedOrg() {
  */
 function RoutedProfile() {
   const navigate = useNavigate();
-  const handleDismiss = () => navigate("/home");
+  const location = useLocation();
+  const backgroundLocation = location.state?.backgroundLocation;
+  const handleDismiss = () =>
+    backgroundLocation ? navigate(-1) : navigate("/home", { replace: true });
   return (
     <>
-      {/*
-       * Render the Home dashboard underneath so the modal floats over it,
-       * matching Figma node 633:4436. The modal's z-50 backdrop captures all
-       * pointer events so the dashboard is visual-only while the modal is open.
-       */}
-      <RoutedHome />
+      {!backgroundLocation && <RoutedHome />}
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
         onClick={(e) => {
@@ -263,78 +218,88 @@ function App() {
 }
 
 function AppRoutes() {
+  const location = useLocation();
+  const backgroundLocation = location.state?.backgroundLocation;
+
   return (
-    <Routes>
-      {/* Public */}
-      <Route path="/" element={<Landing />} />
+    <>
+      <Routes location={backgroundLocation ?? location}>
+        {/* Public */}
+        <Route path="/" element={<Landing />} />
 
-      {/* Protected dashboard routes */}
-      <Route
-        path="/home"
-        element={
-          <ProtectedRoute>
-            <RoutedHome />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/bookmarks"
-        element={
-          <ProtectedRoute>
-            <RoutedBookmarks />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/subscriptions"
-        element={
-          <ProtectedRoute>
-            <RoutedSubscriptions />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/orgs/:slug"
-        element={
-          <ProtectedRoute>
-            <RoutedOrg />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/profile"
-        element={
-          <ProtectedRoute>
-            <RoutedProfile />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/search"
-        element={
-          <ProtectedRoute>
-            <RoutedSearch />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/onboarding"
-        element={
-          <AuthOnlyRoute>
-            <Onboarding />
-          </AuthOnlyRoute>
-        }
-      />
-      <Route path="/admin" element={<Admin />} />
+        {/* Protected dashboard routes */}
+        <Route
+          path="/home"
+          element={
+            <ProtectedRoute>
+              <RoutedHome />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/bookmarks"
+          element={
+            <ProtectedRoute>
+              <RoutedBookmarks />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscriptions"
+          element={
+            <ProtectedRoute>
+              <RoutedSubscriptions />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/orgs/:slug"
+          element={
+            <ProtectedRoute>
+              <RoutedOrg />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <RoutedProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/search"
+          element={
+            <ProtectedRoute>
+              <RoutedSearch />
+            </ProtectedRoute>
+          }
+        />
 
-      {/* Dev-only design system page */}
-      {import.meta.env.DEV && (
-        <Route path="/design-system" element={<DesignSystem />} />
+        <Route path="/admin" element={<Admin />} />
+
+        {/* Dev-only design system page */}
+        {import.meta.env.DEV && (
+          <Route path="/design-system" element={<DesignSystem />} />
+        )}
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {backgroundLocation && (
+        <Routes>
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <RoutedProfile />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
       )}
-
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    </>
   );
 }
 

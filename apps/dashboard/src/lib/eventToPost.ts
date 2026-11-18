@@ -9,15 +9,28 @@
  * Pure function, no side effects.
  */
 
+import { formatActionLabel } from "@app/ui";
 import type {
   Club,
   DashboardPostProps,
   Organization,
   RsvpGroup,
 } from "@app/ui";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
+
+/**
+ * A mapped post plus the ids analytics needs. `DashboardPost` only receives
+ * display props, so the underlying event/org ids would otherwise be lost by
+ * the time the list is rendered — these carry them through to
+ * `EventImpression`. Optional because Home also accepts injected sample posts
+ * that aren't backed by real documents.
+ */
+export interface FeedPost extends DashboardPostProps {
+  eventId?: string;
+  orgIds?: string[];
+}
 
 export interface HydratedEvent {
   event: PublicEvent;
@@ -76,10 +89,11 @@ function formatTime(timestampMs: number): string {
  * back to "single", then "deadline".
  *
  * Returns a formatted string like:
- *   "April 27, 5:30am - 8:30am"  (start + end same day)
- *   "April 27, 5:30am"           (start only)
- *   "Deadline April 30"          (deadline)
- *   ""                           (no usable date)
+ *   "April 27, 5:30am - 8:30am"           (start + end, same day)
+ *   "April 27, 5:30am – April 29, 8:30am" (start + end, different days)
+ *   "April 27, 5:30am"                    (start only)
+ *   "Deadline April 30"                   (deadline)
+ *   ""                                    (no usable date)
  */
 function formatEventDatetime(event: PublicEvent): string {
   const start = event.dates.find(
@@ -89,13 +103,19 @@ function formatEventDatetime(event: PublicEvent): string {
   const deadline = event.dates.find((d) => d.type === "deadline");
 
   if (start) {
-    const datePart = formatDateLong(start.timestamp);
+    const startDatePart = formatDateLong(start.timestamp);
     const startTime = formatTime(start.timestamp);
     if (end) {
+      const endDatePart = formatDateLong(end.timestamp);
       const endTime = formatTime(end.timestamp);
-      return `${datePart}, ${startTime} - ${endTime}`;
+      // Multi-day: end falls on a different calendar day than start — render
+      // both dates so the range isn't silently truncated to the start date.
+      if (endDatePart !== startDatePart) {
+        return `${startDatePart}, ${startTime} \u2013 ${endDatePart}, ${endTime}`;
+      }
+      return `${startDatePart}, ${startTime} - ${endTime}`;
     }
-    return `${datePart}, ${startTime}`;
+    return `${startDatePart}, ${startTime}`;
   }
 
   if (deadline) {
@@ -103,6 +123,62 @@ function formatEventDatetime(event: PublicEvent): string {
   }
 
   return "";
+}
+
+// ─── RSVP button label + primary link resolution ─────────────────────────────
+
+type EventLink = PublicEvent["links"][number];
+type EventLinkType = EventLink["type"];
+type EventType = PublicEvent["eventType"];
+
+/** Preferred link `type`s to surface as the primary action, per event type.
+ * `info` events never get a primary link (schema: "no clear CTA, catch-all"). */
+const LINK_TYPE_PREFERENCE: Record<EventType, EventLinkType[]> = {
+  event: ["rsvp", "registration", "info"],
+  hackathon: ["registration", "rsvp", "info"],
+  courses: ["registration", "rsvp", "info"],
+  opportunity: ["application", "registration", "info"],
+  fundraiser: ["registration", "info"],
+  info: [],
+};
+
+/** Default button label per event type when the link itself has no `label`. */
+function defaultRsvpLabel(eventType: EventType): string | undefined {
+  switch (eventType) {
+    case "event":
+      return "RSVP";
+    case "hackathon":
+    case "courses":
+      return "Register";
+    case "opportunity":
+      return "Apply";
+    case "fundraiser":
+      return "Donate";
+    case "info":
+      return undefined;
+  }
+}
+
+/** Picks the single best link to treat as the card's primary action, per
+ * `LINK_TYPE_PREFERENCE`; falls back to the first link if none match. */
+function resolvePrimaryLink(event: PublicEvent): EventLink | undefined {
+  if (event.links.length === 0 || event.eventType === "info") return undefined;
+  for (const type of LINK_TYPE_PREFERENCE[event.eventType]) {
+    const match = event.links.find((l) => l.type === type);
+    if (match) return match;
+  }
+  return event.links[0];
+}
+
+/** Button label: explicit link label → per-type default → hidden (info).
+ * Parser-written labels arrive in arbitrary case, so they're sentence-cased. */
+function resolveRsvpLabel(
+  event: PublicEvent,
+  link: EventLink | undefined,
+): string | undefined {
+  return link?.label
+    ? formatActionLabel(link.label)
+    : defaultRsvpLabel(event.eventType);
 }
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
@@ -173,6 +249,32 @@ export function orgsToClubs(orgs: PublicOrg[] | undefined): Club[] {
   }));
 }
 
+/**
+ * Fills in `following` + `onToggleFollow` on a mapped `Organization[]` using
+ * the real `PublicOrg._id` from the parallel `orgs` array `eventToPost()` was
+ * built from (same index alignment as `hydrated.orgs`). `follows.follow` /
+ * `unfollow` need a real `Id<"orgs">`, but `Organization.id` is the org slug
+ * — this is the one place that resolves the real id so every page can wire
+ * follow/unfollow the same way instead of re-deriving it ad hoc.
+ */
+export function stampFollowState(
+  organizations: Organization[],
+  orgs: readonly PublicOrg[],
+  followedOrgIdSet: ReadonlySet<Id<"orgs">>,
+  onToggle: (orgId: Id<"orgs">, currentlyFollowing: boolean) => void,
+): Organization[] {
+  return organizations.map((org, i) => {
+    const matched = orgs[i];
+    if (matched === undefined) return org;
+    const following = followedOrgIdSet.has(matched._id);
+    return {
+      ...org,
+      following,
+      onToggleFollow: () => onToggle(matched._id, following),
+    };
+  });
+}
+
 // ─── Event → Post ────────────────────────────────────────────────────────────
 
 export function eventToPost(hydrated: HydratedEvent): DashboardPostProps {
@@ -186,6 +288,8 @@ export function eventToPost(hydrated: HydratedEvent): DashboardPostProps {
     tags: org.tags.map((label) => ({ label })),
   }));
 
+  const primaryLink = resolvePrimaryLink(event);
+
   return {
     organizations,
     postedAt: formatPostedAt(event._creationTime),
@@ -196,5 +300,7 @@ export function eventToPost(hydrated: HydratedEvent): DashboardPostProps {
     truncateDescription: true,
     tags: event.tags.map((label) => ({ label })),
     bookmarked: isBookmarked,
+    rsvpLabel: resolveRsvpLabel(event, primaryLink),
+    rsvpUrl: primaryLink?.url,
   };
 }

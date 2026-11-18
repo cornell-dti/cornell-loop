@@ -14,6 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@app/ui": path.resolve(__dirname, "../../shared/ui/src"),
+      "@app/analytics": path.resolve(__dirname, "../../shared/analytics/src"),
     },
     dedupe: ["react", "react-dom"],
   },

@@ -26,8 +26,8 @@
  * src/styles/tokens.css — nothing is hardcoded except where noted above.
  */
 
-import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import {
   SideBar,
@@ -35,22 +35,27 @@ import {
   SearchPanel,
   LoopSummary,
   DashboardPost,
+  Dropdown,
   Tag,
   Button,
 } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { DropdownOption } from "@app/ui";
+import type { SideBarItemId, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
+import { consumeFirstAction, track } from "../lib/analytics";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 // Globe and Mail icons are not in shared/ui/src/assets; defined inline here.
@@ -92,46 +97,51 @@ function MailIcon({ className }: { className?: string }) {
   );
 }
 
-function ChevronDownIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-
 // ─── Shared typography class strings ─────────────────────────────────────────
 
 const BODY2_REGULAR =
   "font-[family-name:var(--font-body)] font-normal " +
-  "text-[var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+  "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
   "tracking-[var(--letter-spacing-body2)]";
 
-// ─── Tag/time placeholder cycles ─────────────────────────────────────────────
-// Phase 2F note: these chips cycle through display labels but do NOT yet
-// filter the underlying events query. Real filtering lands separately.
+// ─── Tag/time filter dropdowns ────────────────────────────────────────────────
 
-const TAG_FILTER_OPTIONS = ["All tags", "Tech", "Outdoors", "For you"] as const;
-const TIME_FILTER_OPTIONS = [
-  "All time",
-  "This week",
-  "This month",
-  "Past events",
-] as const;
+const ALL_TAGS_OPTION: DropdownOption = { value: "all", label: "All tags" };
+
+const TIME_FILTER_OPTIONS: DropdownOption[] = [
+  { value: "all", label: "All time" },
+  { value: "week", label: "This week" },
+  { value: "month", label: "This month" },
+  { value: "past", label: "Past events" },
+];
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Start timestamp if present, else deadline timestamp, else null. */
+function getEventTimestamp(event: PublicEvent): number | null {
+  const start = event.dates.find(
+    (d) => d.type === "start" || d.type === "single",
+  );
+  if (start) return start.timestamp;
+  const deadline = event.dates.find((d) => d.type === "deadline");
+  return deadline ? deadline.timestamp : null;
+}
 
 // ─── Sidebar nav ─────────────────────────────────────────────────────────────
 
 function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
+}
+
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
 }
 
 // ─── OrgTagPill ───────────────────────────────────────────────────────────────
@@ -164,7 +174,7 @@ function OrgTagPill({ label, variant }: OrgTagSpec) {
         "font-[family-name:var(--font-body)] font-medium",
         "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)]",
         "tracking-[var(--letter-spacing-body2)]",
-        "text-[var(--color-primary-900)]",
+        "text-[color:var(--color-primary-900)]",
         "whitespace-nowrap select-none",
       ].join(" ")}
       style={{ fontVariationSettings: "'opsz' 14" }}
@@ -177,7 +187,7 @@ function OrgTagPill({ label, variant }: OrgTagSpec) {
 // ─── Page-level loading & not-found shells ───────────────────────────────────
 
 function ShellWithSidebar({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   return (
     <div
       className={[
@@ -186,7 +196,7 @@ function ShellWithSidebar({ children }: { children: React.ReactNode }) {
       ].join(" ")}
     >
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
       <main
         className={[
@@ -207,7 +217,7 @@ function LoadingState() {
       <div
         className={[
           "flex flex-col items-center gap-[var(--space-3)]",
-          "text-[var(--color-text-secondary)]",
+          "text-[color:var(--color-text-secondary)]",
           BODY2_REGULAR,
         ].join(" ")}
       >
@@ -239,16 +249,17 @@ function NotFoundState({ slug }: { slug: string | undefined }) {
             "font-[family-name:var(--font-body)] font-semibold",
             "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)]",
             "tracking-[var(--letter-spacing-body1)]",
-            "text-[var(--color-neutral-900)]",
+            "text-[color:var(--color-neutral-900)]",
           ].join(" ")}
           style={{ fontVariationSettings: "'opsz' 14" }}
         >
           Organization not found
         </h1>
         <p
-          className={[BODY2_REGULAR, "text-[var(--color-text-secondary)]"].join(
-            " ",
-          )}
+          className={[
+            BODY2_REGULAR,
+            "text-[color:var(--color-text-secondary)]",
+          ].join(" ")}
         >
           {slug
             ? `We couldn't find an organization with the slug "${slug}". It may have been removed or renamed.`
@@ -264,6 +275,7 @@ function NotFoundState({ slug }: { slug: string | undefined }) {
 export function Org() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
 
   const orgQuery = useQuery(api.orgs.getBySlug, slug ? { slug } : "skip");
   const eventsQuery = useQuery(
@@ -276,27 +288,146 @@ export function Org() {
   const followMutation = useMutation(api.follows.follow);
   const unfollowMutation = useMutation(api.follows.unfollow);
 
+  // Follow state for the org cards inside the post feed (hover-card
+  // Follow/Unfollow button) — distinct from `optimisticFollowing` below,
+  // which is the header's own Follow button for *this* org page.
+  const followedOrgIds = useMemo(
+    () => followedOrgs?.map((org) => org._id),
+    [followedOrgs],
+  );
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "org_page",
+  );
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("org_page");
+
   // Optimistic local toggle. We seed from the server result and let the
   // mutation propagate; on next query refresh the server value wins.
   const [optimisticFollowing, setOptimisticFollowing] = useState<
     boolean | null
   >(null);
 
-  // Cycling chip state — labels only, no real filtering applied yet.
-  const [tagFilterIndex, setTagFilterIndex] = useState(0);
-  const [timeFilterIndex, setTimeFilterIndex] = useState(0);
+  // One `club_viewed` per org actually rendered. Keyed on the resolved org id
+  // rather than the slug so a redirect or slug change doesn't double-count,
+  // and skipped entirely while the query is in flight or the org is missing.
+  const viewedOrgId = useRef<Id<"orgs"> | null>(null);
+  const resolvedOrg = orgQuery?.org ?? null;
+  useEffect(() => {
+    if (resolvedOrg === null) return;
+    if (viewedOrgId.current === resolvedOrg._id) return;
+    viewedOrgId.current = resolvedOrg._id;
+    track("club_viewed", {
+      org_id: resolvedOrg._id,
+      slug: resolvedOrg.slug,
+      surface: "org_page",
+    });
+  }, [resolvedOrg]);
+
+  const [tagFilter, setTagFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all");
   const [feedSearchValue, setFeedSearchValue] = useState("");
 
-  const posts: DashboardPostProps[] = useMemo(() => {
-    if (!eventsQuery) return [];
-    return eventsQuery.page.map(eventToPost);
+  // `now` is captured in the change handler (an event, not render) so the
+  // time-window filter below stays a pure function of state.
+  const [now, setNow] = useState(0);
+  const handleTimeFilterChange = (value: string) => {
+    setNow(Date.now());
+    setTimeFilter(value);
+  };
+
+  const tagOptions: DropdownOption[] = useMemo(() => {
+    if (!eventsQuery) return [ALL_TAGS_OPTION];
+    const uniqueTags = Array.from(
+      new Set(eventsQuery.page.flatMap((hydrated) => hydrated.event.tags)),
+    ).sort((a, b) => a.localeCompare(b));
+    return [
+      ALL_TAGS_OPTION,
+      ...uniqueTags.map((tag) => ({ value: tag, label: tag })),
+    ];
   }, [eventsQuery]);
+
+  const posts: FeedPost[] = useMemo(() => {
+    if (!eventsQuery) return [];
+    const trimmedSearch = feedSearchValue.trim().toLowerCase();
+    return eventsQuery.page
+      .filter((hydrated) => {
+        if (tagFilter !== "all" && !hydrated.event.tags.includes(tagFilter)) {
+          return false;
+        }
+        if (timeFilter !== "all") {
+          const timestamp = getEventTimestamp(hydrated.event);
+          if (timestamp === null) return false;
+          if (timeFilter === "past") {
+            if (timestamp >= now) return false;
+          } else {
+            const windowMs = timeFilter === "week" ? WEEK_MS : MONTH_MS;
+            if (timestamp < now || timestamp > now + windowMs) return false;
+          }
+        }
+        if (trimmedSearch.length > 0) {
+          const haystack =
+            `${hydrated.event.title} ${hydrated.event.description}`.toLowerCase();
+          if (!haystack.includes(trimmedSearch)) return false;
+        }
+        return true;
+      })
+      .map((hydrated) => {
+        const base = eventToPost(hydrated);
+        const organizations = stampFollowState(
+          base.organizations,
+          hydrated.orgs,
+          followedOrgIdSet,
+          toggleFollow,
+        );
+        const optimisticBookmark = bookmarkOverrides.get(hydrated.event._id);
+        const bookmarked =
+          optimisticBookmark !== undefined
+            ? optimisticBookmark
+            : hydrated.isBookmarked;
+        const orgIds = hydrated.orgs.map((o) => o._id);
+        return {
+          ...base,
+          organizations,
+          bookmarked,
+          eventId: hydrated.event._id,
+          orgIds,
+          onBookmark: () =>
+            toggleBookmark(hydrated.event._id, bookmarked, orgIds),
+          onRsvp: () => handleRsvp(hydrated.event._id, orgIds),
+        };
+      });
+  }, [
+    eventsQuery,
+    tagFilter,
+    timeFilter,
+    feedSearchValue,
+    now,
+    followedOrgIdSet,
+    toggleFollow,
+    bookmarkOverrides,
+    toggleBookmark,
+    handleRsvp,
+  ]);
 
   const clubs: Club[] = useMemo(
     () => orgsToClubs(followedOrgs),
     [followedOrgs],
   );
   const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   // Loading / not-found gating. `orgQuery === undefined` is the loading state.
   if (slug === undefined) {
@@ -316,6 +447,12 @@ export function Org() {
   const handleFollowToggle = () => {
     const next = !isFollowing;
     setOptimisticFollowing(next);
+    track("club_followed", {
+      org_id: org._id,
+      surface: "org_page",
+      action: next ? "follow" : "unfollow",
+      is_first_action: next ? consumeFirstAction() : false,
+    });
     const promise = next
       ? followMutation({ orgId: org._id })
       : unfollowMutation({ orgId: org._id });
@@ -332,9 +469,6 @@ export function Org() {
   const handleOrgClick = (postOrg: Organization) => {
     if (postOrg.id) navigate(`/orgs/${postOrg.id}`);
   };
-
-  const tagFilter = TAG_FILTER_OPTIONS[tagFilterIndex];
-  const timeFilter = TIME_FILTER_OPTIONS[timeFilterIndex];
 
   // Build the org tag chips. The schema-level tags are all "neutral"; we add
   // a synthetic "For you" primary chip when the user is following the org so
@@ -353,7 +487,7 @@ export function Org() {
     >
       {/* ── Left sidebar — design system ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
 
       {/* ── Main content ── */}
@@ -374,22 +508,39 @@ export function Org() {
           {/*
            * Cover banner — Figma node 613:4241 shows a sky/cloud image. We render
            * a tasteful sky gradient as the no-asset fallback.
+           *
+           * Covers often come from email headers (small, wide, text-heavy), so
+           * cropping them to fill the banner blows them up and cuts off the
+           * text. Instead the image is contained at its own aspect ratio, and a
+           * blurred copy of it fills the remaining space.
            */}
           <div
-            className="h-60 w-full shrink-0 bg-[var(--color-surface-raised)]"
+            className="relative h-60 w-full shrink-0 overflow-hidden bg-[var(--color-surface-raised)]"
             style={
               org.coverImageUrl
-                ? {
-                    backgroundImage: `url(${org.coverImageUrl})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
+                ? undefined
                 : {
                     backgroundImage:
                       "linear-gradient(180deg, var(--color-secondary-500) 0%, var(--color-secondary-300) 100%)",
                   }
             }
-          />
+          >
+            {org.coverImageUrl && (
+              <>
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 size-full scale-110 object-cover opacity-60 blur-2xl"
+                />
+                <img
+                  src={org.coverImageUrl}
+                  alt=""
+                  className="relative size-full object-contain"
+                />
+              </>
+            )}
+          </div>
 
           {/*
            * Action buttons row — right-aligned below the cover banner.
@@ -408,7 +559,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -423,6 +574,14 @@ export function Org() {
                 type="button"
                 aria-label="Send email"
                 onClick={() => {
+                  // Mailing the org is how a student joins its listserv from
+                  // here, so it's the org-page counterpart to the
+                  // Subscriptions page's subscribe/unsubscribe rows.
+                  track("listserv_subscribed", {
+                    org_id: org._id,
+                    surface: "org_page",
+                    action: "subscribe",
+                  });
                   window.location.href = `mailto:${org.email}`;
                 }}
                 className={[
@@ -430,7 +589,7 @@ export function Org() {
                   "px-[var(--space-4)] py-[var(--space-2)]",
                   "rounded-[var(--radius-card)]",
                   "bg-[var(--color-surface-raised)]",
-                  "text-[var(--color-neutral-700)]",
+                  "text-[color:var(--color-neutral-700)]",
                   "cursor-pointer",
                   "hover:bg-[var(--color-neutral-300)]",
                   "transition-colors duration-150",
@@ -476,8 +635,8 @@ export function Org() {
                   "flex size-full items-center justify-center " +
                   "bg-[var(--color-secondary-400)] " +
                   "font-[family-name:var(--font-brand)] font-bold " +
-                  "text-[var(--font-size-sub1)] " +
-                  "text-[var(--color-secondary-900)]"
+                  "text-[length:var(--font-size-sub1)] " +
+                  "text-[color:var(--color-secondary-900)]"
                 }
               >
                 {org.name.charAt(0).toUpperCase()}
@@ -496,7 +655,7 @@ export function Org() {
                     "font-[family-name:var(--font-body)] font-semibold " +
                     "text-[length:var(--font-size-sub2)] leading-[var(--line-height-sub2)] " +
                     "tracking-[var(--letter-spacing-body1)] " +
-                    "text-[var(--color-neutral-900)]"
+                    "text-[color:var(--color-neutral-900)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -507,7 +666,7 @@ export function Org() {
               {org.description && (
                 <p
                   className={
-                    BODY2_REGULAR + " text-[var(--color-text-secondary)]"
+                    BODY2_REGULAR + " text-[color:var(--color-text-secondary)]"
                   }
                   style={{ fontVariationSettings: "'opsz' 14" }}
                 >
@@ -539,8 +698,7 @@ export function Org() {
 
         {/* ── Posts feed section ── */}
         <div className="flex flex-col gap-[var(--space-4)] px-[var(--space-6)] py-[var(--space-4)]">
-          {/* Filter bar: search input (flex-1) + tag filter + time filter.
-              Tag/time chips cycle a label only — real filtering not yet wired. */}
+          {/* Filter bar: search input (flex-1) + tag filter + time filter. */}
           <div className="flex items-center gap-[var(--space-4)]">
             <SearchBar
               value={feedSearchValue}
@@ -550,57 +708,32 @@ export function Org() {
               className="min-w-0 flex-1"
             />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTagFilterIndex((i) => (i + 1) % TAG_FILTER_OPTIONS.length)
-              }
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface)]",
-                "border border-[var(--color-border)]",
-                BODY2_REGULAR,
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {tagFilter}
-              <ChevronDownIcon className="size-[var(--space-6)] shrink-0" />
-            </button>
+            <Dropdown
+              value={tagFilter}
+              onChange={setTagFilter}
+              options={tagOptions}
+              className="w-[9.5rem] shrink-0"
+            />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTimeFilterIndex((i) => (i + 1) % TIME_FILTER_OPTIONS.length)
-              }
-              className={[
-                "inline-flex shrink-0 items-center gap-[var(--space-2)]",
-                "px-[var(--space-4)] py-[var(--space-2)]",
-                "rounded-[var(--radius-card)]",
-                "bg-[var(--color-surface)]",
-                "border border-[var(--color-border)]",
-                BODY2_REGULAR,
-                "text-[var(--color-neutral-700)]",
-                "cursor-pointer whitespace-nowrap",
-                "hover:bg-[var(--color-surface-subtle)]",
-                "transition-colors duration-150",
-              ].join(" ")}
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              {timeFilter}
-              <ChevronDownIcon className="size-[var(--space-6)] shrink-0" />
-            </button>
+            <Dropdown
+              value={timeFilter}
+              onChange={handleTimeFilterChange}
+              options={TIME_FILTER_OPTIONS}
+              className="w-[9.5rem] shrink-0"
+            />
           </div>
 
           {/* Post list */}
           <div className="flex flex-col gap-[var(--space-8)] pb-[var(--space-6)]">
             {posts.map((post, i) => (
-              <DashboardPost key={i} {...post} onOrgClick={handleOrgClick} />
+              <EventImpression
+                key={i}
+                eventId={post.eventId}
+                orgIds={post.orgIds}
+                surface="org_page"
+              >
+                <DashboardPost {...post} onOrgClick={handleOrgClick} />
+              </EventImpression>
             ))}
           </div>
         </div>
@@ -611,6 +744,7 @@ export function Org() {
         rsvpGroups={rsvpGroups}
         clubs={clubs}
         onClubClick={handleClubClick}
+        onToggleFollow={handleClubToggleFollow}
         className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>

@@ -6,8 +6,8 @@
  *
  * Tag-strip supports:
  *   • Click to toggle filter (OR match across active tags)
- *   • + to add a custom tag
- *   • Pencil → edit mode → × to delete a tag
+ *   • + to pin a tag from the canonical set
+ *   • Pencil → edit mode → × to unpin a tag
  *
  * On Google Calendar (pageContext === "gcal"):
  *   • Subheader "Hover on the events to preview time on your calendar" is shown
@@ -27,6 +27,17 @@ import { buildGCalUrl } from "../utils/calendarUtils";
 import { removeSlotPreview } from "../gcalHighlight";
 import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";
+import { useFilterTags } from "../data/useFilterTags";
+import type { CanonicalTag } from "@app/convex/lib/tags";
+import { EventImpression } from "../analytics/EventImpression";
+import {
+  trackBookmarkToggle,
+  trackCalendarAdd,
+  trackFilter,
+  trackLinkClick,
+} from "../analytics/eventTracking";
+
+const SURFACE = "bookmarks";
 
 // ── Typography ─────────────────────────────────────────────────────────────
 
@@ -47,14 +58,6 @@ const GCAL_SUBHEADER =
   "font-[family-name:var(--font-body)] font-normal " +
   "text-[length:var(--font-size-body2)] leading-[1.5] " +
   "text-[#5f5f5f]";
-
-const INITIAL_SORT_TAGS = [
-  "Internships",
-  "Early career",
-  "Tech",
-  "Mentorship",
-  "Just for fun",
-];
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -78,22 +81,24 @@ export default function BookmarkView({
   onPreviewSlot,
 }: BookmarkViewProps) {
   // ── Tag filter state ──────────────────────────────────────────────────
-  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const { tags: availableTags, addTag, removeTag } = useFilterTags();
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
   const handleTagToggle = (tag: string) => {
+    trackFilter(tag, activeTags.includes(tag) ? "deselect" : "select", SURFACE);
     setActiveTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   };
 
-  const handleTagAdd = (tag: string) => {
-    setAvailableTags((prev) => [...prev, tag]);
-    setActiveTags((prev) => [...prev, tag]);
+  const handleTagAdd = (tag: CanonicalTag) => {
+    addTag(tag);
+    trackFilter(tag, "pin", SURFACE);
   };
 
-  const handleTagRemove = (tag: string) => {
-    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+  const handleTagRemove = (tag: CanonicalTag) => {
+    removeTag(tag);
+    trackFilter(tag, "unpin", SURFACE);
     setActiveTags((prev) => prev.filter((t) => t !== tag));
   };
 
@@ -144,45 +149,57 @@ export default function BookmarkView({
             const primaryAction = primaryLink
               ? {
                   label: getLinkLabel(primaryLink),
-                  onClick: () => openExternalUrl(primaryLink.url),
+                  onClick: () => {
+                    trackLinkClick(event, SURFACE, primaryLink.type);
+                    openExternalUrl(primaryLink.url);
+                  },
                 }
               : undefined;
 
             const onAddToCalendar = event.calendarEvent
               ? () => {
+                  trackCalendarAdd(event, SURFACE);
                   removeSlotPreview();
                   openExternalUrl(buildGCalUrl(event.calendarEvent!));
                 }
               : undefined;
 
             return (
-              <BookmarkCard
+              <EventImpression
                 key={event.id}
-                orgName={event.orgName}
-                orgAvatarUrl={event.orgAvatarUrl}
-                thumbnailVariant={event.thumbnailVariant}
-                day={event.day}
-                month={event.month}
-                title={event.title}
-                subtitle={event.subtitle}
-                onSubtitleClick={
-                  event.isEdgeCase ? () => onEmailView(event) : undefined
-                }
-                tags={event.tags}
-                primaryAction={primaryAction}
-                onAddToCalendar={onAddToCalendar}
-                onUnbookmark={() => onUnbookmark(event.id)}
-                onPreviewEnter={
-                  pageContext === "gcal" && event.calendarEvent
-                    ? () => onPreviewSlot?.(event)
-                    : undefined
-                }
-                onPreviewLeave={
-                  pageContext === "gcal" && event.calendarEvent
-                    ? () => onPreviewSlot?.(null)
-                    : undefined
-                }
-              />
+                events={[event]}
+                surface={SURFACE}
+              >
+                <BookmarkCard
+                  orgName={event.orgName}
+                  orgAvatarUrl={event.orgAvatarUrl}
+                  thumbnailVariant={event.thumbnailVariant}
+                  day={event.day}
+                  month={event.month}
+                  title={event.title}
+                  subtitle={event.subtitle}
+                  onSubtitleClick={
+                    event.isEdgeCase ? () => onEmailView(event) : undefined
+                  }
+                  tags={event.tags}
+                  primaryAction={primaryAction}
+                  onAddToCalendar={onAddToCalendar}
+                  onUnbookmark={() => {
+                    trackBookmarkToggle(event, SURFACE, "remove");
+                    onUnbookmark(event.id);
+                  }}
+                  onPreviewEnter={
+                    pageContext === "gcal" && event.calendarEvent
+                      ? () => onPreviewSlot?.(event)
+                      : undefined
+                  }
+                  onPreviewLeave={
+                    pageContext === "gcal" && event.calendarEvent
+                      ? () => onPreviewSlot?.(null)
+                      : undefined
+                  }
+                />
+              </EventImpression>
             );
           })}
         </div>

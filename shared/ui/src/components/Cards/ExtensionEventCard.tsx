@@ -173,8 +173,7 @@ export function ExtensionEventRow({
         <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)] tracking-[var(--letter-spacing-body2)]">
           <p
             className={
-              BODY2_SEMIBOLD +
-              " w-full truncate text-[color:var(--color-neutral-900)]"
+              BODY2_SEMIBOLD + " w-full text-[color:var(--color-neutral-900)]"
             }
             style={{ fontVariationSettings: "'opsz' 14" }}
           >
@@ -184,7 +183,7 @@ export function ExtensionEventRow({
           {description && (
             <p
               className={
-                BODY3 + " w-full truncate text-[color:var(--color-neutral-700)]"
+                BODY3 + " w-full text-[color:var(--color-neutral-700)]"
               }
               style={{ fontVariationSettings: "'opsz' 14" }}
             >

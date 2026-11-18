@@ -6,9 +6,11 @@
  *
  * Major / Minor: drawn from a curated subset of Cornell undergraduate programs.
  * Grad year:     current calendar year through six years out, plus "Graduate".
- * Interests:     the original eight tags from `profile.tsx`, kept stable so the
- *                tag-picker UX matches the Figma source.
+ * Interests:     the canonical event tag set (`convex/tags.ts`), so profile
+ *                interests line up with event tags for recommendations.
  */
+
+import { CANONICAL_TAGS } from "../../convex/lib/tags";
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -156,17 +158,5 @@ export const DEFAULT_MINOR_OPTIONS: readonly string[] = [
   "Visual Studies",
 ];
 
-export const DEFAULT_INTEREST_OPTIONS: readonly string[] = [
-  "Tech",
-  "Finance",
-  "Health",
-  "Education",
-  "Outdoors",
-  "Mentorship",
-  "Just for Fun",
-  "Entrepreneurship",
-  "Arts",
-  "Sports",
-  "Service",
-  "Research",
-];
+/** Interests share the canonical event tag set so they can match event tags. */
+export const DEFAULT_INTEREST_OPTIONS: readonly string[] = CANONICAL_TAGS;

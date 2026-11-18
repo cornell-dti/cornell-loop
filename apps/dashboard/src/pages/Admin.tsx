@@ -1,15 +1,93 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useMutation,
+  usePaginatedQuery,
+  useQuery,
+} from "convex/react";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { api } from "../../convex/_generated/api";
+import {
+  confirmationLinkFrom,
+  isCornellListAddress,
+  isLegacyLyrisAddress,
+  isSimplelistsAddress,
+  listNameFromConfirmationSender,
+} from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
+import { isPastEvent } from "../../convex/lib/eventDates";
+import {
+  normalizeModelConfidence,
+  scoreParseQuality,
+} from "../../convex/lib/parseQuality";
+import {
+  CANONICAL_TAGS,
+  normalizeTags,
+  type CanonicalTag,
+} from "../../convex/lib/tags";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 const ADMIN_TOKEN_STORAGE_KEY = "cornell_loop_admin_token";
 
 type Candidate = Doc<"listservCandidates">;
+
+/**
+ * Candidates rendered before the queue collapses behind a "show all".
+ *
+ * Directory discovery raises hundreds of departmental and lab lists at low
+ * confidence; without a cap they turn the review queue into an endless scroll.
+ */
+const CANDIDATE_PREVIEW_COUNT = 25;
+
+/** Drafts loaded per page on the Publish tab, and per "Load more" click. */
+const DRAFT_PAGE_SIZE = 50;
+
+/**
+ * Where a candidate address is hosted. Derived from the address rather than
+ * stored, so no schema field or backfill is involved — add a branch in
+ * {@link candidateOrigin} and an entry in {@link CANDIDATE_ORIGINS} to
+ * recognise another platform.
+ */
+type CandidateOrigin = "simplelists" | "lyris" | "other";
+
+function candidateOrigin(email: string): CandidateOrigin {
+  if (isSimplelistsAddress(email)) return "simplelists";
+  if (isLegacyLyrisAddress(email)) return "lyris";
+  return "other";
+}
+
+/**
+ * The origins offered as filter chips. Lyris is absent on purpose: Cornell
+ * retired it, so those lists can't be joined and belong in the reference
+ * section below the queue rather than in the working set.
+ */
+const CANDIDATE_ORIGINS: ReadonlyArray<{
+  id: CandidateOrigin;
+  label: string;
+}> = [
+  { id: "simplelists", label: "Simplelists" },
+  { id: "other", label: "Other" },
+];
+
+const CANDIDATE_ORIGIN_LABELS: Record<CandidateOrigin, string> = {
+  simplelists: "Simplelists",
+  lyris: "legacy Lyris",
+  other: "other",
+};
+
 type Listserv = Doc<"listservs">;
+
+/** Mirrors sourceAdmin.ts's `findSimilarOrganizations` return validator. */
+type SimilarOrgMatch = {
+  organizationId: Id<"orgs">;
+  name: string;
+  slug: string;
+  matchedOn: string[];
+};
+
 type IngestionState = Doc<"listservIngestionState">;
 type IngestionRun = Doc<"ingestionRuns">;
 // Full doc type — kept for reference but dashboard/overview queries return projected subsets.
@@ -26,7 +104,10 @@ type RecentMessage = Pick<
   | "processingStatus"
 >;
 // Projected shape for confirmation messages (includes body fields needed for link extraction).
-type ConfirmationMessage = Pick<
+type ConfirmationMessage = {
+  /** Computed server-side: DMARC/DKIM passed for a Cornell domain. */
+  senderAuthenticated: boolean;
+} & Pick<
   _ListservMessageFull,
   | "_id"
   | "_creationTime"
@@ -59,6 +140,13 @@ type Organization = Doc<"orgs">;
 type EventDoc = Doc<"events">;
 type ParseRun = Doc<"parseRuns">;
 type JoinAttempt = Doc<"joinAttempts">;
+type OrgProfileRow = FunctionReturnType<
+  typeof api.orgEnrichment.overview
+>[number];
+type OrgProfileDraft = Doc<"orgProfileDrafts">;
+type OrgDraftFields = FunctionArgs<
+  typeof api.orgEnrichment.publishDraft
+>["fields"];
 
 type GmailStatus = {
   email: string;
@@ -86,6 +174,8 @@ type OrgType =
 
 type UnassignedSender = {
   senderEmail: string;
+  listAddress?: string;
+  senderEmails: string[];
   count: number;
   latestReceivedAt: number;
   sampleSubjects: string[];
@@ -116,6 +206,7 @@ type ConfirmationItem = {
   receivedAt: number;
   clearedAt?: number;
   link?: string;
+  linkTrusted: boolean;
 };
 
 type OrgUpdatePayload = {
@@ -133,7 +224,7 @@ type OrgUpdatePayload = {
   coverStorageId?: Id<"_storage"> | null;
 };
 
-type AdminTab = "setup" | "sources" | "join" | "ingest" | "publish";
+type AdminTab = "setup" | "sources" | "join" | "ingest" | "publish" | "orgs";
 
 const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "setup", label: "Setup", hint: "Gmail + discovery" },
@@ -141,7 +232,13 @@ const TABS: Array<{ id: AdminTab; label: string; hint: string }> = [
   { id: "join", label: "Join", hint: "Subscribe to lists" },
   { id: "ingest", label: "Ingest", hint: "Poll inbox" },
   { id: "publish", label: "Publish", hint: "Review + publish drafts" },
+  { id: "orgs", label: "Orgs", hint: "Fill org profiles" },
 ];
+
+/** Narrows a `?tab=` query value to {@link AdminTab} without an `as` cast. */
+function parseAdminTab(value: string | null): AdminTab | undefined {
+  return TABS.find((t) => t.id === value)?.id;
+}
 
 const ORG_TYPES: OrgType[] = [
   "club",
@@ -151,15 +248,98 @@ const ORG_TYPES: OrgType[] = [
   "company",
   "other",
 ];
+
+/** Narrows a `<select>` value to {@link OrgType} without an `as` cast. */
+function parseOrgType(value: string): OrgType {
+  const match = ORG_TYPES.find((t) => t === value);
+  if (!match) throw new Error(`Unknown organization type: ${value}`);
+  return match;
+}
+
+/**
+ * Selectable strategies. The two `cornell_lyris*` values are deliberately
+ * absent: Cornell retired Lyris, so nothing new should ever be classified into
+ * them. Existing Lyris rows still *render* their stored strategy — see
+ * {@link joinStrategyOptions}.
+ */
 const JOIN_STRATEGIES: JoinStrategy[] = [
-  "cornell_lyris",
-  "cornell_lyris_owner_contact",
+  "cornell_simplelists",
+  "cornell_simplelists_owner_contact",
   "campus_groups",
   "newsletter",
   "direct_org_email",
   "manual",
   "unknown",
 ];
+
+/**
+ * The picker options for one row: the selectable strategies, plus the row's
+ * own stored strategy when that is a retired one, so a legacy row does not
+ * silently display someone else's value.
+ */
+function joinStrategyOptions(current: JoinStrategy | undefined) {
+  if (current && !JOIN_STRATEGIES.includes(current)) {
+    return [current, ...JOIN_STRATEGIES];
+  }
+  return JOIN_STRATEGIES;
+}
+
+const ALL_JOIN_STRATEGIES: JoinStrategy[] = [
+  ...JOIN_STRATEGIES,
+  "cornell_lyris",
+  "cornell_lyris_owner_contact",
+];
+
+/** Narrows a `<select>` value to {@link JoinStrategy} without an `as` cast. */
+function parseJoinStrategy(value: string): JoinStrategy {
+  const match = ALL_JOIN_STRATEGIES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown join strategy: ${value}`);
+  return match;
+}
+
+const LISTSERV_STATUSES: Listserv["status"][] = [
+  "joining",
+  "active",
+  "paused",
+  "failed",
+];
+
+/** Narrows a `<select>` value to a listserv status without an `as` cast. */
+function parseListservStatus(value: string): Listserv["status"] {
+  const match = LISTSERV_STATUSES.find((s) => s === value);
+  if (!match) throw new Error(`Unknown listserv status: ${value}`);
+  return match;
+}
+
+type EventTypeValue = EventDoc["eventType"];
+const EVENT_TYPES: EventTypeValue[] = [
+  "event",
+  "opportunity",
+  "hackathon",
+  "courses",
+  "fundraiser",
+  "info",
+];
+
+type LinkTypeValue = EventDoc["links"][number]["type"];
+const LINK_TYPES: LinkTypeValue[] = [
+  "registration",
+  "application",
+  "rsvp",
+  "info",
+  "social",
+];
+
+type DraftEditPatch = {
+  title: string;
+  description: string;
+  aiDescription: string;
+  eventType: EventTypeValue;
+  dates: EventDoc["dates"];
+  location: EventDoc["location"];
+  links: EventDoc["links"];
+  tags: string[];
+};
 
 // ─── Root ────────────────────────────────────────────────────────────────────
 
@@ -169,7 +349,7 @@ export default function Admin() {
   );
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
     const p = new URLSearchParams(window.location.search).get("tab");
-    return TABS.some((t) => t.id === p) ? (p as AdminTab) : "setup";
+    return parseAdminTab(p) ?? "setup";
   });
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(
     null,
@@ -207,12 +387,25 @@ export default function Admin() {
     token ? { token } : "skip",
   );
   const parseData = useQuery(api.parser.overview, token ? { token } : "skip");
+  const orgProfiles = useQuery(
+    api.orgEnrichment.overview,
+    token ? { token } : "skip",
+  );
 
   // ── mutations / actions ──
   const runDiscovery = useAction(api.listservAdmin.runDiscovery);
+  const runDirectoryDiscovery = useAction(
+    api.listservAdmin.runDirectoryDiscovery,
+  );
   const runIngestionNow = useAction(api.listservAdmin.runIngestionNow);
+  const rematchUnassigned = useAction(
+    api.listservAdmin.rematchUnassignedMessagesNow,
+  );
   const runParseNow = useAction(api.parser.runParseNow);
   const sendJoinEmail = useAction(api.listservAdmin.sendJoinEmail);
+  const submitSubscribe = useAction(
+    api.listservAdmin.submitSimplelistsSubscribe,
+  );
 
   const createOAuthNonce = useMutation(api.gmailOAuth.createOAuthNonce);
   const addCandidate = useMutation(api.listservAdmin.addCandidate);
@@ -230,17 +423,83 @@ export default function Admin() {
   const updateListservStatus = useMutation(
     api.listservAdmin.updateListservStatus,
   );
+  const updateJoinStatus = useMutation(api.listservAdmin.updateJoinStatus);
+  const setJoinArchived = useMutation(api.listservAdmin.setJoinArchived);
   const updateJoinStrategy = useMutation(api.listservAdmin.updateJoinStrategy);
+  const recomputeJoinStrategy = useMutation(
+    api.listservAdmin.recomputeJoinStrategy,
+  );
   const clearConfirmation = useMutation(api.listservAdmin.clearConfirmation);
   const publishEvent = useMutation(api.parser.publishEvent);
+  const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
+  const hidePastDrafts = useMutation(api.parser.hidePastDrafts);
+  const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
+  const requeueMessage = useMutation(api.parser.requeueMessage);
+  const updateListservEmail = useMutation(
+    api.listservAdmin.updateListservEmail,
+  );
+  const foldListservs = useAction(api.listservAdmin.foldListservs);
+  const setPrimaryListserv = useMutation(api.listservAdmin.setPrimaryListserv);
+  const runEnrichment = useAction(api.orgEnrichment.runEnrichment);
+  const publishOrgDraft = useAction(api.orgEnrichment.publishDraft);
+  const discardOrgDraft = useMutation(api.orgEnrichment.discardDraft);
 
-  async function act(label: string, fn: () => Promise<unknown>) {
+  // ── duplicate-org guard ──
+  // findSimilarOrganizations is a query, called imperatively (not via
+  // useQuery) because it only runs at the moment an admin asks to create an
+  // org, not reactively on every render.
+  const convex = useConvex();
+  const [pendingOrgCreation, setPendingOrgCreation] = useState<{
+    name: string;
+    type: OrgType;
+    matches: SimilarOrgMatch[];
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>;
+  } | null>(null);
+
+  /**
+   * Every "create org" entry point in this page routes through here instead
+   * of calling `createOrg` directly, so a near-duplicate name or a source
+   * address that already belongs to another org always surfaces a choice
+   * before a second org for the same real-world club gets created.
+   */
+  async function createOrgWithGuard(
+    name: string,
+    type: OrgType,
+    sourceEmail: string | undefined,
+    onCreated: (orgId: Id<"orgs">) => void | Promise<void>,
+  ) {
+    try {
+      const matches = await convex.query(
+        api.sourceAdmin.findSimilarOrganizations,
+        { token, name, sourceEmail },
+      );
+      if (matches.length === 0) {
+        const orgId = await createOrg({ token, name, type, sourceEmail });
+        await onCreated(orgId);
+        return;
+      }
+      setPendingOrgCreation({ name, type, matches, onCreated });
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Failed to check for duplicates.",
+        false,
+      );
+    }
+  }
+
+  /** Returns whether `fn` succeeded, so a caller can gate follow-up state (e.g. clearing a draft) on that. */
+  async function act(
+    label: string,
+    fn: () => Promise<unknown>,
+  ): Promise<boolean> {
     try {
       await fn();
       showToast(label);
+      return true;
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Action failed.", false);
+      return false;
     }
   }
 
@@ -260,14 +519,57 @@ export default function Admin() {
   const organizations: Organization[] = sourceData?.organizations ?? [];
   const sourceListservs: Listserv[] = sourceData?.listservs ?? listservs;
   const unassigned: UnassignedSender[] = sourceData?.unassignedSenders ?? [];
+  const unassignedTruncated: boolean = sourceData?.unassignedTruncated ?? false;
 
   const parseRuns: ParseRun[] = parseData?.runs ?? [];
-  const drafts: EventDoc[] = parseData?.drafts ?? [];
+  const draftCounts = {
+    total: parseData?.draftCount ?? 0,
+    past: parseData?.pastDraftCount ?? 0,
+    truncated: parseData?.draftScanTruncated ?? false,
+  };
   const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
     []) as ParseMessage[];
-  const readyMessages: ParseMessage[] = (parseData?.readyMessages ??
+  const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
     []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
+  const readyCount: number = parseData?.readyCount ?? 0;
+  const readyScanTruncated: boolean = parseData?.readyScanTruncated ?? false;
+
+  // Real ready-to-parse queue: paginated rather than a number capped at 200,
+  // so a genuine backlog is both visible and inspectable.
+  const {
+    results: readyMessages,
+    status: readyStatus,
+    loadMore: loadMoreReady,
+  } = usePaginatedQuery(
+    api.parser.listReadyMessages,
+    token ? { token } : "skip",
+    { initialNumItems: 25 },
+  );
+
+  // Stable identity: PublishTab drives this from an effect, and a fresh arrow
+  // on every render would re-fire it before the in-flight page lands.
+  const onLoadMoreReady = useCallback(() => loadMoreReady(25), [loadMoreReady]);
+
+  const {
+    results: drafts,
+    status: draftsStatus,
+    loadMore: loadMoreDrafts,
+  } = usePaginatedQuery(api.parser.listDrafts, token ? { token } : "skip", {
+    initialNumItems: DRAFT_PAGE_SIZE,
+  });
+
+  // The review queue, paginated for the same reason: `dashboard.candidates`
+  // stops at 150 and directory discovery seeds roughly 600.
+  const {
+    results: candidatePage,
+    status: candidateStatus,
+    loadMore: loadMoreCandidates,
+  } = usePaginatedQuery(
+    api.listservAdmin.listCandidates,
+    token ? { token } : "skip",
+    { initialNumItems: CANDIDATE_PREVIEW_COUNT },
+  );
 
   const listservById = new Map(listservs.map((l) => [l._id, l]));
 
@@ -363,6 +665,34 @@ export default function Admin() {
             onRunDiscovery={() =>
               act("Discovery complete.", () => runDiscovery({ token }))
             }
+            onRunDirectoryDiscovery={async () => {
+              try {
+                const result = await runDirectoryDiscovery({ token });
+                showToast(
+                  `Parsed ${result.entriesParsed} lists · kept ${result.candidatesFound} · ${result.inserted} new, ${result.updated} enriched.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error
+                    ? e.message
+                    : "Directory discovery failed.",
+                  false,
+                );
+              }
+            }}
+            onRematchUnassigned={async () => {
+              try {
+                const result = await rematchUnassigned({ token });
+                showToast(
+                  `Scanned ${result.scanned} · matched ${result.matched} · ${result.candidatesRaised} new candidate(s).`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Re-match failed.",
+                  false,
+                );
+              }
+            }}
             onAddCandidate={(email, name, notes) =>
               act("Candidate added.", () =>
                 addCandidate({
@@ -378,7 +708,12 @@ export default function Admin() {
 
         {activeTab === "sources" && (
           <SourcesTab
-            candidates={candidates}
+            candidates={candidatePage}
+            unassignedTruncated={unassignedTruncated}
+            candidateStatus={candidateStatus}
+            onLoadMoreCandidates={() =>
+              loadMoreCandidates(CANDIDATE_PREVIEW_COUNT)
+            }
             listservs={sourceListservs}
             organizations={organizations}
             unassigned={unassigned}
@@ -392,55 +727,97 @@ export default function Admin() {
                 rejectCandidate({ token, candidateId: id }),
               )
             }
-            onAssignSource={(listservId, orgId) =>
-              act("Source assigned.", () =>
+            onAssignSource={async (listservId, orgId) => {
+              await act("Source assigned.", () =>
                 assignSourceOrg({ token, listservId, organizationId: orgId }),
-              )
-            }
-            onCreateAndAssignSource={(listservId, name, type) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSourceOrg({
-                  token,
-                  listservId,
-                  organizationId: orgId,
-                });
+              );
+            }}
+            onCreateAndAssignSource={(listservId, name, type, sourceEmail) =>
+              createOrgWithGuard(name, type, sourceEmail, async (orgId) => {
+                await act(`${name} created and assigned.`, () =>
+                  assignSourceOrg({
+                    token,
+                    listservId,
+                    organizationId: orgId,
+                  }),
+                );
               })
             }
-            onAssignInboxSenderToOrg={(senderEmail, orgId) =>
+            onAssignInboxSenderToOrg={(sender, orgId) =>
               act("Source assigned.", () =>
-                assignSender({ token, senderEmail, organizationId: orgId }),
+                assignSender({
+                  token,
+                  senderEmail: sender.senderEmail,
+                  senderEmails: sender.senderEmails,
+                  listAddress: sender.listAddress,
+                  organizationId: orgId,
+                }),
               )
             }
-            onCreateAndAssignInboxSender={(
-              senderEmail,
-              name,
-              type,
-              sourceName,
-              sourceType,
-            ) =>
-              act(`${name} created and assigned.`, async () => {
-                const orgId = await createOrg({ token, name, type });
-                await assignSender({
-                  token,
-                  senderEmail,
-                  organizationId: orgId,
-                  sourceName,
-                  sourceType,
-                });
+            onCreateAndAssignInboxSender={(sender, name, type) =>
+              createOrgWithGuard(
+                name,
+                type,
+                sender.senderEmail,
+                async (orgId) => {
+                  await act(`${name} created and assigned.`, () =>
+                    assignSender({
+                      token,
+                      senderEmail: sender.senderEmail,
+                      senderEmails: sender.senderEmails,
+                      listAddress: sender.listAddress,
+                      organizationId: orgId,
+                      sourceName: sender.suggestion.sourceName,
+                      sourceType: sender.suggestion.sourceType,
+                    }),
+                  );
+                },
+              )
+            }
+            onRejectSource={(senderEmail, group) =>
+              act("Source rejected.", () =>
+                ignoreSender({ token, senderEmail, ...group }),
+              )
+            }
+            onRestoreSource={async (listservId) => {
+              await act("Source restored.", () =>
+                unignoreSource({ token, listservId }),
+              );
+            }}
+            onCreateOrg={(name, type) =>
+              createOrgWithGuard(name, type, undefined, () => {
+                showToast(`${name} created.`);
               })
             }
-            onIgnoreSender={(senderEmail) =>
-              act("Sender ignored.", () => ignoreSender({ token, senderEmail }))
-            }
-            onUnignoreSource={(listservId) =>
-              act("Source reactivated.", () =>
-                unignoreSource({ token, listservId }),
+            onUpdateListservEmail={(listservId, listEmail) =>
+              act("Listserv email updated.", () =>
+                updateListservEmail({ token, listservId, listEmail }),
               )
             }
-            onCreateOrg={(name, type) =>
-              act(`${name} created.`, () => createOrg({ token, name, type }))
+            onSetPrimaryListserv={(listservId) =>
+              act("Primary listserv set.", () =>
+                setPrimaryListserv({ token, listservId }),
+              )
             }
+            onFoldListservs={async (targetId, duplicateIds) => {
+              // Not routed through `act` because the toast reports the fold's
+              // actual blast radius, which only the result carries.
+              try {
+                const result = await foldListservs({
+                  token,
+                  targetId,
+                  duplicateIds,
+                });
+                showToast(
+                  `Folded ${result.foldedCount} row${result.foldedCount !== 1 ? "s" : ""}, repointed ${result.rowsRepointed} record${result.rowsRepointed !== 1 ? "s" : ""}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Fold failed.",
+                  false,
+                );
+              }
+            }}
             onUpdateOrg={(orgId, payload) =>
               act("Organization updated.", () =>
                 updateOrg({
@@ -475,14 +852,55 @@ export default function Admin() {
             onSendJoin={async (e) => {
               e.preventDefault();
               if (!joinDraft) return;
-              await act("Join email sent.", () =>
+              // Only clear the composed draft on success — on a transient
+              // Gmail error the admin would otherwise lose everything they
+              // typed and have to reconstruct it from scratch.
+              const sent = await act("Join email sent.", () =>
                 sendJoinEmail({ token, ...joinDraft }),
               );
-              setJoinDraft(null);
+              if (sent) setJoinDraft(null);
             }}
+            onSubscribe={async (id) => {
+              // The action resolves with the failure reason rather than
+              // throwing, so the toast has to read the result — the row keeps
+              // rendering the subscribe URL either way.
+              try {
+                const result = await submitSubscribe({
+                  token,
+                  listservId: id,
+                });
+                showToast(
+                  result.ok
+                    ? "Subscribe form submitted. Watch Ingest for the confirmation email."
+                    : (result.error ??
+                        "Subscribe failed. Use the subscribe link instead."),
+                  result.ok,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Subscribe failed.",
+                  false,
+                );
+              }
+            }}
+            onRedetect={(id) =>
+              act("Re-detected.", () =>
+                recomputeJoinStrategy({ token, listservId: id }),
+              )
+            }
             onStatusChange={(id, status) =>
               act("Status updated.", () =>
                 updateListservStatus({ token, listservId: id, status }),
+              )
+            }
+            onJoinStatusChange={(id, joinStatus) =>
+              act("Join status updated.", () =>
+                updateJoinStatus({ token, listservId: id, joinStatus }),
+              )
+            }
+            onArchiveChange={(id, archived) =>
+              act(archived ? "Source archived." : "Source restored.", () =>
+                setJoinArchived({ token, listservId: id, archived }),
               )
             }
             onStrategyChange={(id, s) =>
@@ -516,8 +934,16 @@ export default function Admin() {
           <PublishTab
             runs={parseRuns}
             drafts={drafts}
+            draftsStatus={draftsStatus}
+            onLoadMoreDrafts={() => loadMoreDrafts(DRAFT_PAGE_SIZE)}
+            draftCounts={draftCounts}
             failedMessages={failedMessages}
-            readyCount={readyMessages.length}
+            ignoredMessages={ignoredMessages}
+            readyMessages={readyMessages}
+            readyStatus={readyStatus}
+            onLoadMoreReady={onLoadMoreReady}
+            readyCount={readyCount}
+            readyScanTruncated={readyScanTruncated}
             needsAssignment={needsAssignment}
             onRunParse={() =>
               act("Parse complete.", () => runParseNow({ token }))
@@ -525,16 +951,127 @@ export default function Admin() {
             onPublish={(id) =>
               act("Published.", () => publishEvent({ token, eventId: id }))
             }
+            onPublishMany={(ids) =>
+              act(
+                ids.length === 1
+                  ? "Published."
+                  : `Published ${ids.length} events.`,
+                () => publishEvents({ token, eventIds: ids }),
+              )
+            }
             onHide={(id) =>
               act("Hidden.", () => hideEvent({ token, eventId: id }))
+            }
+            onHidePast={async () => {
+              try {
+                const result = await hidePastDrafts({ token });
+                const noun = `past draft${result.hidden !== 1 ? "s" : ""}`;
+                showToast(
+                  result.remaining
+                    ? `Hid ${result.hidden} ${noun}. More remain — click again.`
+                    : `Hid ${result.hidden} ${noun}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Action failed.",
+                  false,
+                );
+              }
+            }}
+            onEdit={(id, patch) =>
+              act("Event updated.", () =>
+                updateDraftEvent({ token, eventId: id, ...patch }),
+              )
             }
             onReparse={(id) =>
               act("Reparsed.", () => runParseNow({ token, messageId: id }))
             }
+            onRequeue={(id) =>
+              act("Requeued.", () => requeueMessage({ token, messageId: id }))
+            }
             onGoToSources={() => switchTab("sources")}
           />
         )}
+
+        {activeTab === "orgs" && (
+          <OrgsTab
+            rows={orgProfiles}
+            onGenerate={(orgId) =>
+              act("Profile draft ready.", () => runEnrichment({ token, orgId }))
+            }
+            onPublish={(draftId, fields) =>
+              act("Org profile published.", () =>
+                publishOrgDraft({ token, draftId, fields }),
+              )
+            }
+            onDiscard={(draftId) =>
+              act("Draft discarded.", () => discardOrgDraft({ token, draftId }))
+            }
+          />
+        )}
       </div>
+
+      {/* Duplicate-org confirmation */}
+      {pendingOrgCreation && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] p-6 shadow-[var(--shadow-2)]">
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              "{pendingOrgCreation.name}" looks like it might already exist
+            </h2>
+            <div className="mt-3 grid gap-2">
+              {pendingOrgCreation.matches.map((match) => (
+                <div
+                  key={match.organizationId}
+                  className="rounded-xl border border-[var(--color-border)] px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold">{match.name}</span>
+                    <Btn
+                      primary
+                      onClick={async () => {
+                        const { onCreated } = pendingOrgCreation;
+                        setPendingOrgCreation(null);
+                        await onCreated(match.organizationId);
+                      }}
+                    >
+                      Attach here instead
+                    </Btn>
+                  </div>
+                  <p className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {match.matchedOn.join(" · ")}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Btn onClick={() => setPendingOrgCreation(null)}>Cancel</Btn>
+              <Btn
+                danger
+                onClick={async () => {
+                  const { name, type, onCreated } = pendingOrgCreation;
+                  setPendingOrgCreation(null);
+                  try {
+                    const orgId = await createOrg({
+                      token,
+                      name,
+                      type,
+                      confirmedNew: true,
+                    });
+                    await onCreated(orgId);
+                  } catch (e) {
+                    showToast(
+                      e instanceof Error ? e.message : "Failed to create org.",
+                      false,
+                    );
+                  }
+                }}
+              >
+                Create "{pendingOrgCreation.name}" anyway
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -581,6 +1118,8 @@ function SetupTab({
   discoveryRuns,
   onConnectGmail,
   onRunDiscovery,
+  onRunDirectoryDiscovery,
+  onRematchUnassigned,
   onAddCandidate,
 }: {
   gmailStatus: GmailStatus | undefined;
@@ -588,6 +1127,8 @@ function SetupTab({
   discoveryRuns: Doc<"discoveryRuns">[];
   onConnectGmail: () => void;
   onRunDiscovery: () => void;
+  onRunDirectoryDiscovery: () => void;
+  onRematchUnassigned: () => void;
   onAddCandidate: (email: string, name: string, notes: string) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -640,13 +1181,27 @@ function SetupTab({
       <Card>
         <CardHeader
           title="Discover"
-          subtitle="Find probable Cornell list addresses from the sender dataset."
+          subtitle="Find probable Cornell list addresses from the sender dataset and the official list directory."
         />
         <div className="mt-4 flex flex-wrap gap-2">
           <Btn primary onClick={onRunDiscovery}>
             Run discovery
           </Btn>
+          <Btn onClick={onRunDirectoryDiscovery}>Run directory discovery</Btn>
+          <Btn onClick={onRematchUnassigned}>Re-match unassigned mail</Btn>
         </div>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Discovery ranks senders students actually receive mail from — the only
+          source that finds CampusGroups, Mailchimp, and Gmail senders.
+          Directory discovery reads every list on lists.cornell.edu and adds the
+          real names and descriptions; its own entries rank low until a list
+          also shows up in the sender data.
+        </p>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Re-matching replays already-stored messages that were never attached
+          to an organization, and raises a candidate for any list confirmation
+          we cannot place.
+        </p>
         {discoveryRuns.length > 0 && (
           <div className="mt-4 grid gap-1">
             {discoveryRuns.slice(0, 5).map((run) => (
@@ -714,6 +1269,9 @@ function SetupTab({
 
 function SourcesTab({
   candidates,
+  candidateStatus,
+  onLoadMoreCandidates,
+  unassignedTruncated,
   listservs,
   organizations,
   unassigned,
@@ -723,45 +1281,97 @@ function SourcesTab({
   onCreateAndAssignSource,
   onAssignInboxSenderToOrg,
   onCreateAndAssignInboxSender,
-  onIgnoreSender,
-  onUnignoreSource,
+  onRejectSource,
+  onRestoreSource,
   onCreateOrg,
   onUpdateOrg,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onFoldListservs,
 }: {
   candidates: Candidate[];
+  candidateStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreCandidates: () => void;
+  unassignedTruncated: boolean;
   listservs: Listserv[];
   organizations: Organization[];
   unassigned: UnassignedSender[];
   onApproveCandidate: (id: Id<"listservCandidates">, name?: string) => void;
   onRejectCandidate: (id: Id<"listservCandidates">) => void;
-  onAssignSource: (listservId: Id<"listservs">, orgId: Id<"orgs">) => void;
+  onAssignSource: (
+    listservId: Id<"listservs">,
+    orgId: Id<"orgs">,
+  ) => void | Promise<void>;
   onCreateAndAssignSource: (
     listservId: Id<"listservs">,
     name: string,
     type: OrgType,
+    sourceEmail: string,
   ) => void;
-  onAssignInboxSenderToOrg: (senderEmail: string, orgId: Id<"orgs">) => void;
+  // The whole group rather than one address: a list group carries every From
+  // address that posted to it, and all of them have to reach `assignSender` so
+  // they land as aliases on one row instead of becoming rows of their own.
+  onAssignInboxSenderToOrg: (
+    sender: UnassignedSender,
+    orgId: Id<"orgs">,
+  ) => void;
   onCreateAndAssignInboxSender: (
-    senderEmail: string,
+    sender: UnassignedSender,
     name: string,
     type: OrgType,
-    sourceName: string,
-    sourceType: NonNullable<Listserv["sourceType"]>,
   ) => void;
-  onIgnoreSender: (senderEmail: string) => void;
-  onUnignoreSource: (listservId: Id<"listservs">) => void;
+  // The group's own From addresses travel with the rejection so the tombstone
+  // can claim their existing mail; without them those messages keep sitting in
+  // the unassigned scan window forever.
+  onRejectSource: (
+    senderEmail: string,
+    group?: { senderEmails: string[]; listAddress?: string },
+  ) => void;
+  onRestoreSource: (listservId: Id<"listservs">) => void | Promise<void>;
   onCreateOrg: (name: string, type: OrgType) => void;
   onUpdateOrg: (orgId: Id<"orgs">, payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onFoldListservs: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   // Partition listservs into three buckets
   const unassignedSources = listservs.filter(
     (s) => !s.organizationId && s.status !== "paused",
   );
   const assignedSources = listservs.filter((s) => !!s.organizationId);
-  const ignoredSources = listservs.filter((s) => s.status === "paused");
-  const pendingCandidates = candidates.filter((c) => c.status === "candidate");
+  const rejectedSources = listservs.filter((s) => s.status === "paused");
+  // Already highest-confidence-first, and already only `status: "candidate"`,
+  // from the paginated `listCandidates` query. Directory discovery contributes
+  // hundreds of low-confidence departmental lists, so the rest are fetched on
+  // demand instead of being capped out of reach.
+  const pendingCandidates = candidates;
+
+  // Grouped by where the address is hosted, so the retired-Lyris rows stop
+  // sitting between the Simplelists ones an admin can actually act on. Only
+  // covers rows fetched so far, which is what the "+" in the header means.
+  const [originFilter, setOriginFilter] =
+    useState<CandidateOrigin>("simplelists");
+  const candidatesByOrigin: Record<CandidateOrigin, Candidate[]> = {
+    simplelists: [],
+    lyris: [],
+    other: [],
+  };
+  for (const candidate of pendingCandidates) {
+    candidatesByOrigin[candidateOrigin(candidate.email)].push(candidate);
+  }
+  const visibleCandidates = candidatesByOrigin[originFilter];
 
   // Unified needs-org list: unassigned known sources + inbox-only senders
   type UnifiedItem =
@@ -809,19 +1419,71 @@ function SourcesTab({
       {pendingCandidates.length > 0 && (
         <Card>
           <CardHeader
-            title={`${pendingCandidates.length} candidate${pendingCandidates.length !== 1 ? "s" : ""} awaiting review`}
-            subtitle="Addresses found by discovery. Approve to create a source, or reject to dismiss."
+            // "N loaded" rather than "N awaiting review": the queue is paged,
+            // so this is how many have been fetched, not the whole backlog.
+            title={`${visibleCandidates.length}${candidateStatus === "Exhausted" ? "" : "+"} ${CANDIDATE_ORIGIN_LABELS[originFilter]} candidate${visibleCandidates.length !== 1 ? "s" : ""} awaiting review`}
+            subtitle="Addresses found by discovery, strongest first. Approve to create a source, or reject to dismiss."
           />
-          <div className="mt-4 grid gap-2">
-            {pendingCandidates.map((c) => (
-              <CandidateRow
-                key={c._id}
-                candidate={c}
-                onApprove={(name) => onApproveCandidate(c._id, name)}
-                onReject={() => onRejectCandidate(c._id)}
-              />
+          <div className="mt-3 flex flex-wrap gap-2">
+            {CANDIDATE_ORIGINS.map((origin) => (
+              <FilterChip
+                key={origin.id}
+                active={originFilter === origin.id}
+                onClick={() => setOriginFilter(origin.id)}
+              >
+                {origin.label} ({candidatesByOrigin[origin.id].length})
+              </FilterChip>
             ))}
           </div>
+          {visibleCandidates.length === 0 ? (
+            <p className="mt-4 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+              No {CANDIDATE_ORIGIN_LABELS[originFilter]} candidates in the rows
+              loaded so far.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-2">
+              {visibleCandidates.map((c) => (
+                <CandidateRow
+                  key={c._id}
+                  candidate={c}
+                  onApprove={(name) => onApproveCandidate(c._id, name)}
+                  onReject={() => onRejectCandidate(c._id)}
+                />
+              ))}
+            </div>
+          )}
+          {candidateStatus !== "Exhausted" && (
+            <div className="mt-3">
+              <Btn
+                onClick={onLoadMoreCandidates}
+                disabled={candidateStatus !== "CanLoadMore"}
+              >
+                {candidateStatus === "LoadingMore"
+                  ? "Loading…"
+                  : `Load ${CANDIDATE_PREVIEW_COUNT} more candidates`}
+              </Btn>
+            </div>
+          )}
+          {/* Lyris is dead, so these can't be approved — kept visible only as a
+              record of what kinds of lists exist on campus. */}
+          {candidatesByOrigin.lyris.length > 0 && (
+            <details className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3">
+              <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
+                {candidatesByOrigin.lyris.length} legacy Lyris list
+                {candidatesByOrigin.lyris.length !== 1 ? "s" : ""} —
+                deactivated, for reference
+              </summary>
+              <div className="mt-3 grid gap-2">
+                {candidatesByOrigin.lyris.map((c) => (
+                  <CandidateRow
+                    key={c._id}
+                    candidate={c}
+                    onReject={() => onRejectCandidate(c._id)}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
         </Card>
       )}
 
@@ -830,8 +1492,15 @@ function SourcesTab({
         <Card>
           <CardHeader
             title={`${unifiedItems.length} source${unifiedItems.length !== 1 ? "s" : ""} need an organization`}
-            subtitle="Assign each source to an organization to enable parsing. Ignore sources you don't want to track."
+            subtitle="Assign each source to an organization to enable parsing. Reject sources you don't want to track."
           />
+          {unassignedTruncated && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[length:var(--font-size-body3)] text-amber-800">
+              Showing the most recent slice of unassigned mail only — there is
+              more behind it. Assign or reject these, and the next batch will
+              appear.
+            </p>
+          )}
           <div className="mt-4 grid gap-2">
             {unifiedItems.map((item) =>
               item.kind === "known" ? (
@@ -844,14 +1513,20 @@ function SourcesTab({
                   suggestedOrgType={"club"}
                   messageCount={undefined}
                   sampleSubjects={[]}
+                  groupedSenders={[]}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
                     onAssignSource(item.source._id, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignSource(item.source._id, name, type)
+                    onCreateAndAssignSource(
+                      item.source._id,
+                      name,
+                      type,
+                      item.source.listEmail,
+                    )
                   }
-                  onIgnore={() => onIgnoreSender(item.source.listEmail)}
+                  onReject={() => onRejectSource(item.source.listEmail)}
                 />
               ) : (
                 <UnassignedRow
@@ -863,20 +1538,20 @@ function SourcesTab({
                   suggestedOrgType={item.sender.suggestion.organizationType}
                   messageCount={item.sender.count}
                   sampleSubjects={item.sender.sampleSubjects}
+                  groupedSenders={item.sender.senderEmails}
                   organizations={organizations}
                   onAssignToOrg={(orgId) =>
-                    onAssignInboxSenderToOrg(item.sender.senderEmail, orgId)
+                    onAssignInboxSenderToOrg(item.sender, orgId)
                   }
                   onCreateAndAssign={(name, type) =>
-                    onCreateAndAssignInboxSender(
-                      item.sender.senderEmail,
-                      name,
-                      type,
-                      item.sender.suggestion.sourceName,
-                      item.sender.suggestion.sourceType,
-                    )
+                    onCreateAndAssignInboxSender(item.sender, name, type)
                   }
-                  onIgnore={() => onIgnoreSender(item.sender.senderEmail)}
+                  onReject={() =>
+                    onRejectSource(item.sender.senderEmail, {
+                      senderEmails: item.sender.senderEmails,
+                      listAddress: item.sender.listAddress,
+                    })
+                  }
                 />
               ),
             )}
@@ -906,7 +1581,7 @@ function SourcesTab({
                   orgName={org?.name ?? "Unknown org"}
                   organizations={organizations}
                   onReassign={(orgId) => onAssignSource(src._id, orgId)}
-                  onIgnore={() => onIgnoreSender(src.listEmail)}
+                  onReject={() => onRejectSource(src.listEmail)}
                 />
               );
             })}
@@ -914,23 +1589,26 @@ function SourcesTab({
         </details>
       )}
 
-      {/* Ignored / paused sources */}
-      {ignoredSources.length > 0 && (
+      {/* Rejected / paused sources */}
+      {rejectedSources.length > 0 && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
           <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
-            {ignoredSources.length} ignored source
-            {ignoredSources.length !== 1 ? "s" : ""}
+            {rejectedSources.length} rejected source
+            {rejectedSources.length !== 1 ? "s" : ""}
           </summary>
           <div className="mt-3 grid gap-2">
-            {ignoredSources.map((src) => (
-              <IgnoredSourceRow
+            {rejectedSources.map((src) => (
+              <RejectedSourceRow
                 key={src._id}
                 source={src}
                 organizations={organizations}
-                onReactivate={() => onUnignoreSource(src._id)}
-                onAssign={(orgId) => {
-                  onUnignoreSource(src._id);
-                  onAssignSource(src._id, orgId);
+                onRestore={() => onRestoreSource(src._id)}
+                onAssign={async (orgId) => {
+                  // Sequenced on purpose: firing both without awaiting races
+                  // two separate mutations against the same row, and assign
+                  // completing first would have restore's patch overwrite it.
+                  await onRestoreSource(src._id);
+                  await onAssignSource(src._id, orgId);
                 }}
               />
             ))}
@@ -946,17 +1624,24 @@ function SourcesTab({
         />
         {organizations.length > 0 && (
           <div className="mt-4 grid gap-2">
-            {organizations.map((org) => (
-              <OrgRow
-                key={org._id}
-                org={org}
-                sourceCount={
-                  listservs.filter((s) => s.organizationId === org._id).length
-                }
-                onUpdate={(payload) => onUpdateOrg(org._id, payload)}
-                onGenerateUploadUrl={onGenerateUploadUrl}
-              />
-            ))}
+            {organizations.map((org) => {
+              const orgListservs = listservs.filter(
+                (s) => s.organizationId === org._id,
+              );
+              return (
+                <OrgRow
+                  key={org._id}
+                  org={org}
+                  sourceCount={orgListservs.length}
+                  listservRows={orgListservs}
+                  onUpdate={(payload) => onUpdateOrg(org._id, payload)}
+                  onGenerateUploadUrl={onGenerateUploadUrl}
+                  onUpdateListservEmail={onUpdateListservEmail}
+                  onSetPrimaryListserv={onSetPrimaryListserv}
+                  onFoldListservs={onFoldListservs}
+                />
+              );
+            })}
           </div>
         )}
         <CreateOrgForm className="mt-4" onCreate={onCreateOrg} />
@@ -970,13 +1655,13 @@ function AssignedSourceRow({
   orgName,
   organizations,
   onReassign,
-  onIgnore,
+  onReject,
 }: {
   source: Listserv;
   orgName: string;
   organizations: Organization[];
   onReassign: (orgId: Id<"orgs">) => void;
-  onIgnore: () => void;
+  onReject: () => void;
 }) {
   const [reassigning, setReassigning] = useState(false);
   return (
@@ -994,8 +1679,8 @@ function AssignedSourceRow({
         {!reassigning && (
           <div className="flex shrink-0 gap-2">
             <Btn onClick={() => setReassigning(true)}>Reassign</Btn>
-            <Btn danger onClick={onIgnore}>
-              Ignore
+            <Btn danger onClick={onReject}>
+              Reject
             </Btn>
           </div>
         )}
@@ -1029,16 +1714,16 @@ function AssignedSourceRow({
   );
 }
 
-function IgnoredSourceRow({
+function RejectedSourceRow({
   source,
   organizations,
-  onReactivate,
+  onRestore,
   onAssign,
 }: {
   source: Listserv;
   organizations: Organization[];
-  onReactivate: () => void;
-  onAssign: (orgId: Id<"orgs">) => void;
+  onRestore: () => void;
+  onAssign: (orgId: Id<"orgs">) => void | Promise<void>;
 }) {
   const [assigning, setAssigning] = useState(false);
   return (
@@ -1054,8 +1739,8 @@ function IgnoredSourceRow({
         </div>
         {!assigning && (
           <div className="flex shrink-0 gap-2">
-            <Btn primary onClick={onReactivate}>
-              Reactivate
+            <Btn primary onClick={onRestore}>
+              Restore
             </Btn>
             <Btn onClick={() => setAssigning(true)}>Assign org</Btn>
           </div>
@@ -1230,13 +1915,27 @@ function ImageUploadField({
 function OrgRow({
   org,
   sourceCount,
+  listservRows,
   onUpdate,
   onGenerateUploadUrl,
+  onUpdateListservEmail,
+  onSetPrimaryListserv,
+  onFoldListservs,
 }: {
   org: Organization;
   sourceCount: number;
+  listservRows: Listserv[];
   onUpdate: (payload: OrgUpdatePayload) => void;
   onGenerateUploadUrl: () => Promise<string>;
+  onUpdateListservEmail: (
+    listservId: Id<"listservs">,
+    listEmail: string,
+  ) => void;
+  onSetPrimaryListserv: (listservId: Id<"listservs">) => void;
+  onFoldListservs: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -1383,7 +2082,7 @@ function OrgRow({
 
       {/* Expanded edit form */}
       {editing && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-50)] px-4 py-4">
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           <div className="grid gap-4">
             {/* Row 1: Name + Type + Status */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
@@ -1405,7 +2104,7 @@ function OrgRow({
                 <div className="w-36">
                   <select
                     value={type}
-                    onChange={(e) => setType(e.target.value as OrgType)}
+                    onChange={(e) => setType(parseOrgType(e.target.value))}
                     className={input()}
                   >
                     {ORG_TYPES.map((t) => (
@@ -1542,9 +2241,278 @@ function OrgRow({
               </Btn>
               <Btn onClick={cancel}>Cancel</Btn>
             </div>
+
+            {/* Row 8: Listservs — edit address, pick primary, merge duplicates */}
+            <div className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-4">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Listservs ({listservRows.length})
+              </label>
+              <OrgListservsPanel
+                rows={listservRows}
+                onUpdateEmail={onUpdateListservEmail}
+                onSetPrimary={onSetPrimaryListserv}
+                onFold={onFoldListservs}
+              />
+            </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Every `listservs` row for one org, editable in place. This is the "merge
+ * and fix an address" surface the plan describes — Entrepreneurship's 61
+ * mis-attributed personal-sender rows are cleaned up through exactly this
+ * panel, not through the Convex data browser.
+ */
+function OrgListservsPanel({
+  rows,
+  onUpdateEmail,
+  onSetPrimary,
+  onFold,
+}: {
+  rows: Listserv[];
+  onUpdateEmail: (listservId: Id<"listservs">, listEmail: string) => void;
+  onSetPrimary: (listservId: Id<"listservs">) => void;
+  onFold: (
+    targetId: Id<"listservs">,
+    duplicateIds: Id<"listservs">[],
+  ) => Promise<void>;
+}) {
+  const [emailDrafts, setEmailDrafts] = useState<
+    Record<string, string | undefined>
+  >({});
+  const [pendingFold, setPendingFold] = useState<{
+    target: Listserv;
+    duplicates: Listserv[];
+  } | null>(null);
+  const [folding, setFolding] = useState(false);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+        No listserv rows yet.
+      </p>
+    );
+  }
+
+  // The row that should survive a "fold everything" pass: the explicit primary
+  // if one is set, otherwise the only row whose address is a real Cornell list.
+  const foldTarget =
+    rows.find((row) => row.isPrimary === true) ??
+    rows.find((row) => isCornellListAddress(row.listEmail));
+
+  async function runFold() {
+    if (!pendingFold) return;
+    setFolding(true);
+    try {
+      await onFold(
+        pendingFold.target._id,
+        pendingFold.duplicates.map((row) => row._id),
+      );
+      setPendingFold(null);
+    } finally {
+      setFolding(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-2">
+      {pendingFold && (
+        <FoldConfirmDialog
+          target={pendingFold.target}
+          duplicates={pendingFold.duplicates}
+          busy={folding}
+          onCancel={() => setPendingFold(null)}
+          onConfirm={runFold}
+        />
+      )}
+
+      {rows.length > 1 && foldTarget && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-neutral-100)] px-3 py-2">
+          <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+            {rows.length} rows for this org. Folding keeps{" "}
+            <strong>{foldTarget.listEmail}</strong> and moves every other row's
+            mail onto it.
+          </span>
+          <Btn
+            onClick={() =>
+              setPendingFold({
+                target: foldTarget,
+                duplicates: rows.filter((row) => row._id !== foldTarget._id),
+              })
+            }
+          >
+            Fold {rows.length - 1} row{rows.length - 1 !== 1 ? "s" : ""} into
+            primary
+          </Btn>
+        </div>
+      )}
+
+      {rows.map((row) => {
+        const draft = emailDrafts[row._id] ?? row.listEmail;
+        const dirty = draft.trim().toLowerCase() !== row.listEmail;
+        const otherRows = rows.filter((other) => other._id !== row._id);
+
+        return (
+          <div
+            key={row._id}
+            className="grid gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:grid-cols-[auto_1fr_auto] sm:items-center"
+          >
+            <label className="flex items-center gap-1.5 text-[length:var(--font-size-body3)] whitespace-nowrap select-none">
+              <input
+                type="radio"
+                checked={row.isPrimary === true}
+                onChange={() => onSetPrimary(row._id)}
+                className="size-4 accent-[var(--color-primary-700)]"
+              />
+              Primary
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={draft}
+                onChange={(e) =>
+                  setEmailDrafts((d) => ({ ...d, [row._id]: e.target.value }))
+                }
+                className={input()}
+              />
+              <Btn
+                disabled={!dirty}
+                onClick={() => onUpdateEmail(row._id, draft)}
+              >
+                Save
+              </Btn>
+              <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {row.senderEmails.length} sender
+                {row.senderEmails.length !== 1 ? "s" : ""} · {row.status}
+              </span>
+            </div>
+            {otherRows.length > 0 ? (
+              <MergeControl
+                row={row}
+                otherRows={otherRows}
+                onRequestFold={(target) =>
+                  setPendingFold({ target, duplicates: [row] })
+                }
+              />
+            ) : (
+              <span />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The fold half of one row: pick the row that should survive, fold this one into it. */
+function MergeControl({
+  row,
+  otherRows,
+  onRequestFold,
+}: {
+  row: Listserv;
+  otherRows: Listserv[];
+  onRequestFold: (target: Listserv) => void;
+}) {
+  const [targetId, setTargetId] = useState<string>("");
+  // Resolved against the real rows rather than cast from the select value, so
+  // the id reaching the mutation is one we know exists.
+  const target = otherRows.find((other) => other._id === targetId);
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        aria-label={`Fold ${row.listEmail} into another row`}
+        className={input()}
+      >
+        <option value="">Fold into…</option>
+        {otherRows.map((other) => (
+          <option key={other._id} value={other._id}>
+            {other.listEmail}
+          </option>
+        ))}
+      </select>
+      <Btn
+        danger
+        disabled={!target}
+        onClick={() => {
+          if (!target) return;
+          onRequestFold(target);
+          setTargetId("");
+        }}
+      >
+        Fold
+      </Btn>
+    </div>
+  );
+}
+
+/**
+ * Names both sides of a fold before it runs. Deleting a listserv row is
+ * irreversible, and the direction is not obvious from a dropdown labelled
+ * "Fold into…", so the row that disappears is spelled out explicitly.
+ */
+function FoldConfirmDialog({
+  target,
+  duplicates,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  target: Listserv;
+  duplicates: Listserv[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const senderCount = new Set(
+    duplicates.flatMap((row) => [row.listEmail, ...row.senderEmails]),
+  ).size;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fold-confirm-title"
+    >
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h3
+          id="fold-confirm-title"
+          className="text-[length:var(--font-size-body1)] font-semibold"
+        >
+          Fold {duplicates.length} row{duplicates.length !== 1 ? "s" : ""} into{" "}
+          {target.listEmail}?
+        </h3>
+        <p className="mt-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          Every message, join attempt, and event from{" "}
+          {duplicates.length === 1 ? "this row" : "these rows"} moves onto{" "}
+          <strong>{target.listEmail}</strong>, and {senderCount} sender address
+          {senderCount !== 1 ? "es" : ""} are kept on it. The folded row
+          {duplicates.length !== 1 ? "s are" : " is"} then deleted. This cannot
+          be undone.
+        </p>
+        <ul className="mt-3 grid gap-1 text-[length:var(--font-size-body3)]">
+          {duplicates.map((row) => (
+            <li key={row._id} className="truncate">
+              {row.listEmail}
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Btn onClick={onCancel} disabled={busy}>
+            Cancel
+          </Btn>
+          <Btn danger onClick={onConfirm} disabled={busy}>
+            {busy ? "Folding…" : "Fold and delete"}
+          </Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1559,10 +2527,11 @@ function UnassignedRow({
   suggestedOrgType,
   messageCount,
   sampleSubjects,
+  groupedSenders,
   organizations,
   onAssignToOrg,
   onCreateAndAssign,
-  onIgnore,
+  onReject,
 }: {
   email: string;
   name: string;
@@ -1571,14 +2540,20 @@ function UnassignedRow({
   suggestedOrgType: OrgType;
   messageCount: number | undefined;
   sampleSubjects: string[];
+  /**
+   * The individual From addresses behind a list group. Empty for direct mail,
+   * where the group identity already *is* the sender.
+   */
+  groupedSenders: string[];
   organizations: Organization[];
   onAssignToOrg: (orgId: Id<"orgs">) => void;
   onCreateAndAssign: (name: string, type: OrgType) => void;
-  onIgnore: () => void;
+  onReject: () => void;
 }) {
   const [mode, setMode] = useState<"idle" | "assign" | "create">("idle");
   const [orgName, setOrgName] = useState(suggestedOrgName);
   const [orgType, setOrgType] = useState<OrgType>(suggestedOrgType);
+  const origin = candidateOrigin(email);
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -1587,6 +2562,9 @@ function UnassignedRow({
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate font-semibold">{name}</span>
             {isNewSource && <Tag variant="amber">new source</Tag>}
+            {/* Only when the platform is recognisable: tagging every personal
+                address "other" would be noise, not information. */}
+            {origin !== "other" && <Tag>{CANDIDATE_ORIGIN_LABELS[origin]}</Tag>}
           </div>
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {email}
@@ -1594,6 +2572,21 @@ function UnassignedRow({
               ` · ${messageCount} message${messageCount !== 1 ? "s" : ""}`}
             {sampleSubjects[0] && ` · "${sampleSubjects[0]}"`}
           </div>
+          {groupedSenders.length > 1 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                {groupedSenders.length} people posted to this list — all become
+                one source
+              </summary>
+              <div className="mt-1 flex flex-col gap-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {groupedSenders.map((sender) => (
+                  <span key={sender} className="truncate">
+                    {sender}
+                  </span>
+                ))}
+              </div>
+            </details>
+          )}
           {mode === "idle" && (
             <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               Suggested org: <strong>{suggestedOrgName}</strong>
@@ -1606,8 +2599,8 @@ function UnassignedRow({
               Create org
             </Btn>
             <Btn onClick={() => setMode("assign")}>Assign existing</Btn>
-            <Btn danger onClick={onIgnore}>
-              Ignore
+            <Btn danger onClick={onReject}>
+              Reject
             </Btn>
           </div>
         )}
@@ -1658,7 +2651,7 @@ function UnassignedRow({
             Type
             <select
               value={orgType}
-              onChange={(e) => setOrgType(e.target.value as OrgType)}
+              onChange={(e) => setOrgType(parseOrgType(e.target.value))}
               className={input()}
             >
               {ORG_TYPES.map((t) => (
@@ -1685,11 +2678,13 @@ function CandidateRow({
   onReject,
 }: {
   candidate: Candidate;
-  onApprove: (name?: string) => void;
+  /** Omitted for rows that can't be joined, e.g. retired Lyris lists. */
+  onApprove?: (name?: string) => void;
   onReject: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [name, setName] = useState(candidate.displayName ?? "");
+  const origin = candidateOrigin(candidate.email);
 
   if (candidate.status !== "candidate") return null;
 
@@ -1705,7 +2700,13 @@ function CandidateRow({
               {candidate.email}
             </span>
             <ConfidenceBadge value={candidate.confidence} />
+            <Tag>{CANDIDATE_ORIGIN_LABELS[origin]}</Tag>
           </div>
+          {candidate.directoryDescription && (
+            <p className="mt-0.5 text-[length:var(--font-size-body3)]">
+              {candidate.directoryDescription}
+            </p>
+          )}
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {candidate.matchedReasons.join(" · ")}
             {candidate.popularity !== undefined &&
@@ -1713,10 +2714,14 @@ function CandidateRow({
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Btn primary onClick={() => onApprove(name || undefined)}>
-            Approve
-          </Btn>
-          <Btn onClick={() => setExpanded(!expanded)}>Rename</Btn>
+          {onApprove && (
+            <>
+              <Btn primary onClick={() => onApprove(name || undefined)}>
+                Approve
+              </Btn>
+              <Btn onClick={() => setExpanded(!expanded)}>Rename</Btn>
+            </>
+          )}
           <Btn danger onClick={onReject}>
             Reject
           </Btn>
@@ -1768,7 +2773,7 @@ function CreateOrgForm({
         Type
         <select
           value={type}
-          onChange={(e) => setType(e.target.value as OrgType)}
+          onChange={(e) => setType(parseOrgType(e.target.value))}
           className={input()}
         >
           {ORG_TYPES.map((t) => (
@@ -1793,7 +2798,11 @@ function JoinTab({
   onPrepareJoin,
   onDraftChange,
   onSendJoin,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
+  onJoinStatusChange,
+  onArchiveChange,
   onStrategyChange,
 }: {
   listservs: Listserv[];
@@ -1803,15 +2812,40 @@ function JoinTab({
   onPrepareJoin: (draft: JoinDraft) => void;
   onDraftChange: (draft: JoinDraft | null) => void;
   onSendJoin: (e: FormEvent) => void;
+  onSubscribe: (id: Id<"listservs">) => Promise<void>;
+  onRedetect: (id: Id<"listservs">) => void;
   onStatusChange: (id: Id<"listservs">, status: Listserv["status"]) => void;
+  onJoinStatusChange: (
+    id: Id<"listservs">,
+    joinStatus: Listserv["joinStatus"],
+  ) => void;
+  onArchiveChange: (id: Id<"listservs">, archived: boolean) => void;
   onStrategyChange: (id: Id<"listservs">, strategy: JoinStrategy) => void;
 }) {
   const isJoined = (l: Listserv) =>
     l.joinStatus === "joined" ||
     clearedConfirmations.some((c) => confirmationMatchesListserv(c, l));
 
-  const pending = listservs.filter((l) => !isJoined(l));
-  const joined = listservs.filter(isJoined);
+  // Four buckets, so the working list only holds rows that still need a
+  // decision. `paused` is what Reject leaves behind on the Sources tab, and
+  // without excluding it every rejected source reappeared here as something to
+  // join.
+  const archived = listservs.filter((l) => l.joinArchivedAt !== undefined);
+  const live = listservs.filter(
+    (l) => l.joinArchivedAt === undefined && l.status !== "paused",
+  );
+  const joined = live.filter(isJoined);
+  const failed = live.filter((l) => !isJoined(l) && l.joinStatus === "failed");
+  const pending = live.filter((l) => !isJoined(l) && l.joinStatus !== "failed");
+
+  // joinAttempts arrives newest-first from the dashboard query, so grouping
+  // preserves that order and `[0]` is each row's most recent attempt.
+  const attemptsByListserv = new Map<Id<"listservs">, JoinAttempt[]>();
+  for (const attempt of joinAttempts) {
+    const existing = attemptsByListserv.get(attempt.listservId);
+    if (existing) existing.push(attempt);
+    else attemptsByListserv.set(attempt.listservId, [attempt]);
+  }
 
   return (
     <div className="grid gap-6">
@@ -1868,15 +2902,20 @@ function JoinTab({
         <Card>
           <CardHeader
             title={`${pending.length} source${pending.length !== 1 ? "s" : ""} to join`}
-            subtitle="Prepare a join email, review it, then send."
+            subtitle="Simplelists lists are joined through their web form, then confirmed from the reply. Other sources use an email request."
           />
           <div className="mt-4 grid gap-3">
             {pending.map((l) => (
               <JoinRow
                 key={l._id}
                 listserv={l}
+                attempts={attemptsByListserv.get(l._id) ?? []}
                 onPrepare={() => onPrepareJoin(defaultJoinDraft(l))}
+                onSubscribe={() => onSubscribe(l._id)}
+                onRedetect={() => onRedetect(l._id)}
                 onStatusChange={(status) => onStatusChange(l._id, status)}
+                onJoinStatusChange={(s) => onJoinStatusChange(l._id, s)}
+                onArchive={() => onArchiveChange(l._id, true)}
                 onStrategyChange={(s) => onStrategyChange(l._id, s)}
               />
             ))}
@@ -1884,24 +2923,82 @@ function JoinTab({
         </Card>
       )}
 
+      {/* Failed joins — collapsed, since each one needs a deliberate retry */}
+      {failed.length > 0 && (
+        <details className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-red-800 select-none">
+            {failed.length} failed join{failed.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {failed.map((l) => (
+              <JoinArchiveRow
+                key={l._id}
+                listserv={l}
+                actionLabel="Retry"
+                onAction={() => onJoinStatusChange(l._id, "not_started")}
+                onArchive={() => onArchiveChange(l._id, true)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Archived — dead or spam lists, kept for reference */}
+      {archived.length > 0 && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-text-muted)] select-none">
+            {archived.length} archived source{archived.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {archived.map((l) => (
+              <JoinArchiveRow
+                key={l._id}
+                listserv={l}
+                actionLabel="Restore"
+                onAction={() => onArchiveChange(l._id, false)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
       {/* Recent attempts */}
       {joinAttempts.length > 0 && (
         <Card>
-          <CardHeader title="Recent join emails sent" />
+          <CardHeader title="Recent join attempts" />
           <div className="mt-3 grid gap-2">
             {joinAttempts.map((a) => (
               <div
                 key={a._id}
-                className="flex items-center gap-3 rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                className="rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[length:var(--font-size-body2)]"
               >
-                <StatusDot status={a.status === "sent" ? "green" : "red"} />
-                <span className="truncate font-semibold">{a.recipient}</span>
-                <span className="truncate text-[color:var(--color-text-muted)]">
-                  {a.subject}
-                </span>
-                <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
-                  {fmtDate(a.createdAt)}
-                </span>
+                <div className="flex items-center gap-3">
+                  <StatusDot status={a.status === "sent" ? "green" : "red"} />
+                  <Tag>{a.method === "web_form" ? "web form" : "email"}</Tag>
+                  <span className="truncate font-semibold">
+                    {a.recipient ?? a.subscribeUrl ?? "—"}
+                  </span>
+                  <span className="truncate text-[color:var(--color-text-muted)]">
+                    {a.error ??
+                      a.subject ??
+                      (a.httpStatus ? `HTTP ${a.httpStatus}` : "")}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[color:var(--color-text-muted)]">
+                    {fmtDate(a.createdAt)}
+                  </span>
+                </div>
+                {/* What the subscribe form replied. A web-form attempt can
+                    only be diagnosed from the page the server returned. */}
+                {a.responseExcerpt && (
+                  <details className="mt-1 pl-6">
+                    <summary className="cursor-pointer text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)] select-none">
+                      Server response
+                    </summary>
+                    <p className="mt-1 text-[length:var(--font-size-body3)] break-words text-[color:var(--color-text-muted)]">
+                      {a.responseExcerpt}
+                    </p>
+                  </details>
+                )}
               </div>
             ))}
           </div>
@@ -1941,17 +3038,33 @@ function JoinTab({
 
 function JoinRow({
   listserv,
+  attempts,
   onPrepare,
+  onSubscribe,
+  onRedetect,
   onStatusChange,
+  onJoinStatusChange,
+  onArchive,
   onStrategyChange,
 }: {
   listserv: Listserv;
+  attempts: JoinAttempt[];
   onPrepare: () => void;
+  onSubscribe: () => Promise<void>;
+  onRedetect: () => void;
   onStatusChange: (status: Listserv["status"]) => void;
+  onJoinStatusChange: (joinStatus: Listserv["joinStatus"]) => void;
+  onArchive: () => void;
   onStrategyChange: (s: JoinStrategy) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const join = getEffectiveJoin(listserv);
+  const [subscribing, setSubscribing] = useState(false);
+  const join = storedJoin(listserv);
+  // Simplelists is web-interface only, so this row gets a subscribe button
+  // rather than the email composer. The composer stays for every other
+  // strategy, including the retired Lyris rows that still carry a recipient.
+  const isSimplelists = join.joinStrategy === "cornell_simplelists";
+  const latestAttempt = attempts[0];
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -1967,13 +3080,70 @@ function JoinRow({
           <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
             {join.joinStrategy.replace(/_/g, " ")} · {join.joinConfidence}%
             confident
-            {join.joinRecipient && ` · sends to ${join.joinRecipient}`}
+            {isSimplelists
+              ? " · web subscribe form"
+              : join.joinRecipient && ` · sends to ${join.joinRecipient}`}
           </div>
+          {isSimplelists && listserv.subscribeUrl && (
+            <a
+              href={listserv.subscribeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-[length:var(--font-size-body3)] font-semibold break-all text-[color:var(--color-primary-700)] underline"
+            >
+              {listserv.subscribeUrl}
+            </a>
+          )}
+          {latestAttempt && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[length:var(--font-size-body3)]">
+              <StatusDot
+                status={latestAttempt.status === "sent" ? "green" : "red"}
+              />
+              <span className="text-[color:var(--color-text-muted)]">
+                last{" "}
+                {latestAttempt.method === "web_form" ? "subscribe" : "email"}{" "}
+                {latestAttempt.status}
+                {latestAttempt.httpStatus
+                  ? ` (HTTP ${latestAttempt.httpStatus})`
+                  : ""}{" "}
+                · {fmtDate(latestAttempt.createdAt)}
+              </span>
+              {latestAttempt.error && (
+                <span className="text-red-600">{latestAttempt.error}</span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Btn primary onClick={onPrepare}>
-            Prepare email
-          </Btn>
+          {isSimplelists ? (
+            <Btn
+              primary
+              // Disabled while in flight: each click POSTs the real
+              // lists.cornell.edu form, so a double-click sends two genuine
+              // subscription requests and produces two confirmation emails.
+              disabled={!listserv.subscribeUrl || subscribing}
+              onClick={async () => {
+                setSubscribing(true);
+                try {
+                  await onSubscribe();
+                } finally {
+                  setSubscribing(false);
+                }
+              }}
+            >
+              {subscribing ? "Submitting…" : "Submit subscribe form"}
+            </Btn>
+          ) : (
+            <Btn primary onClick={onPrepare}>
+              Prepare email
+            </Btn>
+          )}
+          {/* Subscribing happens outside this app — on the Simplelists web
+              form, or in a reply an admin reads in their own inbox — so the
+              outcome has to be recordable by hand. */}
+          <Btn onClick={() => onJoinStatusChange("joined")}>Mark joined</Btn>
+          <Btn onClick={() => onJoinStatusChange("failed")}>Mark failed</Btn>
+          <Btn onClick={onArchive}>Archive</Btn>
           <Btn onClick={() => setOpen(!open)}>Settings</Btn>
         </div>
       </div>
@@ -1983,10 +3153,12 @@ function JoinRow({
             Join method
             <select
               value={join.joinStrategy}
-              onChange={(e) => onStrategyChange(e.target.value as JoinStrategy)}
+              onChange={(e) =>
+                onStrategyChange(parseJoinStrategy(e.target.value))
+              }
               className={input()}
             >
-              {JOIN_STRATEGIES.map((s) => (
+              {joinStrategyOptions(listserv.joinStrategy).map((s) => (
                 <option key={s} value={s}>
                   {s.replace(/_/g, " ")}
                 </option>
@@ -1998,7 +3170,7 @@ function JoinRow({
             <select
               value={listserv.status}
               onChange={(e) =>
-                onStatusChange(e.target.value as Listserv["status"])
+                onStatusChange(parseListservStatus(e.target.value))
               }
               className={input()}
             >
@@ -2009,13 +3181,57 @@ function JoinRow({
               ))}
             </select>
           </label>
+          <div className="col-span-2 flex flex-wrap items-center gap-3">
+            <Btn onClick={onRedetect}>Re-detect</Btn>
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Re-runs detection on this row&apos;s addresses. Nothing
+              reclassifies on its own.
+            </span>
+          </div>
           {join.joinInstructions && (
             <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
               {join.joinInstructions}
             </p>
           )}
+          {join.ownerRecipient && (
+            <p className="col-span-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              List manager: {join.ownerRecipient}
+            </p>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Compact row for the Join tab's collapsed sections. These rows are being
+ * looked at, not worked on, so they carry one primary action plus an optional
+ * Archive rather than the full `JoinRow` control set.
+ */
+function JoinArchiveRow({
+  listserv,
+  actionLabel,
+  onAction,
+  onArchive,
+}: {
+  listserv: Listserv;
+  actionLabel: string;
+  onAction: () => void;
+  onArchive?: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[length:var(--font-size-body2)]">
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-semibold">{listserv.name}</div>
+        <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+          {listserv.listEmail} · {listserv.joinStatus ?? "not started"}
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <Btn onClick={onAction}>{actionLabel}</Btn>
+        {onArchive && <Btn onClick={onArchive}>Archive</Btn>}
+      </div>
     </div>
   );
 }
@@ -2133,7 +3349,7 @@ function IngestTab({
           <div className="flex items-center justify-between">
             <CardHeader
               title="Confirmation queue"
-              subtitle="Lyris emails asking you to confirm a subscription."
+              subtitle="Emails asking you to confirm a list subscription."
             />
             {pending.length > 0 && (
               <Tag variant="amber">{pending.length} pending</Tag>
@@ -2233,17 +3449,27 @@ function ConfirmationCard({
             ` · cleared ${fmtDate(confirmation.clearedAt)}`}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {confirmation.link && (
-          <a
-            href={confirmation.link}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
-          >
-            Open confirm link
-          </a>
-        )}
+      <div className="flex flex-wrap items-center gap-2">
+        {confirmation.link &&
+          (confirmation.linkTrusted ? (
+            <a
+              href={confirmation.link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-lg bg-[var(--color-primary-700)] px-3 py-1.5 text-[length:var(--font-size-body2)] font-semibold text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              Open confirm link
+            </a>
+          ) : (
+            <div className="min-w-0">
+              <div className="text-[length:var(--font-size-body3)] font-semibold text-red-600">
+                Sender not authenticated — link not clickable
+              </div>
+              <div className="truncate font-mono text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {confirmation.link}
+              </div>
+            </div>
+          ))}
         {!cleared && onClear && (
           <Btn onClick={() => onClear(confirmation.id)}>Clear</Btn>
         )}
@@ -2252,32 +3478,693 @@ function ConfirmationCard({
   );
 }
 
+// ─── Orgs tab ─────────────────────────────────────────────────────────────────
+
+const MISSING_FIELD_LABELS: Record<string, string> = {
+  description: "Description",
+  loopSummary: "Loop summary",
+  websiteUrl: "Website",
+  email: "Email",
+  avatar: "Avatar",
+  cover: "Cover",
+  tags: "Tags",
+};
+
+type OrgDraftTextField =
+  | "description"
+  | "loopSummary"
+  | "tags"
+  | "websiteUrl"
+  | "email";
+
+type OrgDraftTextValues = Record<OrgDraftTextField, string>;
+
+const ORG_DRAFT_TEXT_FIELDS: Array<{
+  key: OrgDraftTextField;
+  label: string;
+  multiline: boolean;
+}> = [
+  { key: "description", label: "Description", multiline: true },
+  { key: "loopSummary", label: "Loop summary", multiline: true },
+  { key: "tags", label: "Tags (comma-separated)", multiline: false },
+  { key: "websiteUrl", label: "Website", multiline: false },
+  { key: "email", label: "Contact email", multiline: false },
+];
+
+function fillsBlank(proposed: string, current: string) {
+  return proposed.trim() !== "" && current.trim() === "";
+}
+
+function splitTags(raw: string) {
+  return raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function OrgsTab({
+  rows,
+  onGenerate,
+  onPublish,
+  onDiscard,
+}: {
+  rows: OrgProfileRow[] | undefined;
+  onGenerate: (orgId: Id<"orgs">) => Promise<boolean>;
+  onPublish: (
+    draftId: Id<"orgProfileDrafts">,
+    fields: OrgDraftFields,
+  ) => Promise<boolean>;
+  onDiscard: (draftId: Id<"orgProfileDrafts">) => Promise<boolean>;
+}) {
+  const [filter, setFilter] = useState<"missing" | "all">("missing");
+  const [search, setSearch] = useState("");
+  const [generating, setGenerating] = useState<Set<Id<"orgs">>>(new Set());
+
+  async function generate(orgId: Id<"orgs">) {
+    setGenerating((prev) => new Set(prev).add(orgId));
+    try {
+      await onGenerate(orgId);
+    } finally {
+      setGenerating((prev) => {
+        const next = new Set(prev);
+        next.delete(orgId);
+        return next;
+      });
+    }
+  }
+
+  const allRows = rows ?? [];
+  const query = search.trim().toLowerCase();
+  const visible = allRows
+    .filter(
+      (row) =>
+        filter === "all" || row.missingFields.length > 0 || row.draft !== null,
+    )
+    .filter((row) => !query || row.org.name.toLowerCase().includes(query))
+    .sort(
+      (a, b) =>
+        Number(b.draft !== null) - Number(a.draft !== null) ||
+        b.missingFields.length - a.missingFields.length ||
+        a.org.name.localeCompare(b.org.name),
+    );
+  const incompleteCount = allRows.filter(
+    (row) => row.missingFields.length > 0,
+  ).length;
+  const draftCount = allRows.filter((row) => row.draft !== null).length;
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-[length:var(--font-size-sub2)] font-semibold">
+              Org Profiles
+            </h2>
+            <p className="mt-0.5 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+              Generates description, Loop summary, tags, contact details, and
+              image suggestions from each org&apos;s emails. Results are drafts
+              — you choose which fields to publish.
+            </p>
+          </div>
+          <div className="flex gap-4 text-center">
+            <div>
+              <div className="text-[length:var(--font-size-sub2)] font-bold text-amber-700">
+                {incompleteCount}
+              </div>
+              <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                incomplete
+              </div>
+            </div>
+            <div>
+              <div className="text-[length:var(--font-size-sub2)] font-bold">
+                {draftCount}
+              </div>
+              <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                drafts
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="flex gap-1">
+            <Btn
+              primary={filter === "missing"}
+              onClick={() => setFilter("missing")}
+            >
+              Missing fields
+            </Btn>
+            <Btn primary={filter === "all"} onClick={() => setFilter("all")}>
+              All
+            </Btn>
+          </div>
+          <div className="min-w-0 flex-1">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search orgs…"
+              aria-label="Search orgs"
+              className={input()}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {rows === undefined ? (
+        <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+          Loading…
+        </p>
+      ) : visible.length === 0 ? (
+        <Card>
+          <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            {filter === "missing" && !query
+              ? "Every org profile is complete."
+              : "No orgs match."}
+          </p>
+        </Card>
+      ) : (
+        <div className="grid gap-3">
+          {visible.map((row) => (
+            <OrgProfileCard
+              key={row.org._id}
+              row={row}
+              generating={generating.has(row.org._id)}
+              onGenerate={() => generate(row.org._id)}
+              onPublish={onPublish}
+              onDiscard={onDiscard}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrgProfileCard({
+  row,
+  generating,
+  onGenerate,
+  onPublish,
+  onDiscard,
+}: {
+  row: OrgProfileRow;
+  generating: boolean;
+  onGenerate: () => void;
+  onPublish: (
+    draftId: Id<"orgProfileDrafts">,
+    fields: OrgDraftFields,
+  ) => Promise<boolean>;
+  onDiscard: (draftId: Id<"orgProfileDrafts">) => Promise<boolean>;
+}) {
+  const { org, draft } = row;
+  const noSources = row.sourceCount === 0;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {org.avatarUrl ? (
+            <img
+              src={org.avatarUrl}
+              alt={org.name}
+              className="size-10 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-neutral-200)] font-semibold text-[color:var(--color-neutral-700)]">
+              {org.name.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="font-semibold">{org.name}</div>
+            <div className="mt-0.5 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              {row.sourceCount} source{row.sourceCount === 1 ? "" : "s"} · last
+              mail {fmtDate(row.lastReceivedAt)}
+            </div>
+            {row.missingFields.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {row.missingFields.map((field) => (
+                  <Tag key={field} variant="amber">
+                    {MISSING_FIELD_LABELS[field] ?? field}
+                  </Tag>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Btn
+            primary={!draft}
+            onClick={onGenerate}
+            disabled={generating || noSources}
+          >
+            {generating
+              ? "Generating…"
+              : draft
+                ? "Reparse"
+                : "Generate profile"}
+          </Btn>
+          {noSources && (
+            <span className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+              Assign a source first
+            </span>
+          )}
+        </div>
+      </div>
+
+      {draft && (
+        <OrgDraftReview
+          // Remount on a new or reparsed draft so local edits reset to it.
+          key={`${draft._id}:${draft.updatedAt}`}
+          org={org}
+          draft={draft}
+          generating={generating}
+          onReparse={onGenerate}
+          onPublish={(fields) => onPublish(draft._id, fields)}
+          onDiscard={() => onDiscard(draft._id)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function OrgDraftReview({
+  org,
+  draft,
+  generating,
+  onReparse,
+  onPublish,
+  onDiscard,
+}: {
+  org: Organization;
+  draft: OrgProfileDraft;
+  generating: boolean;
+  onReparse: () => void;
+  onPublish: (fields: OrgDraftFields) => Promise<boolean>;
+  onDiscard: () => Promise<boolean>;
+}) {
+  const current: OrgDraftTextValues = {
+    description: org.description,
+    loopSummary: org.loopSummary ?? "",
+    tags: org.tags.join(", "),
+    websiteUrl: org.websiteUrl ?? "",
+    email: org.email ?? "",
+  };
+  const proposed: OrgDraftTextValues = {
+    description: draft.description ?? "",
+    loopSummary: draft.loopSummary ?? "",
+    tags: draft.tags.join(", "),
+    websiteUrl: draft.websiteUrl ?? "",
+    email: draft.email ?? "",
+  };
+
+  const [values, setValues] = useState<OrgDraftTextValues>(proposed);
+  // Default to filling blanks only, so hand-curated fields aren't overwritten
+  // unless the admin opts in.
+  const [applied, setApplied] = useState<Record<OrgDraftTextField, boolean>>(
+    () => ({
+      description: fillsBlank(proposed.description, current.description),
+      loopSummary: fillsBlank(proposed.loopSummary, current.loopSummary),
+      tags: fillsBlank(proposed.tags, current.tags),
+      websiteUrl: fillsBlank(proposed.websiteUrl, current.websiteUrl),
+      email: fillsBlank(proposed.email, current.email),
+    }),
+  );
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(
+    org.avatarUrl ? null : (draft.suggestedAvatarUrl ?? null),
+  );
+  const [coverUrl, setCoverUrl] = useState<string | null>(
+    org.coverImageUrl ? null : (draft.suggestedCoverUrl ?? null),
+  );
+  const [busy, setBusy] = useState(false);
+
+  function isApplied(key: OrgDraftTextField) {
+    return applied[key] && values[key].trim() !== "";
+  }
+
+  const anySelected =
+    ORG_DRAFT_TEXT_FIELDS.some((field) => isApplied(field.key)) ||
+    avatarUrl !== null ||
+    coverUrl !== null;
+
+  async function publish() {
+    const fields: OrgDraftFields = {};
+    if (isApplied("description")) fields.description = values.description;
+    if (isApplied("loopSummary")) fields.loopSummary = values.loopSummary;
+    if (isApplied("tags")) fields.tags = splitTags(values.tags);
+    if (isApplied("websiteUrl")) fields.websiteUrl = values.websiteUrl.trim();
+    if (isApplied("email")) fields.email = values.email.trim();
+    if (avatarUrl) fields.avatarImageUrl = avatarUrl;
+    if (coverUrl) fields.coverImageUrl = coverUrl;
+    setBusy(true);
+    try {
+      await onPublish(fields);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discard() {
+    setBusy(true);
+    try {
+      await onDiscard();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 grid gap-4 border-t border-[var(--color-border)] pt-4">
+      <div className="flex flex-wrap items-center gap-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+        <ConfidenceBadge value={Math.round(draft.confidence * 100)} />
+        <span>
+          Based on {draft.messagesUsed} email
+          {draft.messagesUsed === 1 ? "" : "s"} · generated{" "}
+          {fmtDate(draft.updatedAt)} · {draft.model}
+        </span>
+      </div>
+
+      {draft.warnings.length > 0 && (
+        <ul className="grid gap-1 text-[length:var(--font-size-body3)] text-amber-700">
+          {draft.warnings.map((warning) => (
+            <li key={warning}>⚠ {warning}</li>
+          ))}
+        </ul>
+      )}
+
+      <div className="grid gap-3">
+        {ORG_DRAFT_TEXT_FIELDS.map((field) => {
+          const empty = values[field.key].trim() === "";
+          return (
+            <div
+              key={field.key}
+              className="grid gap-2 md:grid-cols-[auto_1fr_1fr] md:items-start"
+            >
+              <label className="flex items-center gap-2 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)] md:w-44">
+                <input
+                  type="checkbox"
+                  checked={applied[field.key] && !empty}
+                  disabled={empty}
+                  onChange={(e) =>
+                    setApplied((prev) => ({
+                      ...prev,
+                      [field.key]: e.target.checked,
+                    }))
+                  }
+                  className="size-4 shrink-0"
+                />
+                {field.label}
+              </label>
+              <div className="text-[length:var(--font-size-body2)] break-words text-[color:var(--color-text-muted)]">
+                <span className="text-[length:var(--font-size-body3)] font-semibold tracking-widest uppercase">
+                  Current
+                </span>
+                <p className="mt-1">{current[field.key] || "—"}</p>
+              </div>
+              <div>
+                <span className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                  Proposed
+                </span>
+                {field.multiline ? (
+                  <textarea
+                    value={values[field.key]}
+                    onChange={(e) =>
+                      setValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                    rows={3}
+                    className={`mt-1 ${input()}`}
+                  />
+                ) : (
+                  <input
+                    value={values[field.key]}
+                    onChange={(e) =>
+                      setValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                    className={`mt-1 ${input()}`}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-6">
+          <CurrentImage label="Current avatar" url={org.avatarUrl} round />
+          <CurrentImage label="Current cover" url={org.coverImageUrl} />
+        </div>
+        {draft.imageCandidates.length === 0 ? (
+          <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-muted)]">
+            No images found in this org&apos;s emails — upload manually in
+            Sources → Organizations.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {draft.imageCandidates.map((candidate) => {
+              const isAvatar = avatarUrl === candidate.url;
+              const isCover = coverUrl === candidate.url;
+              return (
+                <div
+                  key={candidate.url}
+                  className={[
+                    "flex flex-col gap-2 rounded-xl border p-2",
+                    isAvatar || isCover
+                      ? "border-[var(--color-primary-700)]"
+                      : "border-[var(--color-border)]",
+                  ].join(" ")}
+                >
+                  <img
+                    src={candidate.url}
+                    alt={candidate.alt ?? "Image from email"}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="h-20 w-full rounded-lg bg-[var(--color-neutral-100)] object-contain"
+                  />
+                  <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    ×{candidate.occurrences}
+                    {candidate.alt ? ` · ${candidate.alt}` : ""}
+                  </div>
+                  <div className="flex gap-1">
+                    <ImagePickButton
+                      selected={isAvatar}
+                      onClick={() =>
+                        setAvatarUrl(isAvatar ? null : candidate.url)
+                      }
+                    >
+                      Avatar
+                    </ImagePickButton>
+                    <ImagePickButton
+                      selected={isCover}
+                      onClick={() =>
+                        setCoverUrl(isCover ? null : candidate.url)
+                      }
+                    >
+                      Cover
+                    </ImagePickButton>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Btn primary onClick={publish} disabled={busy || !anySelected}>
+          {busy ? "Working…" : "Publish selected"}
+        </Btn>
+        <Btn onClick={onReparse} disabled={busy || generating}>
+          {generating ? "Generating…" : "Reparse"}
+        </Btn>
+        <Btn danger onClick={discard} disabled={busy}>
+          Discard
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+function CurrentImage({
+  label,
+  url,
+  round,
+}: {
+  label: string;
+  url: string | undefined;
+  round?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+      <span className="font-semibold tracking-widest uppercase">{label}</span>
+      {url ? (
+        <img
+          src={url}
+          alt={label}
+          className={
+            round
+              ? "size-10 rounded-full object-cover"
+              : "h-10 w-24 rounded-lg object-cover"
+          }
+        />
+      ) : (
+        <span>None</span>
+      )}
+    </div>
+  );
+}
+
+function ImagePickButton({
+  selected,
+  onClick,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={[
+        "flex-1 rounded-md px-2 py-1 text-[length:var(--font-size-body3)] font-semibold transition-colors",
+        selected
+          ? "bg-[var(--color-primary-700)] text-white"
+          : "border border-[var(--color-border)] text-[color:var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ─── Publish tab ──────────────────────────────────────────────────────────────
 
 function PublishTab({
   runs,
   drafts,
+  draftsStatus,
+  onLoadMoreDrafts,
+  draftCounts,
   failedMessages,
+  ignoredMessages,
+  readyMessages,
+  readyStatus,
+  onLoadMoreReady,
   readyCount,
+  readyScanTruncated,
   needsAssignment,
   onRunParse,
   onPublish,
+  onPublishMany,
   onHide,
+  onHidePast,
+  onEdit,
   onReparse,
+  onRequeue,
   onGoToSources,
 }: {
   runs: ParseRun[];
   drafts: EventDoc[];
+  draftsStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreDrafts: () => void;
+  // Counted server-side over every draft, not just the loaded pages, so the
+  // header shows the real backlog.
+  draftCounts: { total: number; past: number; truncated: boolean };
   failedMessages: ParseMessage[];
+  ignoredMessages: ParseMessage[];
+  readyMessages: ParseMessage[];
+  readyStatus: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
+  onLoadMoreReady: () => void;
+  // Counted server-side over the same bounded window as `needsAssignment`, so
+  // the header and the Run parser button reflect the real backlog rather than
+  // whatever survived the first page of `readyMessages`.
   readyCount: number;
+  readyScanTruncated: boolean;
   needsAssignment: number;
   onRunParse: () => void;
   onPublish: (id: Id<"events">) => void;
+  onPublishMany: (ids: Id<"events">[]) => void;
   onHide: (id: Id<"events">) => void;
+  onHidePast: () => void;
+  onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
   onReparse: (id: Id<"listservMessages">) => void;
+  onRequeue: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
 }) {
+  // How many rows the expandable list has actually loaded, which is not the
+  // same thing as how many are ready: `listReadyMessages` filters each page
+  // after paginating it.
+  const loadedReadyCount = readyMessages.length;
   const blocked = readyCount === 0 && needsAssignment > 0;
+  const [showReady, setShowReady] = useState(false);
+  const [selected, setSelected] = useState<Set<Id<"events">>>(new Set());
+
+  // Because of that filtering a page can come back empty while assigned
+  // messages sit further down the index, so the expanded list keeps pulling
+  // pages until one of them yields something rather than showing "nothing
+  // waiting" until an admin clicks Load more. The status leaves "CanLoadMore"
+  // while a page is in flight and ends at "Exhausted", so this terminates on
+  // its own.
+  useEffect(() => {
+    if (!showReady) return;
+    if (loadedReadyCount > 0) return;
+    if (readyStatus !== "CanLoadMore") return;
+    onLoadMoreReady();
+  }, [showReady, loadedReadyCount, readyStatus, onLoadMoreReady]);
+
+  // Every date on a draft already behind "now" means the event (or deadline)
+  // it describes already happened — reviewing it just adds backlog noise, so
+  // it moves to its own collapsed section instead of the main review list.
+  // "now" is captured once per mount rather than read directly during render
+  // (an impure call React's rules reject there) — this only needs to be
+  // fresh enough that a draft ages into this bucket the next time the admin
+  // page is opened, not live within an open session.
+  const [now] = useState(() => Date.now());
+  const currentDrafts = drafts.filter(
+    (draft) => !isPastEvent(draft.dates, now),
+  );
+  const pastDrafts = drafts.filter((draft) => isPastEvent(draft.dates, now));
+  const currentDraftTotal = draftCounts.total - draftCounts.past;
+  const plus = draftCounts.truncated ? "+" : "";
+
+  // Publishing a draft removes it from `drafts`, as does hiding one, so the
+  // stored set is narrowed to what is still on screen rather than pruned in an
+  // effect: otherwise the "N selected" count keeps counting rows nobody can
+  // see any more.
+  const liveSelected = new Set(
+    currentDrafts.map((draft) => draft._id).filter((id) => selected.has(id)),
+  );
+
+  const cleanDrafts = currentDrafts.filter(
+    (draft) => (draft.parseWarnings ?? []).length === 0,
+  );
+
+  function toggleSelected(id: Id<"events">) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function publishSelected() {
+    const ids = Array.from(liveSelected);
+    if (ids.length === 0) return;
+    onPublishMany(ids);
+    setSelected(new Set());
+  }
 
   return (
     <div className="grid gap-6">
@@ -2296,9 +4183,13 @@ function PublishTab({
           <div className="flex items-center gap-4">
             <div className="flex gap-4 text-center">
               <div>
-                <div className="text-[length:var(--font-size-sub2)] font-bold">
+                <button
+                  onClick={() => setShowReady((v) => !v)}
+                  className="text-[length:var(--font-size-sub2)] font-bold underline-offset-2 hover:underline"
+                >
                   {readyCount}
-                </div>
+                  {readyScanTruncated ? "+" : ""}
+                </button>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   ready
                 </div>
@@ -2313,7 +4204,8 @@ function PublishTab({
               </div>
               <div>
                 <div className="text-[length:var(--font-size-sub2)] font-bold">
-                  {drafts.length}
+                  {currentDraftTotal}
+                  {plus}
                 </div>
                 <div className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
                   drafts
@@ -2371,26 +4263,123 @@ function PublishTab({
             ))}
           </div>
         )}
+        {showReady && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+            {loadedReadyCount === 0 ? (
+              <p className="text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
+                {readyStatus === "Exhausted"
+                  ? "No assigned messages waiting to be parsed."
+                  : "Loading…"}
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {readyMessages.map((m) => (
+                  <div
+                    key={m._id}
+                    className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold">
+                        {m.subject || "(no subject)"}
+                      </div>
+                      <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                        {m.senderEmail}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {readyStatus === "CanLoadMore" && (
+              <Btn onClick={onLoadMoreReady} className="mt-3">
+                Load more
+              </Btn>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Drafts */}
       <Card>
-        <CardHeader
-          title={`${drafts.length} draft${drafts.length !== 1 ? "s" : ""}`}
-          subtitle="Review each item before publishing. Published items appear in the user-facing feed."
-        />
-        {drafts.length === 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardHeader
+            title={`${currentDraftTotal}${plus} draft${currentDraftTotal !== 1 ? "s" : ""}`}
+            subtitle={
+              currentDrafts.length < currentDraftTotal
+                ? `Showing the newest ${currentDrafts.length}. Review each item before publishing. Published items appear in the user-facing feed.`
+                : "Review each item before publishing. Published items appear in the user-facing feed."
+            }
+          />
+          {currentDrafts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-[length:var(--font-size-body2)] font-semibold">
+                <input
+                  type="checkbox"
+                  checked={liveSelected.size === currentDrafts.length}
+                  // Indeterminate can't be expressed in JSX, so it is set on
+                  // the node: without it a partial selection renders as
+                  // unchecked and reads as "nothing selected".
+                  ref={(node) => {
+                    if (node) {
+                      node.indeterminate =
+                        liveSelected.size > 0 &&
+                        liveSelected.size < currentDrafts.length;
+                    }
+                  }}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked
+                        ? new Set(currentDrafts.map((draft) => draft._id))
+                        : new Set(),
+                    )
+                  }
+                  className="size-4"
+                />
+                {currentDrafts.length < currentDraftTotal
+                  ? `Select all loaded (${currentDrafts.length})`
+                  : `Select all (${currentDrafts.length})`}
+              </label>
+              {cleanDrafts.length > 0 &&
+                cleanDrafts.length < currentDrafts.length && (
+                  <Btn
+                    onClick={() =>
+                      setSelected(
+                        new Set(cleanDrafts.map((draft) => draft._id)),
+                      )
+                    }
+                  >
+                    Select {cleanDrafts.length} without warnings
+                  </Btn>
+                )}
+              {liveSelected.size > 0 && (
+                <Btn primary onClick={publishSelected}>
+                  Publish {liveSelected.size} selected
+                </Btn>
+              )}
+            </div>
+          )}
+        </div>
+        {currentDrafts.length === 0 ? (
           <p className="mt-3 text-[length:var(--font-size-body2)] text-[color:var(--color-text-secondary)]">
-            No drafts. Run the parser after assigning sources to organizations.
+            {draftsStatus === "LoadingFirstPage"
+              ? "Loading…"
+              : currentDraftTotal > 0
+                ? "Everything loaded so far is past-dated. Load more to reach current drafts."
+                : "No drafts. Run the parser after assigning sources to organizations."}
           </p>
         ) : (
           <div className="mt-4 grid gap-3">
-            {drafts.map((event) => (
+            {currentDrafts.map((event) => (
               <DraftCard
                 key={event._id}
                 event={event}
+                selection={{
+                  selected: liveSelected.has(event._id),
+                  onToggle: () => toggleSelected(event._id),
+                }}
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
                 onReparse={
                   event.sourceMessageId
                     ? () => onReparse(event.sourceMessageId!)
@@ -2400,14 +4389,63 @@ function PublishTab({
             ))}
           </div>
         )}
+        {(draftsStatus === "CanLoadMore" || draftsStatus === "LoadingMore") && (
+          <Btn
+            onClick={onLoadMoreDrafts}
+            disabled={draftsStatus === "LoadingMore"}
+            className="mt-3"
+          >
+            {draftsStatus === "LoadingMore" ? "Loading…" : "Load more drafts"}
+          </Btn>
+        )}
       </Card>
+
+      {/* Past drafts — every date already behind "now", so reviewing them is
+          pure backlog. Kept reachable rather than auto-hidden, since an admin
+          may still want to publish a recap or correct the date instead. The
+          count and "Hide all" cover every draft; the rows are only the loaded
+          ones. */}
+      {(draftCounts.past > 0 || pastDrafts.length > 0) && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
+            Past drafts ({Math.max(draftCounts.past, pastDrafts.length)}
+            {plus}) — already happened
+          </summary>
+          <div className="mt-3 grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-secondary)]">
+                Every date on these is already in the past. If the parser got a
+                date wrong, edit or reparse the draft and it moves back up;
+                otherwise hide them all at once, including any not loaded below.
+              </p>
+              <Btn onClick={onHidePast} className="shrink-0">
+                Hide all past
+              </Btn>
+            </div>
+            {pastDrafts.map((event) => (
+              <DraftCard
+                key={event._id}
+                event={event}
+                onPublish={() => onPublish(event._id)}
+                onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
+                onReparse={
+                  event.sourceMessageId
+                    ? () => onReparse(event.sourceMessageId!)
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* Failed */}
       {failedMessages.length > 0 && (
         <Card>
           <CardHeader
             title={`${failedMessages.length} failed message${failedMessages.length !== 1 ? "s" : ""}`}
-            subtitle="Parser errors."
+            subtitle="Parser errors. Retry reparses immediately; Requeue hands it back to the normal queue."
           />
           <div className="mt-3 grid gap-2">
             {failedMessages.map((m) => (
@@ -2424,6 +4462,35 @@ function PublishTab({
                   </div>
                 </div>
                 <Btn onClick={() => onReparse(m._id)}>Retry</Btn>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Ignored */}
+      {ignoredMessages.length > 0 && (
+        <Card>
+          <CardHeader
+            title={`${ignoredMessages.length} ignored message${ignoredMessages.length !== 1 ? "s" : ""}`}
+            subtitle="Skipped as administrative, confirmation, or irrelevant content. Requeue to have the parser look again."
+          />
+          <div className="mt-3 grid gap-2">
+            {ignoredMessages.map((m) => (
+              <div
+                key={m._id}
+                className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">
+                    {m.subject || "(no subject)"}
+                  </div>
+                  <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {m.parseError ?? m.senderEmail}
+                  </div>
+                </div>
+                <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
               </div>
             ))}
           </div>
@@ -2435,54 +4502,393 @@ function PublishTab({
 
 function DraftCard({
   event,
+  selection,
   onPublish,
   onHide,
+  onEdit,
   onReparse,
 }: {
   event: EventDoc;
+  /** Omitted where bulk publish doesn't apply, which also drops the checkbox. */
+  selection?: { selected: boolean; onToggle: () => void };
   onPublish: () => void;
   onHide: () => void;
+  onEdit: (patch: DraftEditPatch) => void;
   onReparse?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const hasWarnings = (event.parseWarnings ?? []).length > 0;
+
+  // Edit-mode draft state — populated fresh from `event` each time editing starts,
+  // so a stale in-progress edit never survives past a Cancel or a Reparse.
+  const [title, setTitle] = useState(event.title);
+  const [description, setDescription] = useState(event.description);
+  const [aiDescription, setAiDescription] = useState(event.aiDescription);
+  const [eventType, setEventType] = useState<EventTypeValue>(event.eventType);
+  const [dates, setDates] = useState<EventDoc["dates"]>(event.dates);
+  const [locDisplayText, setLocDisplayText] = useState(
+    event.location?.displayText ?? "",
+  );
+  const [locAddress, setLocAddress] = useState(event.location?.address ?? "");
+  const [locBuildingCode, setLocBuildingCode] = useState(
+    event.location?.buildingCode ?? "",
+  );
+  const [locIsVirtual, setLocIsVirtual] = useState(
+    event.location?.isVirtual ?? false,
+  );
+  const [links, setLinks] = useState<EventDoc["links"]>(event.links);
+  const [tags, setTags] = useState<CanonicalTag[]>(() =>
+    normalizeTags(event.tags),
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  function startEdit() {
+    setTitle(event.title);
+    setDescription(event.description);
+    setAiDescription(event.aiDescription);
+    setEventType(event.eventType);
+    setDates(event.dates);
+    setLocDisplayText(event.location?.displayText ?? "");
+    setLocAddress(event.location?.address ?? "");
+    setLocBuildingCode(event.location?.buildingCode ?? "");
+    setLocIsVirtual(event.location?.isVirtual ?? false);
+    setLinks(event.links);
+    setTags(normalizeTags(event.tags));
+    setSaveError(null);
+    setEditing(true);
+  }
+
+  function save() {
+    // Drop blank rows (e.g. an unfilled "Add link") and reject anything left
+    // that isn't a well-formed http(s) URL. The mutation re-validates this
+    // server-side too — this is just for immediate feedback.
+    const cleanedLinks = links
+      .map((link) => ({
+        ...link,
+        url: link.url.trim(),
+        label: link.label?.trim() || undefined,
+      }))
+      .filter((link) => link.url.length > 0);
+    const invalidLink = cleanedLinks.find((link) => !isValidHttpUrl(link.url));
+    if (invalidLink) {
+      setSaveError(`"${invalidLink.url}" isn't a valid http(s) URL.`);
+      return;
+    }
+
+    const location = locDisplayText.trim()
+      ? {
+          displayText: locDisplayText.trim(),
+          address: locAddress.trim() || undefined,
+          isVirtual: locIsVirtual,
+          buildingCode: locBuildingCode.trim() || undefined,
+        }
+      : undefined;
+    setSaveError(null);
+    onEdit({
+      title: title.trim() || event.title,
+      description,
+      aiDescription,
+      eventType,
+      dates,
+      location,
+      links: cleanedLinks,
+      tags,
+    });
+    setEditing(false);
+  }
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+        {!editing && selection && (
+          <input
+            type="checkbox"
+            checked={selection.selected}
+            onChange={selection.onToggle}
+            className="mt-1 size-4 shrink-0"
+            aria-label={`Select ${event.title} for bulk publish`}
+          />
+        )}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{event.title}</span>
-            <Tag>{event.eventType}</Tag>
-            <ConfidenceBadge value={event.parseConfidence ?? 0} />
-          </div>
-          <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
-            {event.aiDescription || event.description}
-          </p>
-          <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
-            {event.listserv}
-            {event.dates &&
-              event.dates.length > 0 &&
-              ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
-            {hasWarnings && (
-              <span className="ml-2 text-amber-700">
-                ⚠ {(event.parseWarnings ?? []).join("; ")}
-              </span>
-            )}
-          </div>
+          {editing ? (
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={input()}
+              autoFocus
+            />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{event.title}</span>
+                <Tag>{event.eventType}</Tag>
+                <ConfidenceBadge
+                  value={event.parseConfidence ?? 0}
+                  title={confidenceExplanation(event)}
+                />
+              </div>
+              <p className="mt-1 line-clamp-2 text-[length:var(--font-size-body2)] text-[color:var(--color-neutral-700)]">
+                {event.aiDescription || event.description}
+              </p>
+              <div className="mt-1 text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                {event.listserv}
+                {event.dates &&
+                  event.dates.length > 0 &&
+                  ` · ${new Date(event.dates[0].timestamp).toLocaleDateString()}`}
+                {hasWarnings && (
+                  <span className="ml-2 text-amber-700">
+                    ⚠ {(event.parseWarnings ?? []).join("; ")}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Btn primary onClick={onPublish}>
-            Publish
-          </Btn>
-          <Btn onClick={onHide}>Hide</Btn>
-          {onReparse && <Btn onClick={onReparse}>Reparse</Btn>}
-          <Btn onClick={() => setExpanded(!expanded)}>
-            {expanded ? "Less" : "More"}
-          </Btn>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {editing ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <Btn primary onClick={save}>
+                  Save
+                </Btn>
+                <Btn onClick={() => setEditing(false)}>Cancel</Btn>
+              </div>
+              {saveError && (
+                <span className="text-[length:var(--font-size-body3)] text-red-600">
+                  {saveError}
+                </span>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Btn primary onClick={onPublish}>
+                Publish
+              </Btn>
+              <Btn onClick={onHide}>Hide</Btn>
+              {onReparse && <Btn onClick={onReparse}>Reparse</Btn>}
+              <Btn onClick={startEdit}>Edit</Btn>
+              <Btn onClick={() => setExpanded(!expanded)}>
+                {expanded ? "Less" : "More"}
+              </Btn>
+            </div>
+          )}
         </div>
       </div>
-      {expanded && (
+
+      {editing && (
+        <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
+          {/* Description + AI summary */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Description
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className={`${input()} resize-y`}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                AI summary{" "}
+                <span className="font-normal normal-case">(shown in feed)</span>
+              </label>
+              <textarea
+                value={aiDescription}
+                onChange={(e) => setAiDescription(e.target.value)}
+                rows={3}
+                className={`${input()} resize-y`}
+              />
+            </div>
+          </div>
+
+          {/* Event type */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              Event type
+            </label>
+            <div className="w-44">
+              <select
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as EventTypeValue)}
+                className={input()}
+              >
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Dates — edit existing timestamps only; adding/removing dates isn't
+              supported here since the dominant parser error is a wrong
+              timestamp, not a missing date. */}
+          {dates.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Dates
+              </label>
+              <div className="grid gap-2">
+                {dates.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Tag>{d.type}</Tag>
+                    <input
+                      type="datetime-local"
+                      value={toDatetimeLocalValue(d.timestamp)}
+                      onChange={(e) => {
+                        const timestamp = fromDatetimeLocalValue(
+                          e.target.value,
+                        );
+                        if (timestamp === null) return;
+                        setDates((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i ? { ...entry, timestamp } : entry,
+                          ),
+                        );
+                      }}
+                      className={input()}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Location */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field
+              label="Location"
+              value={locDisplayText}
+              onChange={setLocDisplayText}
+            />
+            <Field
+              label="Address"
+              value={locAddress}
+              onChange={setLocAddress}
+            />
+            <Field
+              label="Building code"
+              value={locBuildingCode}
+              onChange={setLocBuildingCode}
+            />
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-[length:var(--font-size-body2)] select-none">
+            <input
+              type="checkbox"
+              checked={locIsVirtual}
+              onChange={(e) => setLocIsVirtual(e.target.checked)}
+              className="size-4 accent-[var(--color-primary-700)]"
+            />
+            Virtual event
+          </label>
+
+          {/* Links */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              Links
+            </label>
+            <div className="grid gap-2">
+              {links.map((link, i) => {
+                const trimmedUrl = link.url.trim();
+                const urlInvalid =
+                  trimmedUrl.length > 0 && !isValidHttpUrl(trimmedUrl);
+                return (
+                  <div
+                    key={i}
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_auto_1fr_auto] sm:items-end"
+                  >
+                    <input
+                      value={link.url}
+                      placeholder="https://…"
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? { ...entry, url: e.target.value }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={`${input()} ${urlInvalid ? "border-red-400 focus:border-red-500" : ""}`}
+                    />
+                    <select
+                      value={link.type}
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? {
+                                  ...entry,
+                                  type: e.target.value as LinkTypeValue,
+                                }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={input()}
+                    >
+                      {LINK_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={link.label ?? ""}
+                      placeholder="Label (optional)"
+                      onChange={(e) =>
+                        setLinks((prev) =>
+                          prev.map((entry, idx) =>
+                            idx === i
+                              ? { ...entry, label: e.target.value || undefined }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className={input()}
+                    />
+                    <Btn
+                      danger
+                      onClick={() =>
+                        setLinks((prev) => prev.filter((_, idx) => idx !== i))
+                      }
+                    >
+                      Remove
+                    </Btn>
+                    {urlInvalid && (
+                      <p className="text-[length:var(--font-size-body3)] text-red-600 sm:col-span-4">
+                        Not a valid http(s) URL.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div>
+              <Btn
+                onClick={() =>
+                  setLinks((prev) => [
+                    ...prev,
+                    { url: "", type: "info" as LinkTypeValue },
+                  ])
+                }
+              >
+                Add link
+              </Btn>
+            </div>
+          </div>
+
+          {/* Tags — restricted to the canonical set so feed filters match */}
+          <TagPicker selected={tags} onChange={setTags} />
+        </div>
+      )}
+
+      {!editing && expanded && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-3 text-[length:var(--font-size-body2)]">
           <p className="text-[color:var(--color-neutral-700)]">
             {event.description}
@@ -2570,6 +4976,53 @@ function Btn({
   );
 }
 
+/**
+ * Toggle chips for every canonical tag. Adding a tag rebuilds the selection
+ * from CANONICAL_TAGS rather than appending, so the saved order always stays
+ * canonical regardless of click order.
+ */
+function TagPicker({
+  selected,
+  onChange,
+}: {
+  selected: CanonicalTag[];
+  onChange: (next: CanonicalTag[]) => void;
+}) {
+  return (
+    <fieldset className="flex flex-col gap-1 text-[length:var(--font-size-body2)] font-semibold text-[color:var(--color-neutral-700)]">
+      <legend className="mb-1">Tags</legend>
+      <div className="flex flex-wrap gap-1.5">
+        {CANONICAL_TAGS.map((tag) => {
+          const active = selected.includes(tag);
+          return (
+            <button
+              key={tag}
+              type="button"
+              aria-pressed={active}
+              onClick={() =>
+                onChange(
+                  active
+                    ? selected.filter((t) => t !== tag)
+                    : CANONICAL_TAGS.filter(
+                        (t) => t === tag || selected.includes(t),
+                      ),
+                )
+              }
+              className={`rounded-md border px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold transition-colors ${
+                active
+                  ? "border-[var(--color-primary-700)] bg-[var(--color-primary-700)] text-[color:var(--color-text-inverse)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-neutral-100)]"
+              }`}
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
 function Field({
   label,
   value,
@@ -2594,6 +5047,32 @@ function Field({
         className={input()}
       />
     </label>
+  );
+}
+
+/** Toggle for a single-choice filter, styled like `TagPicker`'s buttons. */
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-md border px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold transition-colors ${
+        active
+          ? "border-[var(--color-primary-700)] bg-[var(--color-primary-700)] text-[color:var(--color-text-inverse)]"
+          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-neutral-100)]"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -2648,7 +5127,22 @@ function GmailDot({ status }: { status: GmailStatus | undefined }) {
   );
 }
 
-function ConfidenceBadge({ value }: { value: number }) {
+/**
+ * Why a draft scored what it did, for the badge's tooltip. Recomputed from the
+ * same module the parser scores with rather than stored, so the explanation
+ * can never drift from the number next to it.
+ */
+function confidenceExplanation(event: EventDoc) {
+  const { reasons } = scoreParseQuality(
+    event,
+    normalizeModelConfidence(event.parseConfidence ?? 0),
+  );
+  return reasons.length === 0
+    ? "Nothing missing from this item."
+    : `Missing: ${reasons.join(", ")}`;
+}
+
+function ConfidenceBadge({ value, title }: { value: number; title?: string }) {
   const color =
     value >= 80
       ? "bg-green-100 text-green-800"
@@ -2657,6 +5151,7 @@ function ConfidenceBadge({ value }: { value: number }) {
         : "bg-red-100 text-red-700";
   return (
     <span
+      title={title}
       className={`inline-flex rounded-md px-2 py-0.5 text-[length:var(--font-size-body3)] font-semibold ${color}`}
     >
       {value}%
@@ -2686,6 +5181,32 @@ function fmtDate(timestamp: number | undefined) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(timestamp));
+}
+
+/** Format a timestamp for an `<input type="datetime-local">` value, in local time. */
+function toDatetimeLocalValue(timestamp: number) {
+  const d = new Date(timestamp);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Parse an `<input type="datetime-local">` value back into a timestamp, in local time. */
+function fromDatetimeLocalValue(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** True if `value` is a well-formed http(s) URL. Mirrors the server-side check
+ * in `convex/parser.ts`'s `updateDraftEvent` — this copy is just for
+ * immediate UI feedback; the mutation re-validates regardless. */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function getConvexSiteUrl() {
@@ -2718,61 +5239,23 @@ function suggestFromEmail(email: string) {
 }
 
 function defaultJoinDraft(listserv: Listserv): JoinDraft {
-  const join = getEffectiveJoin(listserv);
   return {
     listservId: listserv._id,
-    recipient: join.joinRecipient ?? listserv.listEmail,
-    subject: join.joinSubject ?? `Request to join ${listserv.name}`,
-    body: join.joinBody ?? "",
+    recipient: listserv.joinRecipient ?? listserv.listEmail,
+    subject: listserv.joinSubject ?? `Request to join ${listserv.name}`,
+    body: listserv.joinBody ?? "",
   };
 }
 
-function getEffectiveJoin(listserv: Listserv): EffectiveJoin {
-  const auto = detectJoinDefaults(listserv);
-  if (
-    auto.joinStrategy === "cornell_lyris" &&
-    (!listserv.joinStrategy || listserv.joinStrategy === "direct_org_email")
-  ) {
-    return auto;
-  }
-  return {
-    joinStrategy: listserv.joinStrategy ?? auto.joinStrategy,
-    joinRecipient: listserv.joinRecipient ?? auto.joinRecipient,
-    ownerRecipient: listserv.ownerRecipient ?? auto.ownerRecipient,
-    joinSubject: listserv.joinSubject ?? auto.joinSubject,
-    joinBody: listserv.joinBody ?? auto.joinBody,
-    joinInstructions: listserv.joinInstructions ?? auto.joinInstructions,
-    joinConfidence: listserv.joinConfidence ?? auto.joinConfidence,
-    joinDetectionReasons:
-      listserv.joinDetectionReasons ?? auto.joinDetectionReasons,
-  };
-}
-
-function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
-  const email = listserv.listEmail.toLowerCase();
-  const [local = "", domain = ""] = email.split("@");
-  if (
-    ["list.cornell.edu", "mm.list.cornell.edu", "list.cs.cornell.edu"].includes(
-      domain,
-    )
-  ) {
-    const listName = local.replace(/^owner-/, "");
-    return {
-      joinStrategy: "cornell_lyris",
-      joinRecipient: `${listName}-request@cornell.edu`,
-      ownerRecipient: `owner-${listName}@cornell.edu`,
-      joinSubject: "join",
-      joinBody: "",
-      joinInstructions:
-        "Cornell list: send subject 'join' to listname-request@cornell.edu with blank body.",
-      joinConfidence: listName.endsWith("-l") ? 95 : 75,
-      joinDetectionReasons: [
-        listName.endsWith("-l")
-          ? "Cornell Lyris list address"
-          : "Cornell list domain",
-      ],
-    };
-  }
+/**
+ * The stored detection, with display-only fallbacks.
+ *
+ * Detection itself lives entirely in `listservAdmin.detectJoinStrategy`. This
+ * used to re-derive a strategy client-side and could therefore *display* one
+ * that differed from what was saved; now it only reads what the backend wrote,
+ * so "Re-detect" is the single way a row's strategy changes.
+ */
+function storedJoin(listserv: Listserv): EffectiveJoin {
   return {
     joinStrategy: listserv.joinStrategy ?? "unknown",
     joinRecipient: listserv.joinRecipient,
@@ -2781,7 +5264,7 @@ function detectJoinDefaults(listserv: Listserv): EffectiveJoin {
     joinBody: listserv.joinBody,
     joinInstructions:
       listserv.joinInstructions ??
-      "No reliable join flow detected. Review manually.",
+      "No join flow detected yet — run Re-detect, or review manually.",
     joinConfidence: listserv.joinConfidence ?? 20,
     joinDetectionReasons: listserv.joinDetectionReasons ?? ["not detected"],
   };
@@ -2791,9 +5274,6 @@ function toConfirmationItem(
   mail: ConfirmationMessage,
   listservById: Map<Id<"listservs">, Listserv>,
 ): ConfirmationItem | null {
-  const link =
-    extractConfirmationLink(mail.bodyText) ??
-    extractConfirmationLink(mail.bodyHtml);
   return {
     id: mail._id,
     listservName: mail.listservId
@@ -2803,7 +5283,11 @@ function toConfirmationItem(
     sender: mail.senderEmail || mail.sender,
     receivedAt: mail.receivedAt,
     clearedAt: mail.confirmationClearedAt,
-    link,
+    link: confirmationLinkFrom(mail) ?? undefined,
+    // `From` is trivially spoofable and the confirm link is a one-click
+    // account action, so it is only made clickable for a message the mail
+    // server actually authenticated.
+    linkTrusted: mail.senderAuthenticated,
   };
 }
 
@@ -2824,14 +5308,12 @@ function confirmationMatchesListserv(
   );
 }
 
-function extractConfirmationLink(value: string) {
-  const match = value.match(
-    /https:\/\/www\.list\.cornell\.edu\/c\?[^\s"'<>]+/i,
-  );
-  return match?.[0].replace(/&amp;/g, "&");
-}
-
 function inferListNameFromMessage(mail: ConfirmationMessage) {
+  // A Simplelists confirmation names its list in the sender address, so prefer
+  // that over guessing at it from the prose.
+  const fromSender = listNameFromConfirmationSender(mail.senderEmail);
+  if (fromSender) return fromSender.toUpperCase();
+
   const match = `${mail.subject}\n${mail.bodyText}`.match(
     /(?:to|the)\s+([a-z0-9._-]+-l)\s+(?:mailing list|list)/i,
   );

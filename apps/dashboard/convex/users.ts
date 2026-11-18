@@ -3,6 +3,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { authedMutation, isCornellEmail } from "./lib/auth";
+import { normalizeTags } from "./lib/tags";
 
 type CurrentUserResult = {
   user: Doc<"users"> | null;
@@ -68,19 +69,18 @@ export const currentUser = query({
 
 export const updateProfile = authedMutation({
   args: {
-    major: v.optional(v.string()),
+    major: v.optional(v.union(v.string(), v.null())),
     gradYear: v.optional(v.string()),
-    minor: v.optional(v.string()),
+    minor: v.optional(v.union(v.string(), v.null())),
     interests: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const existing = await loadProfile(ctx, ctx.user._id);
 
     const nextMajor = args.major !== undefined ? args.major : existing?.major;
-    const nextInterests =
-      args.interests !== undefined
-        ? args.interests
-        : (existing?.interests ?? []);
+    const interests =
+      args.interests !== undefined ? normalizeTags(args.interests) : undefined;
+    const nextInterests = interests ?? existing?.interests ?? [];
 
     const shouldCompleteOnboarding =
       (existing === null || existing.onboardingCompletedAt === undefined) &&
@@ -91,10 +91,10 @@ export const updateProfile = authedMutation({
     if (existing === null) {
       await ctx.db.insert("userProfiles", {
         userId: ctx.user._id,
-        major: args.major,
+        major: args.major ?? undefined,
         gradYear: args.gradYear,
-        minor: args.minor,
-        interests: args.interests ?? [],
+        minor: args.minor ?? undefined,
+        interests: interests ?? [],
         onboardingCompletedAt: shouldCompleteOnboarding
           ? Date.now()
           : undefined,
@@ -103,10 +103,10 @@ export const updateProfile = authedMutation({
     }
 
     const patch: Partial<Doc<"userProfiles">> = {};
-    if (args.major !== undefined) patch.major = args.major;
+    if (args.major !== undefined) patch.major = args.major ?? undefined;
     if (args.gradYear !== undefined) patch.gradYear = args.gradYear;
-    if (args.minor !== undefined) patch.minor = args.minor;
-    if (args.interests !== undefined) patch.interests = args.interests;
+    if (args.minor !== undefined) patch.minor = args.minor ?? undefined;
+    if (interests !== undefined) patch.interests = interests;
     if (shouldCompleteOnboarding) patch.onboardingCompletedAt = Date.now();
 
     await ctx.db.patch(existing._id, patch);
@@ -130,6 +130,25 @@ export const completeOnboarding = authedMutation({
     }
 
     await ctx.db.patch(existing._id, { onboardingCompletedAt: now });
+    return null;
+  },
+});
+
+/** Save the user's feed filter-bar tags (shared by dashboard + extension). */
+export const setFilterTags = authedMutation({
+  args: { tags: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const filterTags = normalizeTags(args.tags);
+    const existing = await loadProfile(ctx, ctx.user._id);
+    if (existing === null) {
+      await ctx.db.insert("userProfiles", {
+        userId: ctx.user._id,
+        interests: [],
+        filterTags,
+      });
+      return null;
+    }
+    await ctx.db.patch(existing._id, { filterTags });
     return null;
   },
 });

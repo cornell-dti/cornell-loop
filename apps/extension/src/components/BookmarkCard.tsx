@@ -135,7 +135,7 @@ export function BookmarkCard({
       {...rest}
     >
       {/* ── Org header ── */}
-      <div className="flex items-center gap-[var(--space-2)] px-[var(--space-1-5)]">
+      <div className="flex min-w-0 items-start gap-[var(--space-2)] px-[var(--space-1-5)]">
         {/* 32 px avatar circle */}
         <div className="relative size-[var(--space-8)] shrink-0 overflow-hidden rounded-full bg-[var(--color-surface-raised)]">
           {orgAvatarUrl ? (
@@ -161,8 +161,7 @@ export function BookmarkCard({
         {/* Org name — DM Sans SemiBold 14 px, Neutral/700 */}
         <span
           className={
-            BODY2_SEMIBOLD +
-            " whitespace-nowrap text-[var(--color-neutral-700)]"
+            BODY2_SEMIBOLD + " min-w-0 text-[var(--color-neutral-700)]"
           }
           style={{ fontVariationSettings: "'opsz' 14" }}
         >

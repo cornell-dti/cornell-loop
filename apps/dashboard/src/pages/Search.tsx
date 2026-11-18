@@ -21,8 +21,8 @@
  * src/styles/tokens.css.
  */
 
-import { useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import {
   SideBar,
@@ -32,28 +32,46 @@ import {
   Tag,
   fallbackColorsForName,
 } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { SideBarItemId, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
 import type { PublicOrg } from "../../convex/orgs";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
+import { track } from "../lib/analytics";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const MIN_QUERY_LENGTH = 2;
 
+/**
+ * The search box rewrites `?q=` on every keystroke, so each prefix would
+ * otherwise count as its own search. Waiting for the query to settle means one
+ * event per thing the user actually looked for.
+ */
+const SEARCH_TRACK_DEBOUNCE_MS = 800;
+
 // ─── Sidebar nav ─────────────────────────────────────────────────────────────
 
 function pathForNavItem(id: SideBarItemId): string {
   return `/${id}`;
+}
+
+function useNavigateToNavItem() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (id: SideBarItemId) => {
+    navigate(pathForNavItem(id), {
+      state: id === "profile" ? { backgroundLocation: location } : undefined,
+    });
+  };
 }
 
 // ─── Shared typography ───────────────────────────────────────────────────────
@@ -164,6 +182,7 @@ function OrgCard({ org, onClick }: OrgCardProps) {
 
 export function Search() {
   const navigate = useNavigate();
+  const onNavigate = useNavigateToNavItem();
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";
   const trimmed = q.trim();
@@ -180,20 +199,95 @@ export function Search() {
     isQueryActive ? { q: trimmed } : "skip",
   );
 
+  // Fire once per settled query, and only after both result sets have landed
+  // so `result_count` reflects what the user actually saw. The raw query text
+  // is deliberately not sent — only its length.
+  const lastTrackedQuery = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isQueryActive) return;
+    if (eventResults === undefined || orgResults === undefined) return;
+    if (lastTrackedQuery.current === trimmed) return;
+    const resultCount = eventResults.length + orgResults.length;
+    const timer = window.setTimeout(() => {
+      lastTrackedQuery.current = trimmed;
+      track("search_performed", {
+        query_length: trimmed.length,
+        result_count: resultCount,
+        surface: "search",
+      });
+    }, SEARCH_TRACK_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [isQueryActive, trimmed, eventResults, orgResults]);
+
   // Right-rail data
   const followedOrgs = useQuery(api.orgs.listFollowed, {});
   const myRsvps = useQuery(api.rsvps.myRsvps, {});
 
-  const eventPosts: DashboardPostProps[] = useMemo(() => {
+  const followedOrgIds = useMemo(
+    () => followedOrgs?.map((org) => org._id),
+    [followedOrgs],
+  );
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "search",
+  );
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("search");
+
+  const eventPosts: FeedPost[] = useMemo(() => {
     if (!eventResults) return [];
-    return eventResults.map(eventToPost);
-  }, [eventResults]);
+    return eventResults.map((hydrated) => {
+      const base = eventToPost(hydrated);
+      const organizations = stampFollowState(
+        base.organizations,
+        hydrated.orgs,
+        followedOrgIdSet,
+        toggleFollow,
+      );
+      const optimisticBookmark = bookmarkOverrides.get(hydrated.event._id);
+      const bookmarked =
+        optimisticBookmark !== undefined
+          ? optimisticBookmark
+          : hydrated.isBookmarked;
+      const orgIds = hydrated.orgs.map((org) => org._id);
+      return {
+        ...base,
+        organizations,
+        bookmarked,
+        eventId: hydrated.event._id,
+        orgIds,
+        onBookmark: () =>
+          toggleBookmark(hydrated.event._id, bookmarked, orgIds),
+        onRsvp: () => handleRsvp(hydrated.event._id, orgIds),
+      };
+    });
+  }, [
+    eventResults,
+    followedOrgIdSet,
+    toggleFollow,
+    bookmarkOverrides,
+    toggleBookmark,
+    handleRsvp,
+  ]);
 
   const clubs: Club[] = useMemo(
     () => orgsToClubs(followedOrgs),
     [followedOrgs],
   );
   const rsvpGroups = useMemo(() => rsvpsToRsvpGroups(myRsvps), [myRsvps]);
+
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
 
   const handleQueryChange = (next: string) => {
     const nextParams = new URLSearchParams(params);
@@ -237,7 +331,7 @@ export function Search() {
     >
       {/* ── Left sidebar ── */}
       <div className="h-full shrink-0 overflow-y-auto">
-        <SideBar onNavigate={(id) => navigate(pathForNavItem(id))} />
+        <SideBar onNavigate={onNavigate} />
       </div>
 
       {/* ── Main column ── */}
@@ -333,11 +427,14 @@ export function Search() {
             ) : (
               <div className="flex flex-col gap-[var(--space-5)]">
                 {eventPosts.map((post, i) => (
-                  <DashboardPost
+                  <EventImpression
                     key={i}
-                    {...post}
-                    onOrgClick={handleOrgClick}
-                  />
+                    eventId={post.eventId}
+                    orgIds={post.orgIds}
+                    surface="search"
+                  >
+                    <DashboardPost {...post} onOrgClick={handleOrgClick} />
+                  </EventImpression>
                 ))}
               </div>
             )}
@@ -397,6 +494,7 @@ export function Search() {
         rsvpGroups={rsvpGroups}
         clubs={clubs}
         onClubClick={handleClubClick}
+        onToggleFollow={handleClubToggleFollow}
         className="hidden h-full shrink-0 overflow-visible lg:flex"
       />
     </div>

@@ -14,7 +14,7 @@
  *   • Each BookmarkCard wires RSVP / Add to Calendar / bookmark actions.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EventId, EventItem } from "../data/types";
 import { useSearchResults } from "../data/useEvents";
 import {
@@ -25,6 +25,24 @@ import {
 import { buildGCalUrl } from "../utils/calendarUtils";
 import { BookmarkCard } from "./BookmarkCard";
 import { SortByTags } from "./SortByTags";
+import { useFilterTags } from "../data/useFilterTags";
+import type { CanonicalTag } from "@app/convex/lib/tags";
+import { track } from "../analytics";
+import { EventImpression } from "../analytics/EventImpression";
+import {
+  trackBookmarkToggle,
+  trackCalendarAdd,
+  trackFilter,
+  trackLinkClick,
+} from "../analytics/eventTracking";
+
+const SURFACE = "search";
+
+/**
+ * Students type a query a character at a time, so the raw input would send one
+ * event per keystroke. Waiting for a pause means one event per actual search.
+ */
+const SEARCH_TRACK_DEBOUNCE_MS = 800;
 
 // ── Shared typography ──────────────────────────────────────────────────────
 
@@ -45,14 +63,6 @@ const POPULAR_SEARCHES = [
   { rank: "#3", term: "Concert" },
   { rank: "#4", term: "Housing" },
   { rank: "#5", term: "A&S" },
-];
-
-const INITIAL_SORT_TAGS = [
-  "Internships",
-  "Early career",
-  "Tech",
-  "Mentorship",
-  "Just for fun",
 ];
 
 // ── SearchEmptyState ───────────────────────────────────────────────────────
@@ -134,21 +144,39 @@ function SearchResultsState({
 }: SearchResultsStateProps) {
   const results = useSearchResults(query);
 
-  const [availableTags, setAvailableTags] = useState(INITIAL_SORT_TAGS);
+  const { tags: availableTags, addTag, removeTag } = useFilterTags();
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
-  const handleTagToggle = (tag: string) =>
+  // Length only — the query itself is deliberately never sent.
+  const queryLength = query.trim().length;
+  const resultCount = results.length;
+  useEffect(() => {
+    if (queryLength === 0) return;
+    const timer = window.setTimeout(() => {
+      track("search_performed", {
+        query_length: queryLength,
+        result_count: resultCount,
+        surface: SURFACE,
+      });
+    }, SEARCH_TRACK_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [queryLength, resultCount]);
+
+  const handleTagToggle = (tag: string) => {
+    trackFilter(tag, activeTags.includes(tag) ? "deselect" : "select", SURFACE);
     setActiveTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
-
-  const handleTagAdd = (tag: string) => {
-    setAvailableTags((prev) => [...prev, tag]);
-    setActiveTags((prev) => [...prev, tag]);
   };
 
-  const handleTagRemove = (tag: string) => {
-    setAvailableTags((prev) => prev.filter((t) => t !== tag));
+  const handleTagAdd = (tag: CanonicalTag) => {
+    addTag(tag);
+    trackFilter(tag, "pin", SURFACE);
+  };
+
+  const handleTagRemove = (tag: CanonicalTag) => {
+    removeTag(tag);
+    trackFilter(tag, "unpin", SURFACE);
     setActiveTags((prev) => prev.filter((t) => t !== tag));
   };
 
@@ -187,35 +215,45 @@ function SearchResultsState({
           const primaryAction = primaryLink
             ? {
                 label: getLinkLabel(primaryLink),
-                onClick: () => openExternalUrl(primaryLink.url),
+                onClick: () => {
+                  trackLinkClick(event, SURFACE, primaryLink.type);
+                  openExternalUrl(primaryLink.url);
+                },
               }
             : undefined;
 
           const onAddToCalendar = event.calendarEvent
-            ? () => openExternalUrl(buildGCalUrl(event.calendarEvent!))
+            ? () => {
+                trackCalendarAdd(event, SURFACE);
+                openExternalUrl(buildGCalUrl(event.calendarEvent!));
+              }
             : undefined;
 
           return (
-            <BookmarkCard
-              key={event.id}
-              orgName={event.orgName}
-              thumbnailVariant={event.thumbnailVariant}
-              day={event.day}
-              month={event.month}
-              title={event.title}
-              subtitle={event.subtitle}
-              onSubtitleClick={
-                event.isEdgeCase ? () => onEmailView(event) : undefined
-              }
-              tags={event.tags}
-              primaryAction={primaryAction}
-              onAddToCalendar={onAddToCalendar}
-              onUnbookmark={
-                bookmarkedIds.has(event.id)
-                  ? () => onBookmark(event.id)
-                  : undefined
-              }
-            />
+            <EventImpression key={event.id} events={[event]} surface={SURFACE}>
+              <BookmarkCard
+                orgName={event.orgName}
+                thumbnailVariant={event.thumbnailVariant}
+                day={event.day}
+                month={event.month}
+                title={event.title}
+                subtitle={event.subtitle}
+                onSubtitleClick={
+                  event.isEdgeCase ? () => onEmailView(event) : undefined
+                }
+                tags={event.tags}
+                primaryAction={primaryAction}
+                onAddToCalendar={onAddToCalendar}
+                onUnbookmark={
+                  bookmarkedIds.has(event.id)
+                    ? () => {
+                        trackBookmarkToggle(event, SURFACE, "remove");
+                        onBookmark(event.id);
+                      }
+                    : undefined
+                }
+              />
+            </EventImpression>
           );
         })}
       </div>

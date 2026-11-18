@@ -13,35 +13,30 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentPropsWithoutRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import {
   SideBar,
   SearchBar,
   SearchPanel,
-  Tag,
   DashboardPost,
   Button,
 } from "@app/ui";
-import type {
-  SideBarItemId,
-  DashboardPostProps,
-  RsvpGroup,
-  Club,
-  Organization,
-} from "@app/ui";
+import type { SideBarItemId, RsvpGroup, Club, Organization } from "@app/ui";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 import {
   eventToPost,
   orgsToClubs,
   rsvpsToRsvpGroups,
+  stampFollowState,
+  type FeedPost,
 } from "../lib/eventToPost";
+import { useFollowToggle } from "../lib/useFollowToggle";
+import { useEventActions } from "../lib/useEventActions";
+import { EventImpression } from "../components/EventImpression";
+import { FeedTagFilterBar } from "../components/FeedTagFilterBar";
+import { FeedNoMatchesState } from "../components/FeedNoMatchesState";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
-
-export interface FeedTagItem {
-  label: string;
-}
 
 export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   // ── Sidebar ──
@@ -53,13 +48,8 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   onSearchChange?: (value: string) => void;
   onSearchClear?: () => void;
 
-  // ── Tag filter bar ──
-  feedTags?: FeedTagItem[];
-  onTagClick?: (label: string) => void;
-  onAddTag?: () => void;
-
   // ── Bookmarked posts ──
-  posts?: DashboardPostProps[];
+  posts?: FeedPost[];
 
   // ── Right panel (shared SearchPanel) ──
   rsvpGroups?: RsvpGroup[];
@@ -69,13 +59,8 @@ export interface BookmarksProps extends ComponentPropsWithoutRef<"div"> {
   onOrgClick?: (org: Organization) => void;
 }
 
-const DEFAULT_FEED_TAGS: FeedTagItem[] = [
-  { label: "Recruitment" },
-  { label: "Early Career" },
-  { label: "Tech" },
-  { label: "Mentorship" },
-  { label: "Just for Fun" },
-];
+// Stable empty fallback so the filtered-posts memo doesn't recompute each render.
+const EMPTY_POSTS: FeedPost[] = [];
 
 // ─── Bookmarks ────────────────────────────────────────────────────────────────
 
@@ -85,9 +70,6 @@ export function Bookmarks({
   searchValue,
   onSearchChange,
   onSearchClear,
-  feedTags = DEFAULT_FEED_TAGS,
-  onTagClick,
-  onAddTag,
   posts: postsOverride,
   rsvpGroups: rsvpGroupsOverride,
   clubs: clubsOverride,
@@ -104,20 +86,10 @@ export function Bookmarks({
   const myRsvps = useQuery(api.rsvps.myRsvps);
   const followedOrgs = useQuery(api.orgs.listFollowed);
 
-  const unbookmarkMutation = useMutation(api.bookmarks.unbookmark);
-  const setRsvpMutation = useMutation(api.rsvps.setRsvp);
-  const followedOrgIdSet = useMemo<ReadonlySet<Id<"orgs">>>(() => {
-    if (!followedOrgIds) return new Set<Id<"orgs">>();
-    return new Set<Id<"orgs">>(followedOrgIds);
-  }, [followedOrgIds]);
-
-  // Optimistic-removal set: bookmarks that the user just unbookmarked but
-  // whose mutation hasn't yet round-tripped. Visually filter these out so the
-  // row disappears immediately; on mutation failure we re-add the id so the
-  // row reappears.
-  const [optimisticallyRemoved, setOptimisticallyRemoved] = useState<
-    ReadonlySet<Id<"events">>
-  >(() => new Set<Id<"events">>());
+  const { followedOrgIdSet, toggleFollow } = useFollowToggle(
+    followedOrgIds,
+    "bookmarks",
+  );
 
   // Surface a banner when the underlying queries fail to load for a
   // sustained period (still undefined after several seconds) or when a
@@ -130,66 +102,52 @@ export function Bookmarks({
     return () => window.clearTimeout(id);
   }, [queryStillLoading]);
 
-  const handleRemoveBookmark = useCallback(
-    (eventId: Id<"events">) => {
-      setOptimisticallyRemoved((prev) => {
-        const next = new Set(prev);
-        next.add(eventId);
-        return next;
-      });
-      void unbookmarkMutation({ eventId }).catch(() => {
-        setOptimisticallyRemoved((prev) => {
-          const next = new Set(prev);
-          next.delete(eventId);
-          return next;
-        });
-        setHasError(true);
-      });
-    },
-    [unbookmarkMutation],
-  );
+  const handleError = useCallback(() => setHasError(true), []);
+  const {
+    bookmarkOverrides,
+    toggleBookmark,
+    rsvp: handleRsvp,
+  } = useEventActions("bookmarks", handleError);
 
-  const handleRsvp = useCallback(
-    (eventId: Id<"events">) => {
-      void setRsvpMutation({ eventId, status: "going" }).catch(() => {
-        setHasError(true);
-      });
-    },
-    [setRsvpMutation],
-  );
-
-  const queriedPosts = useMemo<DashboardPostProps[] | undefined>(() => {
+  const queriedPosts = useMemo<FeedPost[] | undefined>(() => {
     if (!bookmarksResult) return undefined;
-    return bookmarksResult.page
-      .filter((row) => !optimisticallyRemoved.has(row.event._id))
-      .map((row) => {
-        // myBookmarks only ever returns bookmarked rows, so isBookmarked is true.
-        const base = eventToPost({
-          event: row.event,
-          orgs: row.orgs,
-          isBookmarked: true,
-        });
-        const organizations = base.organizations.map((org, i) => {
-          const matched = row.orgs[i];
+    return (
+      bookmarksResult.page
+        // An override of `false` is a pending un-bookmark: drop the row now so
+        // it disappears instantly, and let a failed mutation clear the override
+        // and bring it back.
+        .filter((row) => bookmarkOverrides.get(row.event._id) !== false)
+        .map((row) => {
+          // myBookmarks only ever returns bookmarked rows, so isBookmarked is true.
+          const base = eventToPost({
+            event: row.event,
+            orgs: row.orgs,
+            isBookmarked: true,
+          });
+          const organizations = stampFollowState(
+            base.organizations,
+            row.orgs,
+            followedOrgIdSet,
+            toggleFollow,
+          );
+          const orgIds = row.orgs.map((org) => org._id);
           return {
-            ...org,
-            following:
-              matched !== undefined ? followedOrgIdSet.has(matched._id) : false,
+            ...base,
+            organizations,
+            eventId: row.event._id,
+            orgIds,
+            onBookmark: () => toggleBookmark(row.event._id, true, orgIds),
+            onRsvp: () => handleRsvp(row.event._id, orgIds),
           };
-        });
-        return {
-          ...base,
-          organizations,
-          onBookmark: () => handleRemoveBookmark(row.event._id),
-          onRsvp: () => handleRsvp(row.event._id),
-        };
-      });
+        })
+    );
   }, [
     bookmarksResult,
     followedOrgIdSet,
-    handleRemoveBookmark,
+    toggleBookmark,
     handleRsvp,
-    optimisticallyRemoved,
+    bookmarkOverrides,
+    toggleFollow,
   ]);
 
   const queriedRsvpGroups = useMemo(
@@ -198,7 +156,26 @@ export function Bookmarks({
   );
   const queriedClubs = useMemo(() => orgsToClubs(followedOrgs), [followedOrgs]);
 
-  const posts: DashboardPostProps[] = postsOverride ?? queriedPosts ?? [];
+  // "Your Clubs" rows are always currently-followed orgs — resolve the
+  // club's slug (`Club.id`) back to its real `Id<"orgs">` to unfollow.
+  const handleClubToggleFollow = useCallback(
+    (club: Club) => {
+      const matched = followedOrgs?.find((org) => org.slug === club.id);
+      if (matched) toggleFollow(matched._id, true);
+    },
+    [followedOrgs, toggleFollow],
+  );
+
+  const posts: FeedPost[] = postsOverride ?? queriedPosts ?? EMPTY_POSTS;
+
+  // Selected filter tag — narrows the bookmarks to posts carrying that tag.
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const visiblePosts = useMemo(() => {
+    if (!selectedTag) return posts;
+    return posts.filter((post) =>
+      post.tags?.some((tag) => tag.label === selectedTag),
+    );
+  }, [posts, selectedTag]);
   const rsvpGroups = rsvpGroupsOverride ?? queriedRsvpGroups;
   const clubs = clubsOverride ?? queriedClubs;
 
@@ -253,8 +230,8 @@ export function Bookmarks({
           <h1
             className={
               "font-[family-name:var(--font-brand)] font-bold " +
-              "leading-[normal] text-[var(--font-size-wordmark)] " +
-              "whitespace-nowrap text-[var(--color-black)]"
+              "text-[length:var(--font-size-wordmark)] leading-[normal] " +
+              "whitespace-nowrap text-[color:var(--color-black)]"
             }
           >
             Bookmarks
@@ -268,27 +245,11 @@ export function Bookmarks({
             className="w-full shrink-0"
           />
 
-          <div className="flex items-center gap-[var(--space-3)] overflow-x-auto">
-            {feedTags.map((tag) => (
-              <Tag
-                key={tag.label}
-                color="neutral"
-                onClick={() => onTagClick?.(tag.label)}
-                className="shrink-0 cursor-pointer"
-                style={{ fontVariationSettings: "'opsz' 14" }}
-              >
-                {tag.label}
-              </Tag>
-            ))}
-            <Tag
-              color="neutral"
-              onClick={onAddTag}
-              className="shrink-0 cursor-pointer"
-              style={{ fontVariationSettings: "'opsz' 14" }}
-            >
-              +
-            </Tag>
-          </div>
+          <FeedTagFilterBar
+            selectedTag={selectedTag}
+            onSelectedTagChange={setSelectedTag}
+            surface="bookmarks"
+          />
         </div>
 
         {/* Divider */}
@@ -305,12 +266,24 @@ export function Bookmarks({
           )}
           {feedLoading && <BookmarksLoadingState />}
           {!feedLoading && feedEmpty && <BookmarksEmptyState />}
-          {posts.map((post, i) => (
-            <DashboardPost
+          {!feedLoading &&
+            !feedEmpty &&
+            selectedTag &&
+            visiblePosts.length === 0 && (
+              <FeedNoMatchesState
+                tag={selectedTag}
+                onClear={() => setSelectedTag(null)}
+              />
+            )}
+          {visiblePosts.map((post, i) => (
+            <EventImpression
               key={i}
-              {...post}
-              onOrgClick={handleOrgClickInternal}
-            />
+              eventId={post.eventId}
+              orgIds={post.orgIds}
+              surface="bookmarks"
+            >
+              <DashboardPost {...post} onOrgClick={handleOrgClickInternal} />
+            </EventImpression>
           ))}
         </div>
       </main>
@@ -326,6 +299,7 @@ export function Bookmarks({
           rsvpGroups={rsvpGroups}
           clubs={clubs}
           onClubClick={onClubClick}
+          onToggleFollow={handleClubToggleFollow}
           className="hidden h-full shrink-0 overflow-visible lg:flex"
         />
       )}

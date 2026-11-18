@@ -9,6 +9,7 @@
  */
 
 import type * as _shared_adminToken from "../_shared/adminToken.js";
+import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
 import type * as bookmarks from "../bookmarks.js";
 import type * as crons from "../crons.js";
@@ -19,14 +20,25 @@ import type * as gmailConnection from "../gmailConnection.js";
 import type * as gmailOAuth from "../gmailOAuth.js";
 import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
+import type * as lib_ai from "../lib/ai.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_cornellLists from "../lib/cornellLists.js";
+import type * as lib_docValidators from "../lib/docValidators.js";
+import type * as lib_eventDates from "../lib/eventDates.js";
+import type * as lib_legacyLyris from "../lib/legacyLyris.js";
+import type * as lib_parseQuality from "../lib/parseQuality.js";
+import type * as lib_simplelistsForm from "../lib/simplelistsForm.js";
+import type * as lib_tags from "../lib/tags.js";
 import type * as listservAdmin from "../listservAdmin.js";
+import type * as listservs from "../listservs.js";
+import type * as orgEnrichment from "../orgEnrichment.js";
 import type * as orgs from "../orgs.js";
 import type * as parser from "../parser.js";
 import type * as rsvps from "../rsvps.js";
 import type * as seed from "../seed.js";
 import type * as seedData from "../seedData.js";
 import type * as sourceAdmin from "../sourceAdmin.js";
+import type * as tags from "../tags.js";
 import type * as users from "../users.js";
 
 import type {
@@ -37,6 +49,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "_shared/adminToken": typeof _shared_adminToken;
+  analytics: typeof analytics;
   auth: typeof auth;
   bookmarks: typeof bookmarks;
   crons: typeof crons;
@@ -47,14 +60,25 @@ declare const fullApi: ApiFromModules<{
   gmailOAuth: typeof gmailOAuth;
   http: typeof http;
   ingestion: typeof ingestion;
+  "lib/ai": typeof lib_ai;
   "lib/auth": typeof lib_auth;
+  "lib/cornellLists": typeof lib_cornellLists;
+  "lib/docValidators": typeof lib_docValidators;
+  "lib/eventDates": typeof lib_eventDates;
+  "lib/legacyLyris": typeof lib_legacyLyris;
+  "lib/parseQuality": typeof lib_parseQuality;
+  "lib/simplelistsForm": typeof lib_simplelistsForm;
+  "lib/tags": typeof lib_tags;
   listservAdmin: typeof listservAdmin;
+  listservs: typeof listservs;
+  orgEnrichment: typeof orgEnrichment;
   orgs: typeof orgs;
   parser: typeof parser;
   rsvps: typeof rsvps;
   seed: typeof seed;
   seedData: typeof seedData;
   sourceAdmin: typeof sourceAdmin;
+  tags: typeof tags;
   users: typeof users;
 }>;
 
