@@ -1,3 +1,4 @@
+import { formatActionLabel } from "@app/ui";
 import type { EventItem, EventLink, LinkType } from "../data/types";
 
 // ── Label defaults ─────────────────────────────────────────────────────────
@@ -10,8 +11,9 @@ const DEFAULT_LABELS: Record<LinkType, string> = {
   social: "Follow",
 };
 
+/** Parser-written labels arrive in arbitrary case, so they're sentence-cased. */
 export function getLinkLabel(link: EventLink): string {
-  return link.label ?? DEFAULT_LABELS[link.type];
+  return link.label ? formatActionLabel(link.label) : DEFAULT_LABELS[link.type];
 }
 
 // ── Primary CTA selection ──────────────────────────────────────────────────
