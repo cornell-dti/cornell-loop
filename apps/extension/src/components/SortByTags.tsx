@@ -2,7 +2,7 @@
  * SortByTags — reusable sort/filter tag strip.
  *
  * Used in BookmarkView and SearchView. Manages:
- *   • Active tag toggling (click to filter; active tags use the orange bg)
+ *   • Active tag toggling (click to filter; active tags use the blue bg)
  *   • "+" opens a picker of canonical tags not yet in the strip; click one to
  *     pin it (tags are limited to the shared set in `convex/lib/tags.ts`)
  *   • Edit mode via pencil icon: Tag's built-in onDismiss renders the design-
