@@ -24,11 +24,28 @@ export interface AppProps {
   onPreviewSlot?: (event: EventItem | null) => void;
 }
 
+/**
+ * Where "See more in dashboard" opens.
+ *
+ * `VITE_DASHBOARD_URL` is configured as a bare origin in every environment, so
+ * the feed path is appended here rather than being baked into each env file —
+ * otherwise the button lands on the marketing landing page and the student has
+ * to click through to their feed themselves. A configured value that already
+ * names a path is taken as-is.
+ */
 const DASHBOARD_URL = (() => {
   const value = import.meta.env.VITE_DASHBOARD_URL;
-  return typeof value === "string" && value.length > 0
-    ? value
-    : "https://cornell-loop.com/home";
+  const configured =
+    typeof value === "string" && value.trim().length > 0
+      ? value.trim()
+      : "https://cornell-loop.com";
+  try {
+    const url = new URL(configured);
+    if (url.pathname === "/") url.pathname = "/home";
+    return url.toString();
+  } catch {
+    return "https://cornell-loop.com/home";
+  }
 })();
 
 // ── Auth gate sub-components ───────────────────────────────────────────────

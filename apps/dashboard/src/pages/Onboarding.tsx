@@ -324,9 +324,13 @@ function StepClubs({ onContinue, onBack }: StepClubsProps) {
 
   const loading = suggested === undefined || followsList === undefined;
 
-  // Filter clubs based on search
-  const filteredClubs = (suggested ?? []).filter((org) =>
-    org.name.toLowerCase().includes(search.trim().toLowerCase()),
+  // Filter clubs based on search — abbreviations count, so "WICC" matches a
+  // club whose name spells the acronym out.
+  const query = search.trim().toLowerCase();
+  const filteredClubs = (suggested ?? []).filter(
+    (org) =>
+      org.name.toLowerCase().includes(query) ||
+      (org.aliases ?? []).some((alias) => alias.toLowerCase().includes(query)),
   );
 
   return (

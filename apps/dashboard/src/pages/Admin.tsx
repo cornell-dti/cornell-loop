@@ -17,7 +17,10 @@ import {
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import { classifyDraftStaleness } from "../../convex/lib/eventDates";
+import {
+  DEFAULT_EVENT_DURATION_MS,
+  classifyDraftStaleness,
+} from "../../convex/lib/eventDates";
 import {
   normalizeModelConfidence,
   scoreParseQuality,
@@ -216,6 +219,7 @@ type OrgUpdatePayload = {
   description: string;
   website: string;
   email: string;
+  aliases: string[];
   tags: string[];
   isVerified: boolean;
   loopSummary: string;
@@ -320,6 +324,9 @@ const EVENT_TYPES: EventTypeValue[] = [
   "fundraiser",
   "info",
 ];
+
+type DateTypeValue = EventDoc["dates"][number]["type"];
+const DATE_TYPES: DateTypeValue[] = ["start", "end", "deadline", "single"];
 
 type LinkTypeValue = EventDoc["links"][number]["type"];
 const LINK_TYPES: LinkTypeValue[] = [
@@ -433,6 +440,7 @@ export default function Admin() {
   const publishEvent = useMutation(api.parser.publishEvent);
   const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
+  const clearDuplicateFlag = useMutation(api.parser.clearDuplicateFlag);
   const hidePastDrafts = useMutation(api.parser.hidePastDrafts);
   const moveStaleMessagesNow = useMutation(api.parser.moveStaleMessagesNow);
   const restoreAutoHiddenDraft = useMutation(api.parser.restoreAutoHiddenDraft);
@@ -844,6 +852,7 @@ export default function Admin() {
                   description: payload.description,
                   website: payload.website,
                   email: payload.email,
+                  aliases: payload.aliases,
                   tags: payload.tags,
                   isVerified: payload.isVerified,
                   loopSummary: payload.loopSummary,
@@ -1021,6 +1030,11 @@ export default function Admin() {
             onEdit={(id, patch) =>
               act("Event updated.", () =>
                 updateDraftEvent({ token, eventId: id, ...patch }),
+              )
+            }
+            onKeepDuplicate={(id) =>
+              act("Kept — no longer flagged as a duplicate.", () =>
+                clearDuplicateFlag({ token, eventId: id }),
               )
             }
             onReparse={(id) =>
@@ -1986,6 +2000,7 @@ function OrgRow({
     org.orgStatus ?? "active",
   );
   const [description, setDescription] = useState(org.description ?? "");
+  const [aliasesRaw, setAliasesRaw] = useState((org.aliases ?? []).join(", "));
   const [tagsRaw, setTagsRaw] = useState((org.tags ?? []).join(", "));
   const [website, setWebsite] = useState(org.websiteUrl ?? "");
   const [email, setEmail] = useState(org.email ?? "");
@@ -2004,6 +2019,7 @@ function OrgRow({
     setType(org.orgType ?? "club");
     setStatus(org.orgStatus ?? "active");
     setDescription(org.description ?? "");
+    setAliasesRaw((org.aliases ?? []).join(", "));
     setTagsRaw((org.tags ?? []).join(", "));
     setWebsite(org.websiteUrl ?? "");
     setEmail(org.email ?? "");
@@ -2017,6 +2033,7 @@ function OrgRow({
     org.orgType,
     org.orgStatus,
     org.description,
+    org.aliases,
     org.tags,
     org.websiteUrl,
     org.email,
@@ -2031,6 +2048,7 @@ function OrgRow({
     setType(org.orgType ?? "club");
     setStatus(org.orgStatus ?? "active");
     setDescription(org.description ?? "");
+    setAliasesRaw((org.aliases ?? []).join(", "));
     setTagsRaw((org.tags ?? []).join(", "));
     setWebsite(org.websiteUrl ?? "");
     setEmail(org.email ?? "");
@@ -2042,10 +2060,13 @@ function OrgRow({
   }
 
   function save() {
-    const tags = tagsRaw
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const splitList = (raw: string) =>
+      raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    const aliases = splitList(aliasesRaw);
+    const tags = splitList(tagsRaw);
 
     // avatarStorageId: if a new file was uploaded use its id;
     // if preview was cleared and there was an original, pass null to remove;
@@ -2071,6 +2092,7 @@ function OrgRow({
       description,
       website,
       email,
+      aliases,
       tags,
       isVerified,
       loopSummary,
@@ -2187,7 +2209,24 @@ function OrgRow({
               />
             </div>
 
-            {/* Row 3: Tags */}
+            {/* Row 3: Abbreviations — searchable, so "WICC" finds the org
+                even when its name spells the acronym out. */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+                Abbreviations{" "}
+                <span className="font-normal normal-case">
+                  (comma-separated, matched by search)
+                </span>
+              </label>
+              <input
+                value={aliasesRaw}
+                onChange={(e) => setAliasesRaw(e.target.value)}
+                placeholder="e.g. WICC, SWIB, URMC"
+                className={input()}
+              />
+            </div>
+
+            {/* Row 4: Tags */}
             <div className="flex flex-col gap-1">
               <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
                 Tags{" "}
@@ -3600,7 +3639,14 @@ function OrgsTab({
       (row) =>
         filter === "all" || row.missingFields.length > 0 || row.draft !== null,
     )
-    .filter((row) => !query || row.org.name.toLowerCase().includes(query))
+    .filter(
+      (row) =>
+        !query ||
+        row.org.name.toLowerCase().includes(query) ||
+        (row.org.aliases ?? []).some((alias) =>
+          alias.toLowerCase().includes(query),
+        ),
+    )
     .sort(
       (a, b) =>
         Number(b.draft !== null) - Number(a.draft !== null) ||
@@ -4112,6 +4158,7 @@ function PublishTab({
   onHide,
   onHidePast,
   onEdit,
+  onKeepDuplicate,
   onReparse,
   onRequeue,
   onGoToSources,
@@ -4159,6 +4206,7 @@ function PublishTab({
   onHide: (id: Id<"events">) => void;
   onHidePast: () => void;
   onEdit: (id: Id<"events">, patch: DraftEditPatch) => void;
+  onKeepDuplicate: (id: Id<"events">) => void;
   onReparse: (id: Id<"listservMessages">) => void;
   onRequeue: (id: Id<"listservMessages">) => void;
   onGoToSources: () => void;
@@ -4456,6 +4504,7 @@ function PublishTab({
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
+                onKeepDuplicate={() => onKeepDuplicate(event._id)}
                 onReparse={
                   event.sourceMessageId
                     ? () => onReparse(event.sourceMessageId!)
@@ -4499,6 +4548,7 @@ function PublishTab({
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
+                onKeepDuplicate={() => onKeepDuplicate(event._id)}
                 onReparse={
                   event.sourceMessageId
                     ? () => onReparse(event.sourceMessageId!)
@@ -4540,6 +4590,7 @@ function PublishTab({
                 onPublish={() => onPublish(event._id)}
                 onHide={() => onHide(event._id)}
                 onEdit={(patch) => onEdit(event._id, patch)}
+                onKeepDuplicate={() => onKeepDuplicate(event._id)}
                 onReparse={
                   event.sourceMessageId
                     ? () => onReparse(event.sourceMessageId!)
@@ -4699,6 +4750,7 @@ function DraftCard({
   onPublish,
   onHide,
   onEdit,
+  onKeepDuplicate,
   onReparse,
 }: {
   event: EventDoc;
@@ -4707,6 +4759,7 @@ function DraftCard({
   onPublish: () => void;
   onHide: () => void;
   onEdit: (patch: DraftEditPatch) => void;
+  onKeepDuplicate: () => void;
   onReparse?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -4869,6 +4922,19 @@ function DraftCard({
         </div>
       </div>
 
+      {/* Near-duplicate notice — the draft is kept either way, so this is a
+          prompt to compare the two, not a rejection. */}
+      {event.duplicateOfId && !editing && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-amber-200 bg-amber-50 px-4 py-3 text-[length:var(--font-size-body2)] text-amber-900">
+          <span className="min-w-0 flex-1">
+            Likely duplicate —{" "}
+            {event.duplicateReason ?? "matches an earlier event from this org"}.
+          </span>
+          <Btn onClick={onHide}>Hide as duplicate</Btn>
+          <Btn onClick={onKeepDuplicate}>Keep</Btn>
+        </div>
+      )}
+
       {editing && (
         <div className="grid gap-4 border-t border-[var(--color-border)] bg-[var(--color-neutral-100)] px-4 py-4">
           {/* Description + AI summary */}
@@ -4918,39 +4984,87 @@ function DraftCard({
             </div>
           </div>
 
-          {/* Dates — edit existing timestamps only; adding/removing dates isn't
-              supported here since the dominant parser error is a wrong
-              timestamp, not a missing date. */}
-          {dates.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
-                Dates
-              </label>
-              <div className="grid gap-2">
-                {dates.map((d, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Tag>{d.type}</Tag>
-                    <input
-                      type="datetime-local"
-                      value={toDatetimeLocalValue(d.timestamp)}
-                      onChange={(e) => {
-                        const timestamp = fromDatetimeLocalValue(
-                          e.target.value,
-                        );
-                        if (timestamp === null) return;
-                        setDates((prev) =>
-                          prev.map((entry, idx) =>
-                            idx === i ? { ...entry, timestamp } : entry,
-                          ),
-                        );
-                      }}
-                      className={input()}
-                    />
-                  </div>
-                ))}
-              </div>
+          {/* Dates — every row's timestamp and type is editable, and rows can
+              be added or removed, so a parse that read a start as a one-off
+              (or missed the end time entirely) can be corrected here rather
+              than only by reparsing. */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[length:var(--font-size-body3)] font-semibold tracking-widest text-[color:var(--color-text-muted)] uppercase">
+              Dates
+            </label>
+            {dates.length === 0 && (
+              <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                No dates parsed from this email.
+              </p>
+            )}
+            <div className="grid gap-2">
+              {dates.map((d, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={d.type}
+                    onChange={(e) =>
+                      setDates((prev) =>
+                        prev.map((entry, idx) =>
+                          idx === i
+                            ? { ...entry, type: toDateType(e.target.value) }
+                            : entry,
+                        ),
+                      )
+                    }
+                    className={input()}
+                    aria-label={`Date ${i + 1} type`}
+                  >
+                    {DATE_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(d.timestamp)}
+                    onChange={(e) => {
+                      const timestamp = fromDatetimeLocalValue(e.target.value);
+                      if (timestamp === null) return;
+                      setDates((prev) =>
+                        prev.map((entry, idx) =>
+                          idx === i ? { ...entry, timestamp } : entry,
+                        ),
+                      );
+                    }}
+                    className={input()}
+                    aria-label={`Date ${i + 1} timestamp`}
+                  />
+                  <Btn
+                    danger
+                    onClick={() =>
+                      setDates((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                  >
+                    Remove
+                  </Btn>
+                </div>
+              ))}
             </div>
-          )}
+            <div className="flex flex-wrap gap-2">
+              <Btn onClick={() => setDates(addDate(dates))}>Add date</Btn>
+              {canAddEnd(dates) && (
+                <Btn onClick={() => setDates(withAddedEnd(dates))}>
+                  Add end (+1h)
+                </Btn>
+              )}
+              {canConvertToRange(dates) && (
+                <Btn onClick={() => setDates(toStartEndRange(dates))}>
+                  Convert to start/end
+                </Btn>
+              )}
+              {canConvertToSingle(dates) && (
+                <Btn onClick={() => setDates(toSingleDate(dates))}>
+                  Convert to single
+                </Btn>
+              )}
+            </div>
+          </div>
 
           {/* Location */}
           <div className="grid gap-3 sm:grid-cols-3">
@@ -5388,6 +5502,103 @@ function fromDatetimeLocalValue(value: string): number | null {
   if (!value) return null;
   const ms = new Date(value).getTime();
   return Number.isNaN(ms) ? null : ms;
+}
+
+// ─── Draft date editing ──────────────────────────────────────────────────────
+
+/** Narrows a `<select>` value to a stored date type without an `as` cast. */
+function toDateType(value: string): DateTypeValue {
+  const match = DATE_TYPES.find((type) => type === value);
+  if (!match) throw new Error(`Unknown date type: ${value}`);
+  return match;
+}
+
+type EventDates = EventDoc["dates"];
+
+/** The row a range is measured from: the start, or the one-off standing in for it. */
+function primaryDate(dates: EventDates) {
+  return dates.find((date) => date.type === "start" || date.type === "single");
+}
+
+function hasType(dates: EventDates, type: DateTypeValue) {
+  return dates.some((date) => date.type === type);
+}
+
+/**
+ * A new row anchored to the dates already on the draft, so an admin adjusts an
+ * hour rather than typing a whole date. With nothing to anchor to it lands on
+ * the next whole hour from now.
+ */
+function addDate(dates: EventDates): EventDates {
+  const anchor = primaryDate(dates)?.timestamp ?? nextWholeHour();
+  const type: DateTypeValue = !primaryDate(dates)
+    ? "start"
+    : hasType(dates, "end")
+      ? "start"
+      : "end";
+  const timestamp =
+    type === "end" ? anchor + DEFAULT_EVENT_DURATION_MS : anchor;
+  return [...dates, { timestamp, type }];
+}
+
+function nextWholeHour(): number {
+  const d = new Date();
+  d.setMinutes(0, 0, 0);
+  return d.getTime() + DEFAULT_EVENT_DURATION_MS;
+}
+
+/** A start with no end — the email gave a time but never said for how long. */
+function canAddEnd(dates: EventDates): boolean {
+  return (
+    hasType(dates, "start") &&
+    !hasType(dates, "end") &&
+    !hasType(dates, "deadline")
+  );
+}
+
+function withAddedEnd(dates: EventDates): EventDates {
+  const start = dates.find((date) => date.type === "start");
+  if (!start) return dates;
+  return [
+    ...dates,
+    { timestamp: start.timestamp + DEFAULT_EVENT_DURATION_MS, type: "end" },
+  ];
+}
+
+/** A one-off the parser read as having no end, which actually runs a range. */
+function canConvertToRange(dates: EventDates): boolean {
+  return (
+    hasType(dates, "single") &&
+    !hasType(dates, "end") &&
+    !hasType(dates, "deadline")
+  );
+}
+
+function toStartEndRange(dates: EventDates): EventDates {
+  const converted: EventDates = dates.map((date) =>
+    date.type === "single" ? { ...date, type: "start" } : date,
+  );
+  return withAddedEnd(converted);
+}
+
+/** A range the parser invented, where the item is really a single moment. */
+function canConvertToSingle(dates: EventDates): boolean {
+  return (
+    (hasType(dates, "start") || hasType(dates, "end")) &&
+    !hasType(dates, "deadline")
+  );
+}
+
+function toSingleDate(dates: EventDates): EventDates {
+  const primary = primaryDate(dates);
+  if (!primary) return dates;
+  return [
+    { timestamp: primary.timestamp, type: "single" },
+    ...dates.filter(
+      (date) =>
+        date.type !== "start" && date.type !== "end" && date.type !== "single",
+    ),
+  ];
 }
 
 /** True if `value` is a well-formed http(s) URL. Mirrors the server-side check

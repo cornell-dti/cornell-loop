@@ -227,7 +227,13 @@ export function DashboardEventCard({
 
         {/* Meta row: datetime + location */}
         {/* calendar.svg & location-pin.svg use stroke="#495057" (Neutral/700) natively — no filter. */}
-        <div className="flex items-center gap-[var(--space-6)]">
+        {/* A long location ("Willard Straight Hall Memorial Room (Rm. 407)")
+            wraps within its own column rather than pushing past the card: the
+            location block takes the remaining width (`min-w-0 flex-1`) and its
+            text wraps, while the short datetime stays one line on the left.
+            `flex-wrap` lets the whole location block drop to its own line when
+            the card is too narrow for both. */}
+        <div className="flex flex-wrap items-start gap-x-[var(--space-6)] gap-y-[var(--space-1)]">
           <div className="flex shrink-0 items-center gap-[var(--space-2)]">
             <Calendar
               aria-hidden="true"
@@ -246,16 +252,20 @@ export function DashboardEventCard({
           </div>
 
           {location && (
-            <div className="flex shrink-0 items-center gap-[var(--space-2)]">
-              <MapPin
-                aria-hidden="true"
-                size={16}
-                className="shrink-0 text-[color:var(--color-neutral-700)]"
-              />
+            <div className="flex min-w-0 flex-1 items-start gap-[var(--space-2)]">
+              {/* One line tall so the pin centres against the first line of a
+                  wrapped location instead of the whole block. */}
+              <span className="flex h-[var(--line-height-body2)] shrink-0 items-center">
+                <MapPin
+                  aria-hidden="true"
+                  size={16}
+                  className="shrink-0 text-[color:var(--color-neutral-700)]"
+                />
+              </span>
               <span
                 className={
                   BODY2_CLASSES +
-                  " whitespace-nowrap text-[color:var(--color-neutral-700)]"
+                  " min-w-0 break-words text-[color:var(--color-neutral-700)]"
                 }
                 style={{ fontVariationSettings: "'opsz' 14" }}
               >

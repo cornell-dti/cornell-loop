@@ -11,6 +11,7 @@
  * skipped and a console.warn is emitted so DOM changes are visible in devtools.
  */
 
+import { DEFAULT_EVENT_DURATION_MS } from "@app/convex/lib/eventDates";
 import type { CalendarEvent } from "./data/types";
 
 const OVERLAY_ID = "cl-slot-preview";
@@ -26,7 +27,7 @@ export function showSlotPreview(event: CalendarEvent): void {
   const start = new Date(event.startISO);
   const end = event.endISO
     ? new Date(event.endISO)
-    : new Date(start.getTime() + 60 * 60 * 1000);
+    : new Date(start.getTime() + DEFAULT_EVENT_DURATION_MS);
 
   const grid = findGridInfo();
   const hourPx = grid?.hourPx ?? FALLBACK_HOUR_PX;

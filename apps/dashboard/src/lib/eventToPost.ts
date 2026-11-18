@@ -16,6 +16,7 @@ import type {
   Organization,
   RsvpGroup,
 } from "@app/ui";
+import { effectiveEndTimestamp } from "../../convex/lib/eventDates";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
@@ -88,10 +89,14 @@ function formatTime(timestampMs: number): string {
  * "datetime" line shown on the event card. Prefers a start timestamp; falls
  * back to "single", then "deadline".
  *
+ * A timed `start` with no stated `end` is shown as a one-hour range (see
+ * `effectiveEndTimestamp`); `single` and `deadline` dates stay a single
+ * instant, since nothing about them implies a duration.
+ *
  * Returns a formatted string like:
  *   "April 27, 5:30am - 8:30am"           (start + end, same day)
  *   "April 27, 5:30am – April 29, 8:30am" (start + end, different days)
- *   "April 27, 5:30am"                    (start only)
+ *   "April 27, 5:30am"                    (single timestamp)
  *   "Deadline April 30"                   (deadline)
  *   ""                                    (no usable date)
  */
@@ -99,15 +104,15 @@ function formatEventDatetime(event: PublicEvent): string {
   const start = event.dates.find(
     (d) => d.type === "start" || d.type === "single",
   );
-  const end = event.dates.find((d) => d.type === "end");
+  const endTimestamp = effectiveEndTimestamp(event.dates);
   const deadline = event.dates.find((d) => d.type === "deadline");
 
   if (start) {
     const startDatePart = formatDateLong(start.timestamp);
     const startTime = formatTime(start.timestamp);
-    if (end) {
-      const endDatePart = formatDateLong(end.timestamp);
-      const endTime = formatTime(end.timestamp);
+    if (endTimestamp !== undefined) {
+      const endDatePart = formatDateLong(endTimestamp);
+      const endTime = formatTime(endTimestamp);
       // Multi-day: end falls on a different calendar day than start — render
       // both dates so the range isn't silently truncated to the start date.
       if (endDatePart !== startDatePart) {

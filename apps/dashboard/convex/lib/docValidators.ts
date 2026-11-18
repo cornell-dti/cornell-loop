@@ -18,6 +18,8 @@ export const orgDocValidator = v.object({
   avatarUrl: v.optional(v.string()),
   coverImageUrl: v.optional(v.string()),
   description: v.string(),
+  aliases: v.optional(v.array(v.string())),
+  aliasSearch: v.optional(v.string()),
   tags: v.array(v.string()),
   websiteUrl: v.optional(v.string()),
   email: v.optional(v.string()),
@@ -371,6 +373,8 @@ export const eventDocValidator = v.object({
   parseConfidence: v.optional(v.number()),
   parseWarnings: v.optional(v.array(v.string())),
   dedupeKey: v.optional(v.string()),
+  duplicateOfId: v.optional(v.id("events")),
+  duplicateReason: v.optional(v.string()),
   createdAt: v.optional(v.number()),
   updatedAt: v.optional(v.number()),
 });

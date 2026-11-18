@@ -9,6 +9,8 @@ import {
   subscriptionListNameFrom,
 } from "./lib/cornellLists";
 import { orgDocValidator, listservDocValidator } from "./lib/docValidators";
+import { normalizeAliases } from "./lib/orgAliases";
+import { levenshteinDistance, normalizeForMatch } from "./lib/textSimilarity";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -198,6 +200,7 @@ export const createOrganization = mutation({
     type: ORG_TYPES,
     description: v.optional(v.string()),
     website: v.optional(v.string()),
+    aliases: v.optional(v.array(v.string())),
     tags: v.optional(v.array(v.string())),
     // Only used to widen the duplicate check to email/source addresses —
     // never stored on the org.
@@ -216,6 +219,7 @@ export const createOrganization = mutation({
       type: args.type,
       description: cleanOptional(args.description),
       website: cleanOptional(args.website),
+      aliases: args.aliases,
       tags: args.tags ?? [],
       sourceEmail: cleanOptional(args.sourceEmail),
       confirmedNew: args.confirmedNew,
@@ -267,6 +271,7 @@ export const updateOrganization = mutation({
     description: v.optional(v.string()),
     website: v.optional(v.string()),
     email: v.optional(v.string()),
+    aliases: v.optional(v.array(v.string())),
     tags: v.optional(v.array(v.string())),
     status: v.union(v.literal("active"), v.literal("hidden")),
     // Convex storage IDs for images — when provided the permanent URL is
@@ -296,6 +301,8 @@ export const updateOrganization = mutation({
           : null;
     }
 
+    const { aliases, aliasSearch } = normalizeAliases(args.aliases);
+
     const patch: Record<string, unknown> = {
       name: args.name.trim(),
       slug: slugify(args.name),
@@ -303,6 +310,8 @@ export const updateOrganization = mutation({
       description: cleanOptional(args.description) ?? "",
       websiteUrl: cleanOptional(args.website) ?? undefined,
       email: cleanOptional(args.email) ?? undefined,
+      aliases,
+      aliasSearch,
       tags: (args.tags ?? []).map((t) => t.trim()).filter(Boolean),
       orgStatus: args.status,
       isVerified: args.isVerified ?? false,
@@ -706,11 +715,6 @@ async function similarOrganizations(
   return matches;
 }
 
-/** Lowercased, alphanumeric-only — for comparing names irrespective of punctuation/casing. */
-function normalizeForMatch(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
 /** First letter of each word, e.g. "Association of CS Undergrads" -> "aocu". */
 function acronymOf(value: string) {
   return value
@@ -728,25 +732,6 @@ function stripAddressSuffixes(local: string) {
     .replace(/-(account-manager|manager|request|l|list)$/, "");
 }
 
-/** Classic edit-distance, computed with a rolling single row (no 2D array indexing to trip strict mode). */
-function levenshteinDistance(a: string, b: string): number {
-  let previousRow: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-
-  for (let i = 1; i <= a.length; i++) {
-    const currentRow: number[] = [i];
-    for (let j = 1; j <= b.length; j++) {
-      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const insertion = (currentRow[j - 1] ?? Infinity) + 1;
-      const deletion = (previousRow[j] ?? Infinity) + 1;
-      const substitution = (previousRow[j - 1] ?? Infinity) + substitutionCost;
-      currentRow.push(Math.min(insertion, deletion, substitution));
-    }
-    previousRow = currentRow;
-  }
-
-  return previousRow[b.length] ?? Math.max(a.length, b.length);
-}
-
 async function getOrCreateOrg(
   ctx: MutationCtx,
   params: {
@@ -754,6 +739,7 @@ async function getOrCreateOrg(
     type: OrgType;
     description?: string;
     website?: string;
+    aliases?: string[];
     tags: string[];
     sourceEmail?: string;
     confirmedNew?: boolean;
@@ -788,12 +774,15 @@ async function getOrCreateOrg(
   }
 
   const now = Date.now();
+  const { aliases, aliasSearch } = normalizeAliases(params.aliases);
   return ctx.db.insert("orgs", {
     name,
     slug,
     orgType: params.type,
     description: params.description ?? "",
     websiteUrl: params.website,
+    aliases,
+    aliasSearch,
     tags: params.tags,
     isVerified: false,
     orgStatus: "active",

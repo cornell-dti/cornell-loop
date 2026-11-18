@@ -16,14 +16,17 @@ import { requireAdminToken } from "./_shared/adminToken";
 import { isRecord } from "./lib/ai";
 import { isListAdminNoise } from "./lib/cornellLists";
 import {
+  DEFAULT_EVENT_DURATION_MS,
   SOURCE_TIMEZONE,
   STALE_EMAIL_DAYS,
   classifyDraftStaleness,
   epochMsToLocalParts,
+  hasStatedClockTime,
   isPastEvent,
   localPartsToEpochMs,
   resolveYear,
 } from "./lib/eventDates";
+import { isCloseSpelling, normalizeForMatch } from "./lib/textSimilarity";
 import {
   normalizeModelConfidence,
   scoreParseQuality,
@@ -379,6 +382,26 @@ export const hideEvent = mutation({
     requireAdminToken(args.token);
     await ctx.db.patch(args.eventId, {
       visibility: "hidden",
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Clears the near-duplicate flag: the admin looked at both and this one is its
+ * own event. The mark is dropped rather than recorded as "reviewed" because a
+ * reparse re-derives it from scratch anyway, and a draft with no flag is
+ * exactly what "not a duplicate" means to every reader.
+ */
+export const clearDuplicateFlag = mutation({
+  args: { token: v.string(), eventId: v.id("events") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    await ctx.db.patch(args.eventId, {
+      duplicateOfId: undefined,
+      duplicateReason: undefined,
       updatedAt: Date.now(),
     });
     return null;
@@ -1055,6 +1078,25 @@ export const storeParsedEvents = internalMutation({
     let created = 0;
     let skippedDuplicate = 0;
 
+    // Read once for the whole message rather than per item: the org's recent
+    // events are the same set for every item in one email. Drafts the loop
+    // above deleted are already gone, so a reparse compares against the org's
+    // other events, never against the copies it is replacing.
+    const recentOrgEvents = message.organizationId
+      ? await ctx.db
+          .query("events")
+          .withIndex("by_organization", (q) =>
+            q.eq("organizationId", message.organizationId),
+          )
+          .order("desc")
+          .take(DUPLICATE_SCAN_LIMIT)
+      : [];
+    // A hidden event is a rejection an admin already made; matching against it
+    // would re-raise a question that has been answered.
+    const duplicateCandidates = recentOrgEvents.filter(
+      (event) => event.visibility !== "hidden",
+    );
+
     for (const item of args.items) {
       // Scoped to the organization: two orgs can legitimately announce the
       // same career fair, and without organizationId in the key the second
@@ -1070,6 +1112,8 @@ export const storeParsedEvents = internalMutation({
         skippedDuplicate += 1;
         continue;
       }
+
+      const duplicate = findDuplicateEvent(item, duplicateCandidates);
 
       await ctx.db.insert("events", {
         sourceMessageId: args.messageId,
@@ -1100,6 +1144,8 @@ export const storeParsedEvents = internalMutation({
         parseConfidence: item.confidence,
         parseWarnings: item.warnings,
         dedupeKey,
+        duplicateOfId: duplicate?.eventId,
+        duplicateReason: duplicate?.reason,
         createdAt: now,
         updatedAt: now,
       });
@@ -1191,6 +1237,81 @@ export const backfillDraftSourceReceivedAt = internalMutation({
  * read (well under the 16 MB per-function limit even at ~500 KB per email).
  */
 const BACKFILL_PAGE_SIZE = 25;
+
+/**
+ * One-off pass that marks near-duplicates among drafts stored before the
+ * check existed, so the existing backlog carries the same flags a fresh parse
+ * would produce.
+ *
+ * Run `npx convex run parser:markDuplicateDrafts`. Each call handles one page
+ * and schedules the next itself: a page's cost is its drafts plus up to
+ * {@link DUPLICATE_SCAN_LIMIT} same-org events per organization on it, which
+ * is bounded per call but not across a whole backlog.
+ *
+ * Only the newer of a pair is marked — comparing against events created after
+ * the draft would flag both halves and leave an admin nothing to keep.
+ */
+export const markDuplicateDrafts = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    marked: v.optional(v.number()),
+  },
+  returns: v.object({ marked: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args) => {
+    let marked = args.marked ?? 0;
+
+    const page = await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .paginate({ numItems: BACKFILL_PAGE_SIZE, cursor: args.cursor ?? null });
+
+    // Drafts from one email share an org, so read each org's events once.
+    const eventsByOrg = new Map<Id<"orgs">, Doc<"events">[]>();
+    for (const draft of page.page) {
+      if (draft.duplicateOfId !== undefined) continue;
+      if (!draft.organizationId) continue;
+
+      let orgEvents = eventsByOrg.get(draft.organizationId);
+      if (orgEvents === undefined) {
+        orgEvents = await ctx.db
+          .query("events")
+          .withIndex("by_organization", (q) =>
+            q.eq("organizationId", draft.organizationId),
+          )
+          .order("desc")
+          .take(DUPLICATE_SCAN_LIMIT);
+        eventsByOrg.set(draft.organizationId, orgEvents);
+      }
+
+      const duplicate = findDuplicateEvent(
+        draft,
+        orgEvents.filter(
+          (event) =>
+            event._id !== draft._id &&
+            event.visibility !== "hidden" &&
+            event._creationTime < draft._creationTime,
+        ),
+      );
+      if (!duplicate) continue;
+
+      await ctx.db.patch(draft._id, {
+        duplicateOfId: duplicate.eventId,
+        duplicateReason: duplicate.reason,
+      });
+      marked += 1;
+    }
+
+    if (page.isDone) {
+      console.log(`markDuplicateDrafts done: ${marked} marked`);
+    } else {
+      await ctx.scheduler.runAfter(0, internal.parser.markDuplicateDrafts, {
+        cursor: page.continueCursor,
+        marked,
+      });
+    }
+    return { marked, isDone: page.isDone };
+  },
+});
 
 /**
  * One-off repair for drafts parsed before the year moved server-side: every
@@ -1713,12 +1834,10 @@ function normalizeItem(
   // email produced.
   const itemWarnings: string[] = [];
   const statedYears: number[] = [];
-  const dates = normalizeDates(
-    item.dates,
-    receivedAt,
-    title,
-    itemWarnings,
-    statedYears,
+  const isRecurring = Boolean(item.isRecurring);
+  const dates = withDefaultEnd(
+    normalizeDates(item.dates, receivedAt, title, itemWarnings, statedYears),
+    isRecurring,
   );
   const droppedDate = itemWarnings.some((warning) =>
     warning.startsWith("Dropped impossible date"),
@@ -1732,7 +1851,7 @@ function normalizeItem(
     hosts: normalizeHosts(item.hosts),
     dates,
     statedYears: statedYears.length > 0 ? statedYears : undefined,
-    isRecurring: Boolean(item.isRecurring),
+    isRecurring,
     recurrenceNote: optionalString(item.recurrenceNote),
     location: normalizeLocation(item.location),
     links: normalizeLinks(item.links),
@@ -1818,6 +1937,35 @@ function normalizeDates(
   return dates;
 }
 
+/**
+ * Gives a timed `start` with no stated `end` the default duration, so the
+ * assumed length is stored once at parse time rather than re-derived by every
+ * reader. Only a `start` qualifies — see `effectiveEndTimestamp` for why a
+ * `single`, a `deadline`, or an untimed start is left as it came.
+ *
+ * Recurring items are left alone: `classifyDraftStaleness` reads a missing
+ * `end` as "the email never said when the series stops" and sends such a
+ * draft to review rather than filing it as passed. A stored end we invented
+ * would answer that question with something the email never said. Their cards
+ * still show a one-hour range, since `effectiveEndTimestamp` fills it in at
+ * read time.
+ */
+function withDefaultEnd(
+  dates: ParsedItem["dates"],
+  isRecurring: boolean,
+): ParsedItem["dates"] {
+  if (isRecurring) return dates;
+  if (dates.some((date) => date.type === "end" || date.type === "deadline")) {
+    return dates;
+  }
+  const start = dates.find((date) => date.type === "start");
+  if (!start || !hasStatedClockTime(start.timestamp)) return dates;
+  return [
+    ...dates,
+    { timestamp: start.timestamp + DEFAULT_EVENT_DURATION_MS, type: "end" },
+  ];
+}
+
 function normalizeDateType(
   value: unknown,
 ): ParsedItem["dates"][number]["type"] {
@@ -1839,6 +1987,84 @@ function integerIn(value: unknown, min: number, max: number): number | null {
 
 function shouldIgnoreMessage(message: SourceMessage) {
   return isListAdminNoise(message);
+}
+
+/**
+ * Same-org events compared against a new draft for near-duplicates.
+ *
+ * Bounded deliberately: each row carries a full description, and this runs per
+ * parsed item on the ingest path. The newest 50 cover the window where a
+ * reminder or re-announcement of the same event actually lands.
+ */
+const DUPLICATE_SCAN_LIMIT = 50;
+
+type DuplicateCandidate = {
+  title: string;
+  dates: ReadonlyArray<{ timestamp: number; type: string }>;
+  links: ReadonlyArray<{ url: string }>;
+};
+
+/** The calendar day a date falls on in {@link SOURCE_TIMEZONE}, as "2026-11-18". */
+function localDayKey(timestamp: number): string {
+  const parts = epochMsToLocalParts(timestamp);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** The days an item happens on, ignoring an inferred end. */
+function eventDayKeys(dates: DuplicateCandidate["dates"]): Set<string> {
+  return new Set(
+    dates
+      .filter((date) => date.type !== "end")
+      .map((date) => localDayKey(date.timestamp)),
+  );
+}
+
+/**
+ * The event `item` is probably a second telling of, or null.
+ *
+ * `dedupeKey` already catches an identical re-parse. What it misses is the
+ * same event announced twice with the title reworded, the link swapped, or a
+ * reminder sent closer to the date — so the title has to be similar *and* the
+ * item has to share a day or a link with the existing event. Either signal
+ * alone is far too loose: one org runs dozens of events on the same day, and
+ * every email from some orgs carries the same Linktree URL.
+ *
+ * A match marks the new draft for review rather than dropping it, since a
+ * genuinely new event with a recycled title is exactly the case this would
+ * otherwise lose silently.
+ */
+function findDuplicateEvent(
+  item: DuplicateCandidate,
+  existing: ReadonlyArray<Doc<"events">>,
+): { eventId: Id<"events">; reason: string } | null {
+  const title = normalizeForMatch(item.title);
+  if (!title) return null;
+  const days = eventDayKeys(item.dates);
+  const firstLink = item.links[0]?.url.trim().toLowerCase();
+
+  for (const candidate of existing) {
+    if (!isCloseSpelling(title, normalizeForMatch(candidate.title))) continue;
+
+    const sharedDay = [...eventDayKeys(candidate.dates)].find((day) =>
+      days.has(day),
+    );
+    if (sharedDay) {
+      return {
+        eventId: candidate._id,
+        reason: `same day (${sharedDay}) and a similar title to "${candidate.title}"`,
+      };
+    }
+
+    const candidateLink = candidate.links[0]?.url.trim().toLowerCase();
+    if (firstLink && candidateLink && firstLink === candidateLink) {
+      return {
+        eventId: candidate._id,
+        reason: `same link and a similar title to "${candidate.title}"`,
+      };
+    }
+  }
+
+  return null;
 }
 
 function buildDedupeKey(

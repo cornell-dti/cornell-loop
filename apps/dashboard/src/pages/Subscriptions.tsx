@@ -349,13 +349,17 @@ export function Subscriptions({
     sortMode,
   ]);
 
-  // Search matches the org name or its listserv address.
+  // Search matches the org name, one of its abbreviations, or its listserv
+  // address.
   const visibleRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return allRows;
     return allRows.filter(
-      ({ item }) =>
+      ({ item, org }) =>
         item.orgName.toLowerCase().includes(query) ||
+        (org?.aliases ?? []).some((alias) =>
+          alias.toLowerCase().includes(query),
+        ) ||
         (item.emailAddress.includes("@") &&
           item.emailAddress.toLowerCase().includes(query)),
     );

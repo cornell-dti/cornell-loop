@@ -120,6 +120,49 @@ export function isPastEvent(
   return dates.length > 0 && dates.every((date) => date.timestamp < now);
 }
 
+/**
+ * Assumed length of an event whose email gave a start time but no end time.
+ * Listserv mail says "GBM at 5pm" far more often than it says when the thing
+ * finishes, and an hour is both the common case and short enough that a
+ * calendar entry built from it doesn't swallow the rest of someone's evening.
+ */
+export const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
+
+/**
+ * True when `timestamp` carries a time the email actually stated.
+ *
+ * The parser defaults a date with no time to local noon, so noon-on-the-dot is
+ * read as "no time given". A real event that starts at exactly 12:00 is read
+ * slightly wrong as a result, which is the cheaper error: the alternative is
+ * storing a separate flag on every date for the sake of one edge case.
+ */
+export function hasStatedClockTime(timestamp: number): boolean {
+  const parts = epochMsToLocalParts(timestamp);
+  return parts.hour !== 12 || parts.minute !== 0;
+}
+
+/**
+ * When an item's range ends, falling back to {@link DEFAULT_EVENT_DURATION_MS}
+ * after the start when the email never said.
+ *
+ * The default is deliberately narrow. It applies only to a `start` — a
+ * `single` date means a one-off with no end, and a `deadline` is an instant,
+ * so neither gains anything from an invented range. A start with no stated
+ * clock time is left alone too, since the parser's noon placeholder would
+ * otherwise render as a confident "12 – 1pm".
+ */
+export function effectiveEndTimestamp(
+  dates: ReadonlyArray<{ timestamp: number; type: string }>,
+): number | undefined {
+  const end = dates.find((date) => date.type === "end");
+  if (end) return end.timestamp;
+  if (dates.some((date) => date.type === "deadline")) return undefined;
+
+  const start = dates.find((date) => date.type === "start");
+  if (!start || !hasStatedClockTime(start.timestamp)) return undefined;
+  return start.timestamp + DEFAULT_EVENT_DURATION_MS;
+}
+
 /** An email older than this, with no date on its item, is considered stale. */
 export const STALE_EMAIL_DAYS = 30;
 
