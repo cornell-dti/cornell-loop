@@ -34,6 +34,7 @@ import {
   type ProfileFieldsValue,
 } from "../components/ProfileFields";
 import { useCurrentProfile } from "../lib/useCurrentProfile";
+import { track } from "../lib/analytics";
 
 // ─── Inline icon helpers ──────────────────────────────────────────────────────
 
@@ -260,6 +261,14 @@ export function Profile({
 interface ProfileModalInnerProps {
   initialValue: ProfileFieldsValue;
   userName?: string;
+  /**
+   * Whether onboarding was already complete when the modal opened. Saving a
+   * major plus at least one interest makes `users.updateProfile` auto-stamp
+   * `onboardingCompletedAt`, so for a not-yet-onboarded user this modal is a
+   * way to finish without ever walking the wizard. That's a skip, and the
+   * funnel needs to see it.
+   */
+  wasOnboarded: boolean;
   onDismiss: () => void;
   onSignOut: () => void;
 }
@@ -272,6 +281,7 @@ interface ProfileModalInnerProps {
 function ProfileModalInner({
   initialValue,
   userName,
+  wasOnboarded,
   onDismiss,
   onSignOut,
 }: ProfileModalInnerProps) {
@@ -303,6 +313,14 @@ function ProfileModalInner({
         minor: value.minor ?? null,
         interests: value.interests,
       });
+      // Mirrors the auto-complete rule in `users.updateProfile`.
+      const completesOnboarding =
+        typeof value.major === "string" &&
+        value.major.length > 0 &&
+        value.interests.length > 0;
+      if (!wasOnboarded && completesOnboarding) {
+        track("onboarding_skipped", { at_step: 1, via: "profile_modal" });
+      }
       setSaving(false);
       setSaved(true);
       // Show "Saved" briefly (~600ms), then dismiss the modal.
@@ -346,7 +364,7 @@ export function ProfileModalRoute({
   /** Called when the modal should close (× / backdrop click / save complete). */
   onDismiss: () => void;
 }) {
-  const { user, profile, loading } = useCurrentProfile();
+  const { user, profile, loading, isOnboarded } = useCurrentProfile();
   const { signOut } = useAuthActions();
   const navigate = useNavigate();
 
@@ -386,6 +404,7 @@ export function ProfileModalRoute({
       key={innerKey}
       initialValue={initialValue}
       userName={userName}
+      wasOnboarded={isOnboarded}
       onDismiss={onDismiss}
       onSignOut={handleSignOut}
     />

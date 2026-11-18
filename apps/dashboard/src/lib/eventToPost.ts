@@ -19,6 +19,18 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { PublicEvent } from "../../convex/events";
 import type { PublicOrg } from "../../convex/orgs";
 
+/**
+ * A mapped post plus the ids analytics needs. `DashboardPost` only receives
+ * display props, so the underlying event/org ids would otherwise be lost by
+ * the time the list is rendered — these carry them through to
+ * `EventImpression`. Optional because Home also accepts injected sample posts
+ * that aren't backed by real documents.
+ */
+export interface FeedPost extends DashboardPostProps {
+  eventId?: string;
+  orgIds?: string[];
+}
+
 export interface HydratedEvent {
   event: PublicEvent;
   orgs: PublicOrg[];
