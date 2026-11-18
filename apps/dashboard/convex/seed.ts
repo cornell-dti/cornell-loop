@@ -3,6 +3,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
+import { normalizeAliases } from "./lib/orgAliases";
 import {
   SEED_EVENTS,
   SEED_EVENT_HOST_SLUGS,
@@ -103,10 +104,13 @@ export const seedAll = internalMutation({
         orgIdsBySlug.set(org.slug, existing._id);
         continue;
       }
+      const { aliases, aliasSearch } = normalizeAliases(org.aliases);
       const inserted = await ctx.db.insert("orgs", {
         slug: org.slug,
         name: org.name,
         description: org.description,
+        aliases,
+        aliasSearch,
         tags: org.tags,
         isVerified: org.isVerified,
         websiteUrl: org.websiteUrl,

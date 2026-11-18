@@ -28,6 +28,13 @@ export default defineSchema({
     avatarUrl: v.optional(v.string()),
     coverImageUrl: v.optional(v.string()),
     description: v.string(),
+    // Abbreviations students actually type ("WICC", "SWIB", "URMC"), which
+    // often appear nowhere in the org's written-out name.
+    aliases: v.optional(v.array(v.string())),
+    // `aliases` joined with spaces, because a search index covers one string
+    // field rather than an array. Written alongside `aliases` on every path
+    // that sets it; never edited on its own.
+    aliasSearch: v.optional(v.string()),
     tags: v.array(v.string()),
     websiteUrl: v.optional(v.string()),
     email: v.optional(v.string()),
@@ -51,7 +58,8 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_seed", ["isSeed"])
     .searchIndex("search_orgs_name", { searchField: "name" })
-    .searchIndex("search_orgs_desc", { searchField: "description" }),
+    .searchIndex("search_orgs_desc", { searchField: "description" })
+    .searchIndex("search_orgs_aliases", { searchField: "aliasSearch" }),
 
   // AI-proposed org profile fields, built from an org's listserv mail. Nothing
   // here reaches `orgs` until an admin publishes it — the same draft-first
@@ -562,6 +570,12 @@ export default defineSchema({
     parseConfidence: v.optional(v.number()),
     parseWarnings: v.optional(v.array(v.string())),
     dedupeKey: v.optional(v.string()),
+    // Set when this draft looks like a second telling of an event the same org
+    // already has — a reminder email, or a re-announcement with a reworded
+    // title. The draft is still stored and reviewable; an admin decides.
+    duplicateOfId: v.optional(v.id("events")),
+    /** What matched, e.g. `same day as "WICC GBM"`. Shown on the Publish tab. */
+    duplicateReason: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
   })

@@ -16,6 +16,7 @@ export type PublicOrg = Pick<
   | "name"
   | "avatarUrl"
   | "description"
+  | "aliases"
   | "tags"
   | "coverImageUrl"
   | "websiteUrl"
@@ -31,6 +32,7 @@ export function projectOrg(org: Doc<"orgs">): PublicOrg {
     name: org.name,
     avatarUrl: org.avatarUrl,
     description: org.description,
+    aliases: org.aliases,
     tags: org.tags,
     coverImageUrl: org.coverImageUrl,
     websiteUrl: org.websiteUrl,
@@ -117,9 +119,19 @@ export const searchOrgs = authedQuery({
       )
       .take(20);
 
+    // "WICC" finds Women in Computing at Cornell even where the abbreviation
+    // appears in neither the name nor the description.
+    const byAlias = await ctx.db
+      .query("orgs")
+      .withSearchIndex("search_orgs_aliases", (q) =>
+        q.search("aliasSearch", args.q),
+      )
+      .take(20);
+
     const seen = new Set<Id<"orgs">>();
     const merged: Doc<"orgs">[] = [];
-    for (const org of [...byName, ...byDesc]) {
+    // Name matches first, then aliases, then the looser description matches.
+    for (const org of [...byName, ...byAlias, ...byDesc]) {
       if (seen.has(org._id)) continue;
       seen.add(org._id);
       merged.push(org);

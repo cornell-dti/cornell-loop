@@ -77,6 +77,8 @@ export type SeedOrg = {
   slug: string;
   name: string;
   description: string;
+  /** Abbreviations search should match, e.g. ["WICC"]. */
+  aliases?: string[];
   tags: string[];
   isVerified: boolean;
   websiteUrl?: string;
@@ -115,6 +117,7 @@ export const SEED_ORGS: SeedOrg[] = [
     slug: "acsu",
     name: "Association of Computer Science Undergraduates (ACSU)",
     description: "CS organization for undergrads looking to find community.",
+    aliases: ["ACSU"],
     tags: ["Tech", "Mentorship"],
     isVerified: true,
     websiteUrl: "https://acsu.cornell.edu",
@@ -127,6 +130,7 @@ export const SEED_ORGS: SeedOrg[] = [
     name: "Cornell University Autonomous Underwater Vehicle (CUAUV)",
     description:
       "Project team designing and building autonomous underwater vehicles for the international RoboSub competition.",
+    aliases: ["CUAUV"],
     tags: ["Project team", "Robotics"],
     isVerified: true,
     websiteUrl: "https://cuauv.org",
@@ -151,6 +155,7 @@ export const SEED_ORGS: SeedOrg[] = [
     name: "Women in Computing at Cornell (WICC)",
     description:
       "Women in Computing at Cornell — mentorship circles, tech talks, and social events for women and non-binary folks in CS.",
+    aliases: ["WICC"],
     tags: ["Tech", "Mentorship"],
     isVerified: true,
     websiteUrl: "https://wicc.cornell.edu",
@@ -175,6 +180,7 @@ export const SEED_ORGS: SeedOrg[] = [
     name: "Big Red Robotics",
     description:
       "Undergraduate robotics team building competition robots and running open lab nights for newcomers each semester.",
+    aliases: ["BRR"],
     tags: ["Tech", "Project team"],
     isVerified: true,
     websiteUrl: "https://bigredrobotics.org",
@@ -187,6 +193,7 @@ export const SEED_ORGS: SeedOrg[] = [
     name: "Cornell Data Science (CDS)",
     description:
       "Cornell Data Science — ML project teams, workshops, and an annual hackathon focused on applied data science.",
+    aliases: ["CDS"],
     tags: ["Tech", "Project team"],
     isVerified: true,
     websiteUrl: "https://cornelldata.science",
