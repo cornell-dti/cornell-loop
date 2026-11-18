@@ -17,7 +17,7 @@ import {
   listNameFromConfirmationSender,
 } from "../../convex/lib/cornellLists";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import { isPastEvent } from "../../convex/lib/eventDates";
+import { classifyDraftStaleness } from "../../convex/lib/eventDates";
 import {
   normalizeModelConfidence,
   scoreParseQuality,
@@ -387,6 +387,8 @@ export default function Admin() {
     token ? { token } : "skip",
   );
   const parseData = useQuery(api.parser.overview, token ? { token } : "skip");
+  const autoHiddenDrafts: EventDoc[] =
+    useQuery(api.parser.listAutoHiddenDrafts, token ? { token } : "skip") ?? [];
   const orgProfiles = useQuery(
     api.orgEnrichment.overview,
     token ? { token } : "skip",
@@ -434,6 +436,8 @@ export default function Admin() {
   const publishEvents = useMutation(api.parser.publishEvents);
   const hideEvent = useMutation(api.parser.hideEvent);
   const hidePastDrafts = useMutation(api.parser.hidePastDrafts);
+  const moveStaleMessagesNow = useMutation(api.parser.moveStaleMessagesNow);
+  const restoreAutoHiddenDraft = useMutation(api.parser.restoreAutoHiddenDraft);
   const updateDraftEvent = useMutation(api.parser.updateDraftEvent);
   const requeueMessage = useMutation(api.parser.requeueMessage);
   const updateListservEmail = useMutation(
@@ -525,11 +529,14 @@ export default function Admin() {
   const draftCounts = {
     total: parseData?.draftCount ?? 0,
     past: parseData?.pastDraftCount ?? 0,
+    uncertain: parseData?.uncertainDraftCount ?? 0,
     truncated: parseData?.draftScanTruncated ?? false,
   };
   const failedMessages: ParseMessage[] = (parseData?.failedMessages ??
     []) as ParseMessage[];
   const ignoredMessages: ParseMessage[] = (parseData?.ignoredMessages ??
+    []) as ParseMessage[];
+  const staleMessages: ParseMessage[] = (parseData?.staleMessages ??
     []) as ParseMessage[];
   const needsAssignment: number = parseData?.needsAssignmentCount ?? 0;
   const readyCount: number = parseData?.readyCount ?? 0;
@@ -937,8 +944,31 @@ export default function Admin() {
             draftsStatus={draftsStatus}
             onLoadMoreDrafts={() => loadMoreDrafts(DRAFT_PAGE_SIZE)}
             draftCounts={draftCounts}
+            autoHiddenDrafts={autoHiddenDrafts}
+            onRestore={(id) =>
+              act("Restored to drafts.", () =>
+                restoreAutoHiddenDraft({ token, eventId: id }),
+              )
+            }
             failedMessages={failedMessages}
             ignoredMessages={ignoredMessages}
+            staleMessages={staleMessages}
+            onMoveStale={async () => {
+              try {
+                const result = await moveStaleMessagesNow({ token });
+                const noun = `stale email${result.moved !== 1 ? "s" : ""}`;
+                showToast(
+                  result.remaining
+                    ? `Moved ${result.moved} ${noun}. More remain — click again.`
+                    : `Moved ${result.moved} ${noun}.`,
+                );
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Action failed.",
+                  false,
+                );
+              }
+            }}
             readyMessages={readyMessages}
             readyStatus={readyStatus}
             onLoadMoreReady={onLoadMoreReady}
@@ -4052,8 +4082,12 @@ function PublishTab({
   draftsStatus,
   onLoadMoreDrafts,
   draftCounts,
+  autoHiddenDrafts,
+  onRestore,
   failedMessages,
   ignoredMessages,
+  staleMessages,
+  onMoveStale,
   readyMessages,
   readyStatus,
   onLoadMoreReady,
@@ -4080,9 +4114,18 @@ function PublishTab({
   onLoadMoreDrafts: () => void;
   // Counted server-side over every draft, not just the loaded pages, so the
   // header shows the real backlog.
-  draftCounts: { total: number; past: number; truncated: boolean };
+  draftCounts: {
+    total: number;
+    past: number;
+    uncertain: number;
+    truncated: boolean;
+  };
+  autoHiddenDrafts: EventDoc[];
+  onRestore: (id: Id<"events">) => void;
   failedMessages: ParseMessage[];
   ignoredMessages: ParseMessage[];
+  staleMessages: ParseMessage[];
+  onMoveStale: () => void;
   readyMessages: ParseMessage[];
   readyStatus: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
   onLoadMoreReady: () => void;
@@ -4131,11 +4174,26 @@ function PublishTab({
   // fresh enough that a draft ages into this bucket the next time the admin
   // page is opened, not live within an open session.
   const [now] = useState(() => Date.now());
-  const currentDrafts = drafts.filter(
-    (draft) => !isPastEvent(draft.dates, now),
+  // Undated drafts from emails over a month old are "passed" too, or
+  // "uncertain" when they might outlive the email (recurring, programs) — those
+  // are flagged for a human instead of being hidden.
+  const staleness = new Map(
+    drafts.map((draft) => [
+      draft._id,
+      classifyDraftStaleness(draft, draft.sourceReceivedAt, now),
+    ]),
   );
-  const pastDrafts = drafts.filter((draft) => isPastEvent(draft.dates, now));
-  const currentDraftTotal = draftCounts.total - draftCounts.past;
+  const currentDrafts = drafts.filter(
+    (draft) => staleness.get(draft._id) === "current",
+  );
+  const pastDrafts = drafts.filter(
+    (draft) => staleness.get(draft._id) === "passed",
+  );
+  const uncertainDrafts = drafts.filter(
+    (draft) => staleness.get(draft._id) === "uncertain",
+  );
+  const currentDraftTotal =
+    draftCounts.total - draftCounts.past - draftCounts.uncertain;
   const plus = draftCounts.truncated ? "+" : "";
 
   // Publishing a draft removes it from `drafts`, as does hiding one, so the
@@ -4400,11 +4458,45 @@ function PublishTab({
         )}
       </Card>
 
-      {/* Past drafts — every date already behind "now", so reviewing them is
-          pure backlog. Kept reachable rather than auto-hidden, since an admin
-          may still want to publish a recap or correct the date instead. The
-          count and "Hide all" cover every draft; the rows are only the loaded
-          ones. */}
+      {/* Needs a look — undated and from an email over a month old, but the
+          item may still be live (recurring, a program, or has an apply/register
+          link). Never hidden in bulk; an admin decides each one. */}
+      {(draftCounts.uncertain > 0 || uncertainDrafts.length > 0) && (
+        <details className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold text-amber-800">
+            Needs a look (
+            {Math.max(draftCounts.uncertain, uncertainDrafts.length)}
+            {plus}) — old email, no date
+          </summary>
+          <div className="mt-3 grid gap-2">
+            <p className="text-[length:var(--font-size-body3)] text-amber-800">
+              These came from an email over a month old and have no event date
+              or deadline, but may still be relevant (recurring, a program, or
+              an application link). Publish, edit in a date, or hide each one.
+            </p>
+            {uncertainDrafts.map((event) => (
+              <DraftCard
+                key={event._id}
+                event={event}
+                onPublish={() => onPublish(event._id)}
+                onHide={() => onHide(event._id)}
+                onEdit={(patch) => onEdit(event._id, patch)}
+                onReparse={
+                  event.sourceMessageId
+                    ? () => onReparse(event.sourceMessageId!)
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Passed drafts — every date already behind "now", or undated from an
+          email over a month old, so reviewing them is pure backlog. Kept
+          reachable rather than auto-hidden, since an admin may still want to
+          publish a recap or correct the date instead. The count and "Hide all"
+          cover every draft; the rows are only the loaded ones. */}
       {(draftCounts.past > 0 || pastDrafts.length > 0) && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
           <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
@@ -4414,7 +4506,8 @@ function PublishTab({
           <div className="mt-3 grid gap-2">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-secondary)]">
-                Every date on these is already in the past. If the parser got a
+                Every date on these is already in the past, or they have no date
+                and came from an email over a month old. If the parser got a
                 date wrong, edit or reparse the draft and it moves back up;
                 otherwise hide them all at once, including any not loaded below.
               </p>
@@ -4435,6 +4528,40 @@ function PublishTab({
                     : undefined
                 }
               />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Auto-hidden — what the daily sweep archived, kept one fold away so an
+          admin can spot-check that nothing relevant was lost. Restoring puts a
+          draft back in review and exempts it from future sweeps. */}
+      {autoHiddenDrafts.length > 0 && (
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
+            Auto-hidden ({autoHiddenDrafts.length}) — archived by the daily
+            sweep
+          </summary>
+          <div className="mt-3 grid gap-2">
+            {autoHiddenDrafts.map((event) => (
+              <div
+                key={event._id}
+                className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">{event.title}</div>
+                  <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                    {event.listserv} ·{" "}
+                    {event.dates.length > 0
+                      ? `last date ${fmtDate(Math.max(...event.dates.map((d) => d.timestamp)))}`
+                      : "no date"}
+                    {event.sourceReceivedAt !== undefined
+                      ? ` · email ${fmtDate(event.sourceReceivedAt)}`
+                      : ""}
+                  </div>
+                </div>
+                <Btn onClick={() => onRestore(event._id)}>Restore</Btn>
+              </div>
             ))}
           </div>
         </details>
@@ -4468,6 +4595,43 @@ function PublishTab({
           </div>
         </Card>
       )}
+
+      {/* Stale — emails older than a month, swept out of the ready queue so
+          the parser doesn't pay for them. The button runs the same sweep as
+          the nightly cron. */}
+      <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+        <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
+          Stale emails ({staleMessages.length}
+          {staleMessages.length === 25 ? "+" : ""}) — too old to parse
+        </summary>
+        <div className="mt-3 grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[length:var(--font-size-body3)] text-[color:var(--color-text-secondary)]">
+              Emails over a month old are moved here instead of the ready queue.
+              Requeue one to parse it anyway and it won't be swept again.
+            </p>
+            <Btn onClick={onMoveStale} className="shrink-0">
+              Sweep stale now
+            </Btn>
+          </div>
+          {staleMessages.map((m) => (
+            <div
+              key={m._id}
+              className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[length:var(--font-size-body2)]"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold">
+                  {m.subject || "(no subject)"}
+                </div>
+                <div className="truncate text-[length:var(--font-size-body3)] text-[color:var(--color-text-muted)]">
+                  {m.senderEmail} · {fmtDate(m.receivedAt)}
+                </div>
+              </div>
+              <Btn onClick={() => onRequeue(m._id)}>Requeue</Btn>
+            </div>
+          ))}
+        </div>
+      </details>
 
       {/* Ignored */}
       {ignoredMessages.length > 0 && (

@@ -120,6 +120,61 @@ export function isPastEvent(
   return dates.length > 0 && dates.every((date) => date.timestamp < now);
 }
 
+/** An email older than this, with no date on its item, is considered stale. */
+export const STALE_EMAIL_DAYS = 30;
+
+/**
+ * - `current`: still worth reviewing.
+ * - `passed`: confidently over; filed with the past drafts.
+ * - `uncertain`: probably stale, but the item could still be live (a program
+ *   or recurring series), so it is flagged for a human before being hidden.
+ */
+export type DraftStaleness = "current" | "passed" | "uncertain";
+
+type StalenessInput = {
+  dates: ReadonlyArray<{ timestamp: number }>;
+  eventType: string;
+  isRecurring: boolean;
+  recurrenceNote?: string;
+  links: ReadonlyArray<{ type: string }>;
+  /** Set once an admin has restored the draft; it is never re-filed. */
+  keptActiveAt?: number;
+};
+
+/**
+ * Sorts a draft into current / passed / uncertain.
+ *
+ * Any dated item follows {@link isPastEvent}: a future date keeps it current,
+ * since programs and deadlines carry their own timestamps. An undated item is
+ * judged by the age of its source email (`receivedAt`): older than
+ * {@link STALE_EMAIL_DAYS} it is passed, unless it looks like something that
+ * outlives one email — recurring, a course or opportunity, or carrying a
+ * registration/application link — in which case it is `uncertain`. With no
+ * known email date there is nothing to judge by, so it stays current.
+ */
+export function classifyDraftStaleness(
+  draft: StalenessInput,
+  receivedAt: number | undefined,
+  now: number,
+): DraftStaleness {
+  if (draft.keptActiveAt !== undefined) return "current";
+  if (draft.dates.length > 0) {
+    return isPastEvent(draft.dates, now) ? "passed" : "current";
+  }
+  if (receivedAt === undefined) return "current";
+  if (now - receivedAt <= STALE_EMAIL_DAYS * MS_PER_DAY) return "current";
+
+  const mayOutliveEmail =
+    draft.isRecurring ||
+    (draft.recurrenceNote ?? "").length > 0 ||
+    draft.eventType === "opportunity" ||
+    draft.eventType === "courses" ||
+    draft.links.some(
+      (link) => link.type === "registration" || link.type === "application",
+    );
+  return mayOutliveEmail ? "uncertain" : "passed";
+}
+
 /** The {@link SOURCE_TIMEZONE} UTC offset in milliseconds at `timestamp`. */
 function zoneOffsetMs(timestamp: number): number {
   const offset = new Intl.DateTimeFormat("en-US", {

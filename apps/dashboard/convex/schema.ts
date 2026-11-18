@@ -300,10 +300,15 @@ export default defineSchema({
       v.literal("new"),
       v.literal("parsed"),
       v.literal("ignored"),
+      // Older than the staleness cutoff; swept out of the ready queue.
+      v.literal("stale"),
       v.literal("failed"),
     ),
     parseError: v.optional(v.string()),
     confirmationClearedAt: v.optional(v.number()),
+    // Set when an admin requeues the message, exempting it from the
+    // stale-email sweep.
+    staleKeptAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_gmail_message_id", ["gmailMessageId"])
@@ -542,6 +547,15 @@ export default defineSchema({
     visibility: v.optional(
       v.union(v.literal("draft"), v.literal("published"), v.literal("hidden")),
     ),
+    // When the source email arrived, copied from the message so staleness
+    // checks over a whole draft backlog needn't read every email body.
+    sourceReceivedAt: v.optional(v.number()),
+    // Set when the passed-draft sweep hid this row, so the admin page can list
+    // exactly what was auto-archived (as opposed to hidden by hand).
+    autoHiddenAt: v.optional(v.number()),
+    // Set when an admin restores an auto-hidden draft: the sweep must not
+    // hide it again.
+    keptActiveAt: v.optional(v.number()),
     parseConfidence: v.optional(v.number()),
     parseWarnings: v.optional(v.array(v.string())),
     dedupeKey: v.optional(v.string()),

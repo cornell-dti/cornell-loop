@@ -17,6 +17,8 @@ import { isRecord } from "./lib/ai";
 import { isListAdminNoise } from "./lib/cornellLists";
 import {
   SOURCE_TIMEZONE,
+  STALE_EMAIL_DAYS,
+  classifyDraftStaleness,
   epochMsToLocalParts,
   isPastEvent,
   localPartsToEpochMs,
@@ -362,6 +364,8 @@ export const requeueMessage = mutation({
     await ctx.db.patch(args.messageId, {
       processingStatus: "new",
       parseError: undefined,
+      // An admin asked for this one, so the stale-email sweep must leave it.
+      staleKeptAt: Date.now(),
     });
     return null;
   },
@@ -388,36 +392,184 @@ export const hideEvent = mutation({
  * Capped at {@link HIDE_PAST_BATCH} hides per call; `remaining` says whether
  * another click is needed.
  */
+async function hidePassedDrafts(
+  ctx: MutationCtx,
+): Promise<{ hidden: number; remaining: boolean }> {
+  const now = Date.now();
+
+  // Read before writing: each patch moves a row out of the very index range
+  // being scanned.
+  const drafts = await ctx.db
+    .query("events")
+    .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+    .take(DRAFT_COUNT_SCAN_LIMIT);
+  // "uncertain" drafts are deliberately left for a human to decide.
+  const past = drafts.filter(
+    (draft) =>
+      classifyDraftStaleness(draft, draft.sourceReceivedAt, now) === "passed",
+  );
+  const batch = past.slice(0, HIDE_PAST_BATCH);
+
+  for (const draft of batch) {
+    await ctx.db.patch(draft._id, {
+      visibility: "hidden",
+      autoHiddenAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return {
+    hidden: batch.length,
+    // A truncated scan only counts as "more to do" if this call hid
+    // something, since hiding is what makes room to scan further; otherwise
+    // a backlog of current drafts past the scan limit would ask for another
+    // click forever.
+    remaining:
+      past.length > batch.length ||
+      (drafts.length === DRAFT_COUNT_SCAN_LIMIT && batch.length > 0),
+  };
+}
+
 export const hidePastDrafts = mutation({
   args: { token: v.string() },
   returns: v.object({ hidden: v.number(), remaining: v.boolean() }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const now = Date.now();
+    return await hidePassedDrafts(ctx);
+  },
+});
 
-    // Read before writing: each patch moves a row out of the very index range
-    // being scanned.
-    const drafts = await ctx.db
-      .query("events")
-      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
-      .take(DRAFT_COUNT_SCAN_LIMIT);
-    const past = drafts.filter((draft) => isPastEvent(draft.dates, now));
-    const batch = past.slice(0, HIDE_PAST_BATCH);
-
-    for (const draft of batch) {
-      await ctx.db.patch(draft._id, { visibility: "hidden", updatedAt: now });
+/**
+ * Cron entry point: the same sweep as {@link hidePastDrafts}, with no admin
+ * token. When a backlog is bigger than one batch it schedules itself again
+ * rather than waiting for the next day's run.
+ */
+export const autoHidePastDrafts = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const result = await hidePassedDrafts(ctx);
+    if (result.remaining) {
+      await ctx.scheduler.runAfter(0, internal.parser.autoHidePastDrafts, {});
     }
+    return null;
+  },
+});
 
-    return {
-      hidden: batch.length,
-      // A truncated scan only counts as "more to do" if this call hid
-      // something, since hiding is what makes room to scan further; otherwise
-      // a backlog of current drafts past the scan limit would ask for another
-      // click forever.
-      remaining:
-        past.length > batch.length ||
-        (drafts.length === DRAFT_COUNT_SCAN_LIMIT && batch.length > 0),
-    };
+/** Auto-hidden drafts shown for verification, newest first. */
+const AUTO_HIDDEN_LIST_LIMIT = 100;
+
+/**
+ * Drafts the sweep hid, so an admin can check nothing relevant was lost.
+ * Bounded to the newest {@link AUTO_HIDDEN_LIST_LIMIT} hidden rows.
+ */
+export const listAutoHiddenDrafts = query({
+  args: { token: v.string() },
+  returns: v.array(eventDocValidator),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const hidden = await ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "hidden"))
+      .order("desc")
+      .take(AUTO_HIDDEN_LIST_LIMIT * 5);
+    return hidden
+      .filter((event) => event.autoHiddenAt !== undefined)
+      .slice(0, AUTO_HIDDEN_LIST_LIMIT);
+  },
+});
+
+/**
+ * Puts an auto-hidden draft back in the review queue. `keptActiveAt` stops the
+ * next sweep from hiding it again.
+ */
+export const restoreAutoHiddenDraft = mutation({
+  args: { token: v.string(), eventId: v.id("events") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    const event = await ctx.db.get(args.eventId);
+    if (
+      !event ||
+      event.visibility !== "hidden" ||
+      event.autoHiddenAt === undefined
+    ) {
+      return null;
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.eventId, {
+      visibility: "draft",
+      autoHiddenAt: undefined,
+      keptActiveAt: now,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/** Messages scanned per stale-message sweep pass. */
+const STALE_MESSAGE_BATCH = 200;
+
+/**
+ * Takes emails older than {@link STALE_EMAIL_DAYS} out of the ready-to-parse
+ * queue by marking them `stale`, so the parser stops spending model calls on
+ * them. They stay visible under "stale" and can be requeued.
+ *
+ * Reads oldest-first, so a pass that finds nothing stale means the rest are
+ * newer. `remaining` is true while a full batch still yielded stale rows,
+ * since moving them out of `new` is what lets the next pass see further.
+ */
+async function moveStaleMessages(
+  ctx: MutationCtx,
+): Promise<{ moved: number; remaining: boolean }> {
+  const cutoff = Date.now() - STALE_EMAIL_DAYS * 86_400_000;
+  const messages = await ctx.db
+    .query("listservMessages")
+    .withIndex("by_processing_status", (q) => q.eq("processingStatus", "new"))
+    .order("asc")
+    .take(STALE_MESSAGE_BATCH);
+  const stale = messages.filter(
+    (message) =>
+      message.receivedAt < cutoff && message.staleKeptAt === undefined,
+  );
+
+  for (const message of stale) {
+    await ctx.db.patch(message._id, {
+      processingStatus: "stale",
+      parseError: `Email is older than ${STALE_EMAIL_DAYS} days. Requeue to parse it anyway.`,
+    });
+  }
+
+  return {
+    moved: stale.length,
+    remaining: messages.length === STALE_MESSAGE_BATCH && stale.length > 0,
+  };
+}
+
+/** Cron entry point; reschedules itself while a backlog remains. */
+export const ignoreStaleReadyMessages = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const result = await moveStaleMessages(ctx);
+    if (result.remaining) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.parser.ignoreStaleReadyMessages,
+        {},
+      );
+    }
+    return null;
+  },
+});
+
+/** Manual button for the same sweep. One batch per call; see `remaining`. */
+export const moveStaleMessagesNow = mutation({
+  args: { token: v.string() },
+  returns: v.object({ moved: v.number(), remaining: v.boolean() }),
+  handler: async (ctx, args) => {
+    requireAdminToken(args.token);
+    return await moveStaleMessages(ctx);
   },
 });
 
@@ -530,6 +682,7 @@ const PARSE_MESSAGE_PROJECTION_VALIDATOR = v.object({
     v.literal("new"),
     v.literal("parsed"),
     v.literal("ignored"),
+    v.literal("stale"),
     v.literal("failed"),
   ),
   parseError: v.optional(v.string()),
@@ -544,57 +697,73 @@ export const overview = query({
     runs: v.array(parseRunDocValidator),
     failedMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     ignoredMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
+    staleMessages: v.array(PARSE_MESSAGE_PROJECTION_VALIDATOR),
     needsAssignmentCount: v.number(),
     readyCount: v.number(),
     readyScanTruncated: v.boolean(),
     draftCount: v.number(),
     pastDraftCount: v.number(),
+    uncertainDraftCount: v.number(),
     draftScanTruncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const [runs, drafts, failedMessages, ignoredMessages, newMessages] =
-      await Promise.all([
-        ctx.db
-          .query("parseRuns")
-          .withIndex("by_started_at")
-          .order("desc")
-          .take(20),
-        // Counted only — the list an admin reviews is `listDrafts`, which
-        // paginates, so the header can say how big the backlog is while the
-        // page loads it a screenful at a time.
-        ctx.db
-          .query("events")
-          .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
-          .take(DRAFT_COUNT_SCAN_LIMIT),
-        ctx.db
-          .query("listservMessages")
-          .withIndex("by_processing_status", (q) =>
-            q.eq("processingStatus", "failed"),
-          )
-          .order("desc")
-          .take(25),
-        // No mutation used to move a message off `ignored` until `requeueMessage`
-        // — surfaced here so there's somewhere in the UI to click it.
-        ctx.db
-          .query("listservMessages")
-          .withIndex("by_processing_status", (q) =>
-            q.eq("processingStatus", "ignored"),
-          )
-          .order("desc")
-          .take(25),
-        // Bounded window behind both of the header's "new" message counts: how
-        // many are blocked on sender assignment, and how many are ready to
-        // parse. The ready *queue* is still paginated by `listReadyMessages`,
-        // because listing it is a different job from counting it.
-        ctx.db
-          .query("listservMessages")
-          .withIndex("by_processing_status", (q) =>
-            q.eq("processingStatus", "new"),
-          )
-          .order("desc")
-          .take(NEEDS_ASSIGNMENT_SCAN_LIMIT),
-      ]);
+    const [
+      runs,
+      drafts,
+      failedMessages,
+      ignoredMessages,
+      staleMessages,
+      newMessages,
+    ] = await Promise.all([
+      ctx.db
+        .query("parseRuns")
+        .withIndex("by_started_at")
+        .order("desc")
+        .take(20),
+      // Counted only — the list an admin reviews is `listDrafts`, which
+      // paginates, so the header can say how big the backlog is while the
+      // page loads it a screenful at a time.
+      ctx.db
+        .query("events")
+        .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+        .take(DRAFT_COUNT_SCAN_LIMIT),
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "failed"),
+        )
+        .order("desc")
+        .take(25),
+      // No mutation used to move a message off `ignored` until `requeueMessage`
+      // — surfaced here so there's somewhere in the UI to click it.
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "ignored"),
+        )
+        .order("desc")
+        .take(25),
+      // Emails swept out of the ready queue for being too old.
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "stale"),
+        )
+        .order("desc")
+        .take(25),
+      // Bounded window behind both of the header's "new" message counts: how
+      // many are blocked on sender assignment, and how many are ready to
+      // parse. The ready *queue* is still paginated by `listReadyMessages`,
+      // because listing it is a different job from counting it.
+      ctx.db
+        .query("listservMessages")
+        .withIndex("by_processing_status", (q) =>
+          q.eq("processingStatus", "new"),
+        )
+        .order("desc")
+        .take(NEEDS_ASSIGNMENT_SCAN_LIMIT),
+    ]);
 
     const needsAssignment = newMessages.filter(
       (m) => m.organizationId === undefined,
@@ -624,14 +793,19 @@ export const overview = query({
     // past its last date is counted as past on the next change to `events`
     // or the next page load — soon enough for a backlog count.
     const now = Date.now();
-    const pastDraftCount = drafts.filter((draft) =>
-      isPastEvent(draft.dates, now),
+    const staleness = drafts.map((draft) =>
+      classifyDraftStaleness(draft, draft.sourceReceivedAt, now),
+    );
+    const pastDraftCount = staleness.filter((s) => s === "passed").length;
+    const uncertainDraftCount = staleness.filter(
+      (s) => s === "uncertain",
     ).length;
 
     return {
       runs,
       failedMessages: failedMessages.map(projectMessage),
       ignoredMessages: ignoredMessages.map(projectMessage),
+      staleMessages: staleMessages.map(projectMessage),
       needsAssignmentCount: needsAssignment.length,
       readyCount,
       // Both counts above describe the newest `NEEDS_ASSIGNMENT_SCAN_LIMIT`
@@ -639,6 +813,7 @@ export const overview = query({
       readyScanTruncated: newMessages.length === NEEDS_ASSIGNMENT_SCAN_LIMIT,
       draftCount: drafts.length,
       pastDraftCount,
+      uncertainDraftCount,
       draftScanTruncated: drafts.length === DRAFT_COUNT_SCAN_LIMIT,
     };
   },
@@ -893,6 +1068,7 @@ export const storeParsedEvents = internalMutation({
         targetAudience: item.targetAudience,
         perks: item.perks,
         visibility: "draft",
+        sourceReceivedAt: message.receivedAt,
         // Per item: `args.confidence` / `args.warnings` describe the message
         // as a whole and are already folded into each item's own values.
         parseConfidence: item.confidence,
@@ -909,6 +1085,47 @@ export const storeParsedEvents = internalMutation({
       parseError: undefined,
     });
     return { created, skippedDuplicate };
+  },
+});
+
+/**
+ * One-off backfill of `sourceReceivedAt` on drafts stored before the field
+ * existed, copied from the source message (or the legacy email row). Without
+ * it the stale-draft check has no email date and leaves the draft current.
+ *
+ * Run `npx convex run parser:backfillDraftSourceReceivedAt` once.
+ */
+export const backfillDraftSourceReceivedAt = internalMutation({
+  args: {},
+  returns: v.object({ updated: v.number(), skippedNoSource: v.number() }),
+  handler: async (ctx) => {
+    let updated = 0;
+    let skippedNoSource = 0;
+
+    const drafts = ctx.db
+      .query("events")
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+
+    for await (const draft of drafts) {
+      if (draft.sourceReceivedAt !== undefined) continue;
+
+      const message = draft.sourceMessageId
+        ? await ctx.db.get(draft.sourceMessageId)
+        : null;
+      const legacyEmail = draft.listservEmailId
+        ? await ctx.db.get(draft.listservEmailId)
+        : null;
+      const receivedAt = message?.receivedAt ?? legacyEmail?.sentAt;
+      if (receivedAt === undefined) {
+        skippedNoSource += 1;
+        continue;
+      }
+
+      await ctx.db.patch(draft._id, { sourceReceivedAt: receivedAt });
+      updated += 1;
+    }
+
+    return { updated, skippedNoSource };
   },
 });
 

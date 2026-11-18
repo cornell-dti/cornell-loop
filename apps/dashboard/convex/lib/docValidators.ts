@@ -363,6 +363,9 @@ export const eventDocValidator = v.object({
   visibility: v.optional(
     v.union(v.literal("draft"), v.literal("published"), v.literal("hidden")),
   ),
+  sourceReceivedAt: v.optional(v.number()),
+  autoHiddenAt: v.optional(v.number()),
+  keptActiveAt: v.optional(v.number()),
   parseConfidence: v.optional(v.number()),
   parseWarnings: v.optional(v.array(v.string())),
   dedupeKey: v.optional(v.string()),
