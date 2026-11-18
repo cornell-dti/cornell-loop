@@ -47,8 +47,8 @@ const NEEDS_ASSIGNMENT_SCAN_LIMIT = 500;
 /** Bound on the draft counts in `overview`; the list itself is paginated. */
 const DRAFT_COUNT_SCAN_LIMIT = 1000;
 /**
- * Drafts hidden per `hidePastDrafts` call, keeping one call well inside a
- * mutation's write limits. A larger backlog reports `remaining` instead.
+ * Drafts read (and so at most hidden) per sweep page, keeping one call well
+ * inside a mutation's limits. Later pages run as scheduled follow-ups.
  */
 const HIDE_PAST_BATCH = 500;
 
@@ -93,6 +93,7 @@ type ParsedItem = {
     timestamp: number;
     type: "start" | "end" | "deadline" | "single";
   }>;
+  statedYears?: number[];
   isRecurring: boolean;
   recurrenceNote?: string;
   location?: {
@@ -389,28 +390,26 @@ export const hideEvent = mutation({
  * backlog rather than only the page the admin has loaded. Drafts only, so
  * nothing already published is touched.
  *
- * Capped at {@link HIDE_PAST_BATCH} hides per call; `remaining` says whether
- * another click is needed.
+ * Walks the draft index one page of {@link HIDE_PAST_BATCH} rows per call and
+ * hands back the cursor, so a page with nothing to hide still advances the
+ * sweep instead of re-reading the same rows forever.
  */
-async function hidePassedDrafts(
+async function hidePassedDraftsPage(
   ctx: MutationCtx,
-): Promise<{ hidden: number; remaining: boolean }> {
+  cursor: string | null,
+): Promise<{ hidden: number; continueCursor: string; isDone: boolean }> {
   const now = Date.now();
-
-  // Read before writing: each patch moves a row out of the very index range
-  // being scanned.
-  const drafts = await ctx.db
+  const page = await ctx.db
     .query("events")
     .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
-    .take(DRAFT_COUNT_SCAN_LIMIT);
+    .paginate({ numItems: HIDE_PAST_BATCH, cursor });
+
   // "uncertain" drafts are deliberately left for a human to decide.
-  const past = drafts.filter(
+  const passed = page.page.filter(
     (draft) =>
       classifyDraftStaleness(draft, draft.sourceReceivedAt, now) === "passed",
   );
-  const batch = past.slice(0, HIDE_PAST_BATCH);
-
-  for (const draft of batch) {
+  for (const draft of passed) {
     await ctx.db.patch(draft._id, {
       visibility: "hidden",
       autoHiddenAt: now,
@@ -419,63 +418,65 @@ async function hidePassedDrafts(
   }
 
   return {
-    hidden: batch.length,
-    // A truncated scan only counts as "more to do" if this call hid
-    // something, since hiding is what makes room to scan further; otherwise
-    // a backlog of current drafts past the scan limit would ask for another
-    // click forever.
-    remaining:
-      past.length > batch.length ||
-      (drafts.length === DRAFT_COUNT_SCAN_LIMIT && batch.length > 0),
+    hidden: passed.length,
+    continueCursor: page.continueCursor,
+    isDone: page.isDone,
   };
 }
 
+/**
+ * Manual button for the sweep. Hides the first page now and finishes the rest
+ * of the backlog in the background; `continuing` says whether it is.
+ */
 export const hidePastDrafts = mutation({
   args: { token: v.string() },
-  returns: v.object({ hidden: v.number(), remaining: v.boolean() }),
+  returns: v.object({ hidden: v.number(), continuing: v.boolean() }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    return await hidePassedDrafts(ctx);
+    const result = await hidePassedDraftsPage(ctx, null);
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.parser.autoHidePastDrafts, {
+        cursor: result.continueCursor,
+      });
+    }
+    return { hidden: result.hidden, continuing: !result.isDone };
   },
 });
 
 /**
  * Cron entry point: the same sweep as {@link hidePastDrafts}, with no admin
- * token. When a backlog is bigger than one batch it schedules itself again
- * rather than waiting for the next day's run.
+ * token. Schedules itself with the next cursor until the whole draft index has
+ * been walked.
  */
 export const autoHidePastDrafts = internalMutation({
-  args: {},
+  args: { cursor: v.optional(v.string()) },
   returns: v.null(),
-  handler: async (ctx) => {
-    const result = await hidePassedDrafts(ctx);
-    if (result.remaining) {
-      await ctx.scheduler.runAfter(0, internal.parser.autoHidePastDrafts, {});
+  handler: async (ctx, args) => {
+    const result = await hidePassedDraftsPage(ctx, args.cursor ?? null);
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.parser.autoHidePastDrafts, {
+        cursor: result.continueCursor,
+      });
     }
     return null;
   },
 });
 
-/** Auto-hidden drafts shown for verification, newest first. */
-const AUTO_HIDDEN_LIST_LIMIT = 100;
-
 /**
- * Drafts the sweep hid, so an admin can check nothing relevant was lost.
- * Bounded to the newest {@link AUTO_HIDDEN_LIST_LIMIT} hidden rows.
+ * Drafts the sweep hid, most recently hidden first, so an admin can check
+ * nothing relevant was lost. Restoring clears `autoHiddenAt`, which drops the
+ * row out of this index.
  */
 export const listAutoHiddenDrafts = query({
-  args: { token: v.string() },
-  returns: v.array(eventDocValidator),
+  args: { token: v.string(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(eventDocValidator),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    const hidden = await ctx.db
+    return await ctx.db
       .query("events")
-      .withIndex("by_visibility", (q) => q.eq("visibility", "hidden"))
+      .withIndex("by_auto_hidden", (q) => q.gt("autoHiddenAt", 0))
       .order("desc")
-      .take(AUTO_HIDDEN_LIST_LIMIT * 5);
-    return hidden
-      .filter((event) => event.autoHiddenAt !== undefined)
-      .slice(0, AUTO_HIDDEN_LIST_LIMIT);
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -507,28 +508,31 @@ export const restoreAutoHiddenDraft = mutation({
   },
 });
 
-/** Messages scanned per stale-message sweep pass. */
-const STALE_MESSAGE_BATCH = 200;
+/**
+ * Messages read per stale-message sweep page. Kept small because each row
+ * carries the full email body.
+ */
+const STALE_MESSAGE_BATCH = 100;
 
 /**
  * Takes emails older than {@link STALE_EMAIL_DAYS} out of the ready-to-parse
  * queue by marking them `stale`, so the parser stops spending model calls on
- * them. They stay visible under "stale" and can be requeued.
+ * them. They stay visible under "stale" and can be requeued; a requeued one
+ * (`staleKeptAt`) is skipped.
  *
- * Reads oldest-first, so a pass that finds nothing stale means the rest are
- * newer. `remaining` is true while a full batch still yielded stale rows,
- * since moving them out of `new` is what lets the next pass see further.
+ * Walks the `new` queue a page at a time and hands back the cursor, so a page
+ * of skipped or fresh emails still advances the sweep.
  */
-async function moveStaleMessages(
+async function moveStaleMessagesPage(
   ctx: MutationCtx,
-): Promise<{ moved: number; remaining: boolean }> {
+  cursor: string | null,
+): Promise<{ moved: number; continueCursor: string; isDone: boolean }> {
   const cutoff = Date.now() - STALE_EMAIL_DAYS * 86_400_000;
-  const messages = await ctx.db
+  const page = await ctx.db
     .query("listservMessages")
     .withIndex("by_processing_status", (q) => q.eq("processingStatus", "new"))
-    .order("asc")
-    .take(STALE_MESSAGE_BATCH);
-  const stale = messages.filter(
+    .paginate({ numItems: STALE_MESSAGE_BATCH, cursor });
+  const stale = page.page.filter(
     (message) =>
       message.receivedAt < cutoff && message.staleKeptAt === undefined,
   );
@@ -542,34 +546,42 @@ async function moveStaleMessages(
 
   return {
     moved: stale.length,
-    remaining: messages.length === STALE_MESSAGE_BATCH && stale.length > 0,
+    continueCursor: page.continueCursor,
+    isDone: page.isDone,
   };
 }
 
-/** Cron entry point; reschedules itself while a backlog remains. */
-export const ignoreStaleReadyMessages = internalMutation({
-  args: {},
+/** Cron entry point; schedules itself with the next cursor until done. */
+export const sweepStaleReadyMessages = internalMutation({
+  args: { cursor: v.optional(v.string()) },
   returns: v.null(),
-  handler: async (ctx) => {
-    const result = await moveStaleMessages(ctx);
-    if (result.remaining) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.parser.ignoreStaleReadyMessages,
-        {},
-      );
+  handler: async (ctx, args) => {
+    const result = await moveStaleMessagesPage(ctx, args.cursor ?? null);
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.parser.sweepStaleReadyMessages, {
+        cursor: result.continueCursor,
+      });
     }
     return null;
   },
 });
 
-/** Manual button for the same sweep. One batch per call; see `remaining`. */
+/**
+ * Manual button for the same sweep. Moves the first page now and finishes the
+ * rest in the background; `continuing` says whether it is.
+ */
 export const moveStaleMessagesNow = mutation({
   args: { token: v.string() },
-  returns: v.object({ moved: v.number(), remaining: v.boolean() }),
+  returns: v.object({ moved: v.number(), continuing: v.boolean() }),
   handler: async (ctx, args) => {
     requireAdminToken(args.token);
-    return await moveStaleMessages(ctx);
+    const result = await moveStaleMessagesPage(ctx, null);
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.parser.sweepStaleReadyMessages, {
+        cursor: result.continueCursor,
+      });
+    }
+    return { moved: result.moved, continuing: !result.isDone };
   },
 });
 
@@ -1016,15 +1028,27 @@ export const storeParsedEvents = internalMutation({
     // Reparsing an already-parsed message would otherwise insert a second
     // copy of every item and leave the first behind. Clear this message's
     // own prior drafts before storing the fresh parse — never `published` or
-    // `hidden` ones, since those are decisions an admin already made.
+    // manually `hidden` ones, since those are decisions an admin already
+    // made. Rows the passed-draft sweep hid are not a decision, so they are
+    // cleared too; otherwise their dedupe key silently blocks the corrected
+    // item.
     const priorDrafts = await ctx.db
       .query("events")
       .withIndex("by_source_message", (q) =>
         q.eq("sourceMessageId", args.messageId),
       )
       .collect();
+    // A restore override belongs to the item, not the row: a reparse that
+    // reproduces the same item (same dedupe key) keeps it.
+    const keptActiveByKey = new Map<string, number>();
     for (const draft of priorDrafts) {
-      if (draft.visibility === "draft") await ctx.db.delete(draft._id);
+      const autoHidden =
+        draft.visibility === "hidden" && draft.autoHiddenAt !== undefined;
+      if (draft.visibility !== "draft" && !autoHidden) continue;
+      if (draft.dedupeKey && draft.keptActiveAt !== undefined) {
+        keptActiveByKey.set(draft.dedupeKey, draft.keptActiveAt);
+      }
+      await ctx.db.delete(draft._id);
     }
 
     const now = Date.now();
@@ -1059,6 +1083,7 @@ export const storeParsedEvents = internalMutation({
         eventType: item.eventType,
         hosts: item.hosts,
         dates: item.dates,
+        statedYears: item.statedYears,
         isRecurring: item.isRecurring,
         recurrenceNote: item.recurrenceNote,
         location: item.location,
@@ -1069,6 +1094,7 @@ export const storeParsedEvents = internalMutation({
         perks: item.perks,
         visibility: "draft",
         sourceReceivedAt: message.receivedAt,
+        keptActiveAt: dedupeKey ? keptActiveByKey.get(dedupeKey) : undefined,
         // Per item: `args.confidence` / `args.warnings` describe the message
         // as a whole and are already folded into each item's own values.
         parseConfidence: item.confidence,
@@ -1570,7 +1596,7 @@ function buildParsePrompt(message: SourceMessage) {
   // timestamp server-side instead.
   return `Extract Cornell student-relevant feed items from this listserv email. Return strict JSON only. Do not invent details. The source organization advertised the item but may not be the host.
 
-This email was received on ${receivedAtIso} (Cornell/Ithaca local time is ${SOURCE_TIMEZONE}). Report dates exactly as the email writes them — do not compute timestamps, offsets, or epoch values, and do not convert timezones. Set "year" only when the email itself states a year; otherwise set it to null. Set "hour"/"minute" only when the email states a time; otherwise null. Times are assumed to be ${SOURCE_TIMEZONE}.
+This email was received on ${receivedAtIso} (Cornell/Ithaca local time is ${SOURCE_TIMEZONE}). Report dates exactly as the email writes them — do not compute timestamps, offsets, or epoch values, and do not convert timezones. Set "year" only when the email itself states a year; otherwise set it to null. If the email gives only a year or year range for an item (e.g. "2027–2028 program"), add one date per stated year with "month" and "day" set to null. Set "hour"/"minute" only when the email states a time; otherwise null. Times are assumed to be ${SOURCE_TIMEZONE}.
 
 Return this exact shape:
 {
@@ -1585,7 +1611,7 @@ Return this exact shape:
     "aiDescription": string,
     "eventType": "event" | "opportunity" | "hackathon" | "courses" | "fundraiser" | "info",
     "hosts": [{"name": string, "kind": "club" | "company" | "external_org", "role": "primary" | "cohost" | "sponsor"}],
-    "dates": [{"year": number | null, "month": number, "day": number, "hour": number | null, "minute": number | null, "type": "start" | "end" | "deadline" | "single"}],
+    "dates": [{"year": number | null, "month": number | null, "day": number | null, "hour": number | null, "minute": number | null, "type": "start" | "end" | "deadline" | "single"}],
     "isRecurring": boolean,
     "recurrenceNote": string | null,
     "location": {"displayText": string, "address": string | null, "isVirtual": boolean, "buildingCode": string | null} | null,
@@ -1649,7 +1675,14 @@ function normalizeItem(
   // about this item's dates lands on this item rather than on every draft the
   // email produced.
   const itemWarnings: string[] = [];
-  const dates = normalizeDates(item.dates, receivedAt, title, itemWarnings);
+  const statedYears: number[] = [];
+  const dates = normalizeDates(
+    item.dates,
+    receivedAt,
+    title,
+    itemWarnings,
+    statedYears,
+  );
   const droppedDate = itemWarnings.some((warning) =>
     warning.startsWith("Dropped impossible date"),
   );
@@ -1661,6 +1694,7 @@ function normalizeItem(
     eventType: normalizeEventType(item.eventType),
     hosts: normalizeHosts(item.hosts),
     dates,
+    statedYears: statedYears.length > 0 ? statedYears : undefined,
     isRecurring: Boolean(item.isRecurring),
     recurrenceNote: optionalString(item.recurrenceNote),
     location: normalizeLocation(item.location),
@@ -1688,7 +1722,8 @@ function normalizeItem(
 /**
  * Turn the date parts the model read off the email into stored timestamps.
  *
- * A date with no usable month/day is dropped rather than guessed at, and so is
+ * A date with no usable month/day is dropped rather than guessed at (its year,
+ * if stated, is kept in `statedYears`), and so is
  * one whose parts don't name a real calendar day — `Date.UTC` would silently
  * roll "February 30" into March, which reads as a confident wrong answer in
  * the admin editor. A date with no stated time becomes local noon, far enough
@@ -1700,6 +1735,7 @@ function normalizeDates(
   receivedAt: number,
   title: string,
   warnings: string[],
+  statedYears: number[],
 ): ParsedItem["dates"] {
   if (!Array.isArray(value)) return [];
 
@@ -1710,7 +1746,12 @@ function normalizeDates(
     if (!isRecord(raw)) continue;
     const month = integerIn(raw.month, 1, 12);
     const day = integerIn(raw.day, 1, 31);
-    if (month === null || day === null) continue;
+    if (month === null || day === null) {
+      // Not a timestamp, but still evidence of when the item runs.
+      const year = integerIn(raw.year, 1970, 2100);
+      if (year !== null && !statedYears.includes(year)) statedYears.push(year);
+      continue;
+    }
 
     const hour = integerIn(raw.hour, 0, 23);
     if (hour === null) missingTime = true;

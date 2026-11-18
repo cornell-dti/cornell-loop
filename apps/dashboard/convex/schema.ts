@@ -487,6 +487,9 @@ export default defineSchema({
         ),
       }),
     ),
+    // Years the email stated without a month/day ("2027–2028 program"), kept
+    // so staleness checks don't read a year-only timeline as "no date".
+    statedYears: v.optional(v.array(v.number())),
     isRecurring: v.boolean(),
     recurrenceNote: v.optional(v.string()), // "Every Wednesday 5-6:30pm"
 
@@ -567,6 +570,7 @@ export default defineSchema({
     .index("by_listserv_id", ["listservId"])
     .index("by_organization", ["organizationId"])
     .index("by_visibility", ["visibility"])
+    .index("by_auto_hidden", ["autoHiddenAt"])
     .index("by_dedupe_key", ["dedupeKey"])
     .index("by_section", ["listservSection"])
     .index("by_event_type", ["eventType"])

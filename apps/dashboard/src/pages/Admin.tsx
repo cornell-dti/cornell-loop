@@ -387,8 +387,6 @@ export default function Admin() {
     token ? { token } : "skip",
   );
   const parseData = useQuery(api.parser.overview, token ? { token } : "skip");
-  const autoHiddenDrafts: EventDoc[] =
-    useQuery(api.parser.listAutoHiddenDrafts, token ? { token } : "skip") ?? [];
   const orgProfiles = useQuery(
     api.orgEnrichment.overview,
     token ? { token } : "skip",
@@ -565,6 +563,16 @@ export default function Admin() {
   } = usePaginatedQuery(api.parser.listDrafts, token ? { token } : "skip", {
     initialNumItems: DRAFT_PAGE_SIZE,
   });
+
+  const {
+    results: autoHiddenDrafts,
+    status: autoHiddenStatus,
+    loadMore: loadMoreAutoHidden,
+  } = usePaginatedQuery(
+    api.parser.listAutoHiddenDrafts,
+    token ? { token } : "skip",
+    { initialNumItems: DRAFT_PAGE_SIZE },
+  );
 
   // The review queue, paginated for the same reason: `dashboard.candidates`
   // stops at 150 and directory discovery seeds roughly 600.
@@ -945,6 +953,8 @@ export default function Admin() {
             onLoadMoreDrafts={() => loadMoreDrafts(DRAFT_PAGE_SIZE)}
             draftCounts={draftCounts}
             autoHiddenDrafts={autoHiddenDrafts}
+            autoHiddenStatus={autoHiddenStatus}
+            onLoadMoreAutoHidden={() => loadMoreAutoHidden(DRAFT_PAGE_SIZE)}
             onRestore={(id) =>
               act("Restored to drafts.", () =>
                 restoreAutoHiddenDraft({ token, eventId: id }),
@@ -958,8 +968,8 @@ export default function Admin() {
                 const result = await moveStaleMessagesNow({ token });
                 const noun = `stale email${result.moved !== 1 ? "s" : ""}`;
                 showToast(
-                  result.remaining
-                    ? `Moved ${result.moved} ${noun}. More remain — click again.`
+                  result.continuing
+                    ? `Moved ${result.moved} ${noun}. Checking the rest in the background.`
                     : `Moved ${result.moved} ${noun}.`,
                 );
               } catch (e) {
@@ -997,8 +1007,8 @@ export default function Admin() {
                 const result = await hidePastDrafts({ token });
                 const noun = `past draft${result.hidden !== 1 ? "s" : ""}`;
                 showToast(
-                  result.remaining
-                    ? `Hid ${result.hidden} ${noun}. More remain — click again.`
+                  result.continuing
+                    ? `Hid ${result.hidden} ${noun}. Checking the rest in the background.`
                     : `Hid ${result.hidden} ${noun}.`,
                 );
               } catch (e) {
@@ -4083,6 +4093,8 @@ function PublishTab({
   onLoadMoreDrafts,
   draftCounts,
   autoHiddenDrafts,
+  autoHiddenStatus,
+  onLoadMoreAutoHidden,
   onRestore,
   failedMessages,
   ignoredMessages,
@@ -4121,6 +4133,12 @@ function PublishTab({
     truncated: boolean;
   };
   autoHiddenDrafts: EventDoc[];
+  autoHiddenStatus:
+    | "LoadingFirstPage"
+    | "CanLoadMore"
+    | "LoadingMore"
+    | "Exhausted";
+  onLoadMoreAutoHidden: () => void;
   onRestore: (id: Id<"events">) => void;
   failedMessages: ParseMessage[];
   ignoredMessages: ParseMessage[];
@@ -4539,8 +4557,9 @@ function PublishTab({
       {autoHiddenDrafts.length > 0 && (
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
           <summary className="cursor-pointer text-[length:var(--font-size-body2)] font-semibold">
-            Auto-hidden ({autoHiddenDrafts.length}) — archived by the daily
-            sweep
+            Auto-hidden ({autoHiddenDrafts.length}
+            {autoHiddenStatus === "Exhausted" ? "" : "+"}) — archived by the
+            daily sweep
           </summary>
           <div className="mt-3 grid gap-2">
             {autoHiddenDrafts.map((event) => (
@@ -4563,6 +4582,16 @@ function PublishTab({
                 <Btn onClick={() => onRestore(event._id)}>Restore</Btn>
               </div>
             ))}
+            {(autoHiddenStatus === "CanLoadMore" ||
+              autoHiddenStatus === "LoadingMore") && (
+              <Btn
+                onClick={onLoadMoreAutoHidden}
+                disabled={autoHiddenStatus === "LoadingMore"}
+                className="justify-self-start"
+              >
+                {autoHiddenStatus === "LoadingMore" ? "Loading…" : "Load more"}
+              </Btn>
+            )}
           </div>
         </details>
       )}

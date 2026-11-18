@@ -132,25 +132,49 @@ export const STALE_EMAIL_DAYS = 30;
 export type DraftStaleness = "current" | "passed" | "uncertain";
 
 type StalenessInput = {
-  dates: ReadonlyArray<{ timestamp: number }>;
+  dates: ReadonlyArray<{ timestamp: number; type: string }>;
   eventType: string;
+  title: string;
+  description: string;
   isRecurring: boolean;
   recurrenceNote?: string;
   links: ReadonlyArray<{ type: string }>;
+  /** Years the email stated with no month/day ("2027–2028 program"). */
+  statedYears?: ReadonlyArray<number>;
   /** Set once an admin has restored the draft; it is never re-filed. */
   keptActiveAt?: number;
 };
 
 /**
+ * Whether the item names a year that hasn't ended, either as a year-only date
+ * kept at parse time or written in its text ("2026–2027 academic year").
+ */
+function mentionsCurrentOrFutureYear(
+  draft: StalenessInput,
+  now: number,
+): boolean {
+  const currentYear = epochMsToLocalParts(now).year;
+  if ((draft.statedYears ?? []).some((year) => year >= currentYear)) {
+    return true;
+  }
+  const text = `${draft.title} ${draft.description} ${draft.recurrenceNote ?? ""}`;
+  return Array.from(text.matchAll(/\b(20\d{2})\b/g)).some(
+    (match) => Number(match[1]) >= currentYear,
+  );
+}
+
+/**
  * Sorts a draft into current / passed / uncertain.
  *
- * Any dated item follows {@link isPastEvent}: a future date keeps it current,
- * since programs and deadlines carry their own timestamps. An undated item is
- * judged by the age of its source email (`receivedAt`): older than
- * {@link STALE_EMAIL_DAYS} it is passed, unless it looks like something that
- * outlives one email — recurring, a course or opportunity, or carrying a
- * registration/application link — in which case it is `uncertain`. With no
- * known email date there is nothing to judge by, so it stays current.
+ * A future date keeps an item current, since programs and deadlines carry
+ * their own timestamps. An item whose dates are all past is passed, except a
+ * recurring series with no stated end, which may still be running and goes to
+ * review. An undated item is judged by the age of its source email
+ * (`receivedAt`): older than {@link STALE_EMAIL_DAYS} it is passed, unless it
+ * looks like something that outlives one email — recurring, a course or
+ * opportunity, a registration/application link, or a year that hasn't ended —
+ * in which case it is `uncertain`. With no known email date there is nothing
+ * to judge by, so it stays current.
  */
 export function classifyDraftStaleness(
   draft: StalenessInput,
@@ -158,15 +182,19 @@ export function classifyDraftStaleness(
   now: number,
 ): DraftStaleness {
   if (draft.keptActiveAt !== undefined) return "current";
+  const recurring =
+    draft.isRecurring || (draft.recurrenceNote ?? "").length > 0;
   if (draft.dates.length > 0) {
-    return isPastEvent(draft.dates, now) ? "passed" : "current";
+    if (!isPastEvent(draft.dates, now)) return "current";
+    const openEnded = !draft.dates.some((date) => date.type === "end");
+    return recurring && openEnded ? "uncertain" : "passed";
   }
   if (receivedAt === undefined) return "current";
   if (now - receivedAt <= STALE_EMAIL_DAYS * MS_PER_DAY) return "current";
 
   const mayOutliveEmail =
-    draft.isRecurring ||
-    (draft.recurrenceNote ?? "").length > 0 ||
+    recurring ||
+    mentionsCurrentOrFutureYear(draft, now) ||
     draft.eventType === "opportunity" ||
     draft.eventType === "courses" ||
     draft.links.some(

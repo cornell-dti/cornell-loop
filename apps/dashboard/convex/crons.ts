@@ -30,7 +30,7 @@ crons.cron(
 crons.cron(
   "ignore stale ready messages",
   "30 7 * * *",
-  internal.parser.ignoreStaleReadyMessages,
+  internal.parser.sweepStaleReadyMessages,
   {},
 );
 
