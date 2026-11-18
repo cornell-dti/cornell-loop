@@ -540,9 +540,9 @@ export default function Onboarding({ onClose }: { onClose?: () => void }) {
 
   const handleStep1Continue = async (value: ProfileFieldsValue) => {
     await updateProfile({
-      major: value.major,
+      major: value.major ?? null,
       gradYear: value.gradYear,
-      minor: value.minor,
+      minor: value.minor ?? null,
       interests: value.interests,
     });
 

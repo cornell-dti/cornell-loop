@@ -176,15 +176,22 @@ function HomeInner({
   className,
   ...rest
 }: HomeProps) {
-  // Get the current user's onboarding status from Convex
+  // Latch onboarding visibility after the initial profile load.
   const { loading, isOnboarded } = useCurrentProfile();
-
-  // Track the onboarding flow locally
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [showTour, setShowTour] = useState(false);
+  const [initialOnboardingStatus, setInitialOnboardingStatus] = useState<
+    boolean | null
+  >(null);
 
-  // Only show onboarding for users who haven't completed it
-  const showOnboarding = !loading && !isOnboarded && !onboardingDismissed;
+  if (!loading && initialOnboardingStatus === null) {
+    setInitialOnboardingStatus(isOnboarded);
+  }
+  // Driven by the snapshot, not the live profile: `updateProfile` stamps
+  // onboarding complete after step 1, which would otherwise unmount the modal.
+  const showOnboarding =
+    initialOnboardingStatus === false && !onboardingDismissed;
+
   // Start the dashboard tour after onboarding finishes
   const handleOnboardingComplete = () => {
     setOnboardingDismissed(true);
