@@ -1119,29 +1119,49 @@ export const storeParsedEvents = internalMutation({
  * existed, copied from the source message (or the legacy email row). Without
  * it the stale-draft check has no email date and leaves the draft current.
  *
- * Run `npx convex run parser:backfillDraftSourceReceivedAt` once.
+ * Run `npx convex run parser:backfillDraftSourceReceivedAt` once. Each call
+ * handles one page and schedules the next itself, because every message read
+ * carries its full email body and one pass over the backlog exceeds the
+ * per-function read limit. Progress shows in the Convex logs.
  */
 export const backfillDraftSourceReceivedAt = internalMutation({
-  args: {},
-  returns: v.object({ updated: v.number(), skippedNoSource: v.number() }),
-  handler: async (ctx) => {
-    let updated = 0;
-    let skippedNoSource = 0;
+  args: {
+    cursor: v.optional(v.string()),
+    updated: v.optional(v.number()),
+    skippedNoSource: v.optional(v.number()),
+  },
+  returns: v.object({
+    updated: v.number(),
+    skippedNoSource: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    let updated = args.updated ?? 0;
+    let skippedNoSource = args.skippedNoSource ?? 0;
 
-    const drafts = ctx.db
+    const page = await ctx.db
       .query("events")
-      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"));
+      .withIndex("by_visibility", (q) => q.eq("visibility", "draft"))
+      .paginate({ numItems: BACKFILL_PAGE_SIZE, cursor: args.cursor ?? null });
 
-    for await (const draft of drafts) {
+    // Several drafts usually share one email; read each body once.
+    const receivedAtByMessage = new Map<Id<"listservMessages">, number>();
+    for (const draft of page.page) {
       if (draft.sourceReceivedAt !== undefined) continue;
 
-      const message = draft.sourceMessageId
-        ? await ctx.db.get(draft.sourceMessageId)
-        : null;
-      const legacyEmail = draft.listservEmailId
-        ? await ctx.db.get(draft.listservEmailId)
-        : null;
-      const receivedAt = message?.receivedAt ?? legacyEmail?.sentAt;
+      let receivedAt: number | undefined;
+      if (draft.sourceMessageId) {
+        receivedAt = receivedAtByMessage.get(draft.sourceMessageId);
+        if (receivedAt === undefined) {
+          receivedAt = (await ctx.db.get(draft.sourceMessageId))?.receivedAt;
+          if (receivedAt !== undefined) {
+            receivedAtByMessage.set(draft.sourceMessageId, receivedAt);
+          }
+        }
+      }
+      if (receivedAt === undefined && draft.listservEmailId) {
+        receivedAt = (await ctx.db.get(draft.listservEmailId))?.sentAt;
+      }
       if (receivedAt === undefined) {
         skippedNoSource += 1;
         continue;
@@ -1151,9 +1171,26 @@ export const backfillDraftSourceReceivedAt = internalMutation({
       updated += 1;
     }
 
-    return { updated, skippedNoSource };
+    if (page.isDone) {
+      console.log(
+        `backfillDraftSourceReceivedAt done: ${updated} updated, ${skippedNoSource} without a source`,
+      );
+    } else {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.parser.backfillDraftSourceReceivedAt,
+        { cursor: page.continueCursor, updated, skippedNoSource },
+      );
+    }
+    return { updated, skippedNoSource, isDone: page.isDone };
   },
 });
+
+/**
+ * Drafts per backfill page. Small because each one can cost a full email body
+ * read (well under the 16 MB per-function limit even at ~500 KB per email).
+ */
+const BACKFILL_PAGE_SIZE = 25;
 
 /**
  * One-off repair for drafts parsed before the year moved server-side: every
