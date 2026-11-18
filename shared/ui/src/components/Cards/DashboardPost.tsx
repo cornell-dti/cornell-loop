@@ -163,127 +163,125 @@ export function DashboardPost({
         .join(" ")}
     >
       {/* ── Post header ── */}
-      <div className="flex items-center gap-[var(--space-3)]">
-        {/* Left: avatar stack + org names + following badge */}
-        <div className="flex min-w-0 flex-1 items-center gap-[var(--space-2)]">
-          {/* Stacked avatars */}
-          {organizations.length > 0 && (
-            <div className="flex shrink-0 items-center">
-              {organizations.map((org, i) => {
-                const fallback = fallbackColorsForName(org.name);
-                return (
-                  <span
-                    key={i}
-                    className={[
-                      "relative inline-flex shrink-0 items-center justify-center",
-                      "overflow-hidden rounded-full",
-                      "size-[var(--space-8)]",
-                      "outline-2 outline-[var(--color-surface)]",
-                      i > 0 ? "[margin-left:calc(-1*var(--space-2))]" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    style={{ zIndex: organizations.length - i }}
-                  >
-                    {org.avatarUrl ? (
-                      <img
-                        src={org.avatarUrl}
-                        alt={org.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <span
-                        className={
-                          "flex size-full items-center justify-center " +
-                          "font-[family-name:var(--font-body)] font-semibold " +
-                          "text-[length:var(--font-size-body3)]"
-                        }
-                        style={{
-                          backgroundColor: fallback.bg,
-                          color: fallback.fg,
-                        }}
-                      >
-                        {org.name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Org names — each is its own hover trigger with tooltip */}
-          <span
-            className={
-              "flex min-w-0 flex-wrap items-center gap-[var(--space-1)] " +
-              "font-[family-name:var(--font-body)] font-semibold " +
-              "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
-              "tracking-[var(--letter-spacing-body2)] " +
-              "text-[color:var(--color-neutral-700)]"
-            }
-            style={{ fontVariationSettings: "'opsz' 14" }}
-          >
+      {/* One wrapping row: the posted date reads as part of the attribution
+          ("WICC · Following · Nov 18") rather than sitting alone against the
+          far edge of the feed column. */}
+      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+        {/* Stacked avatars */}
+        {organizations.length > 0 && (
+          <div className="flex shrink-0 items-center">
             {organizations.map((org, i) => {
-              const clickable = Boolean(onOrgClick && org.id);
-              const handleClick = clickable
-                ? () => onOrgClick?.(org)
-                : undefined;
+              const fallback = fallbackColorsForName(org.name);
               return (
-                <span key={i} className="flex items-center">
-                  <span
-                    className={[
-                      "relative",
-                      clickable ? "cursor-pointer hover:underline" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    onMouseEnter={() => handleOrgEnter(i)}
-                    onMouseLeave={handleOrgLeave}
-                    onClick={handleClick}
-                    onKeyDown={
-                      clickable
-                        ? (e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              handleClick?.();
-                            }
-                          }
-                        : undefined
-                    }
-                    role={clickable ? "link" : undefined}
-                    tabIndex={clickable ? 0 : undefined}
-                    aria-label={clickable ? `Open ${org.name}` : undefined}
-                  >
-                    {org.name}
-                    <OrgHoverCard org={org} visible={hoveredOrgIdx === i} />
-                  </span>
-                  {i < organizations.length - 1 && <span>,&nbsp;</span>}
+                <span
+                  key={i}
+                  className={[
+                    "relative inline-flex shrink-0 items-center justify-center",
+                    "overflow-hidden rounded-full",
+                    "size-[var(--space-8)]",
+                    "outline-2 outline-[var(--color-surface)]",
+                    i > 0 ? "[margin-left:calc(-1*var(--space-2))]" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={{ zIndex: organizations.length - i }}
+                >
+                  {org.avatarUrl ? (
+                    <img
+                      src={org.avatarUrl}
+                      alt={org.name}
+                      className="size-full object-cover"
+                    />
+                  ) : (
+                    <span
+                      className={
+                        "flex size-full items-center justify-center " +
+                        "font-[family-name:var(--font-body)] font-semibold " +
+                        "text-[length:var(--font-size-body3)]"
+                      }
+                      style={{
+                        backgroundColor: fallback.bg,
+                        color: fallback.fg,
+                      }}
+                    >
+                      {org.name.charAt(0).toUpperCase()}
+                    </span>
+                  )}
                 </span>
               );
             })}
+          </div>
+        )}
+
+        {/* Org names — each is its own hover trigger with tooltip */}
+        <span
+          className={
+            "flex min-w-0 flex-wrap items-center gap-[var(--space-1)] " +
+            "font-[family-name:var(--font-body)] font-semibold " +
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+            "tracking-[var(--letter-spacing-body2)] " +
+            "text-[color:var(--color-neutral-700)]"
+          }
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          {organizations.map((org, i) => {
+            const clickable = Boolean(onOrgClick && org.id);
+            const handleClick = clickable ? () => onOrgClick?.(org) : undefined;
+            return (
+              <span key={i} className="flex items-center">
+                <span
+                  className={[
+                    "relative",
+                    clickable ? "cursor-pointer hover:underline" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onMouseEnter={() => handleOrgEnter(i)}
+                  onMouseLeave={handleOrgLeave}
+                  onClick={handleClick}
+                  onKeyDown={
+                    clickable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleClick?.();
+                          }
+                        }
+                      : undefined
+                  }
+                  role={clickable ? "link" : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  aria-label={clickable ? `Open ${org.name}` : undefined}
+                >
+                  {org.name}
+                  <OrgHoverCard org={org} visible={hoveredOrgIdx === i} />
+                </span>
+                {i < organizations.length - 1 && <span>,&nbsp;</span>}
+              </span>
+            );
+          })}
+        </span>
+
+        {/* "Following" pill badge */}
+        {hasFollowing && (
+          <span
+            className={[
+              "inline-flex items-center",
+              "rounded-full",
+              "bg-[var(--color-neutral-200)]",
+              "px-[var(--space-1-5)] py-0",
+              "font-[family-name:var(--font-body)] font-medium",
+              "text-[length:10px] leading-[18px]",
+              "text-[color:var(--color-neutral-600)]",
+              "whitespace-nowrap",
+            ].join(" ")}
+          >
+            Following
           </span>
+        )}
 
-          {/* "Following" pill badge */}
-          {hasFollowing && (
-            <span
-              className={[
-                "inline-flex items-center",
-                "rounded-full",
-                "bg-[var(--color-neutral-200)]",
-                "px-[var(--space-1-5)] py-0",
-                "font-[family-name:var(--font-body)] font-medium",
-                "text-[length:10px] leading-[18px]",
-                "text-[color:var(--color-neutral-600)]",
-                "whitespace-nowrap",
-              ].join(" ")}
-            >
-              Following
-            </span>
-          )}
-        </div>
-
-        {/* Right: separator bullet + date */}
-        <div className="flex shrink-0 items-center gap-[var(--space-2)]">
+        {/* Separator bullet + posted date */}
+        <span className="flex items-center gap-[var(--space-2)]">
           {/* Bullet — Figma: Neutral/500 */}
           <span
             className="text-[length:var(--font-size-body3)] leading-[1.5] text-[color:var(--color-neutral-500)]"
@@ -299,7 +297,7 @@ export function DashboardPost({
           >
             {postedAt}
           </span>
-        </div>
+        </span>
       </div>
 
       {/* ── Embedded event card ── */}

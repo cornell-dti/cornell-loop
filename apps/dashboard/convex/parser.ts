@@ -16,10 +16,12 @@ import { requireAdminToken } from "./_shared/adminToken";
 import { isRecord } from "./lib/ai";
 import { isListAdminNoise } from "./lib/cornellLists";
 import {
+  DEFAULT_EVENT_DURATION_MS,
   SOURCE_TIMEZONE,
   STALE_EMAIL_DAYS,
   classifyDraftStaleness,
   epochMsToLocalParts,
+  hasStatedClockTime,
   isPastEvent,
   localPartsToEpochMs,
   resolveYear,
@@ -1713,12 +1715,10 @@ function normalizeItem(
   // email produced.
   const itemWarnings: string[] = [];
   const statedYears: number[] = [];
-  const dates = normalizeDates(
-    item.dates,
-    receivedAt,
-    title,
-    itemWarnings,
-    statedYears,
+  const isRecurring = Boolean(item.isRecurring);
+  const dates = withDefaultEnd(
+    normalizeDates(item.dates, receivedAt, title, itemWarnings, statedYears),
+    isRecurring,
   );
   const droppedDate = itemWarnings.some((warning) =>
     warning.startsWith("Dropped impossible date"),
@@ -1732,7 +1732,7 @@ function normalizeItem(
     hosts: normalizeHosts(item.hosts),
     dates,
     statedYears: statedYears.length > 0 ? statedYears : undefined,
-    isRecurring: Boolean(item.isRecurring),
+    isRecurring,
     recurrenceNote: optionalString(item.recurrenceNote),
     location: normalizeLocation(item.location),
     links: normalizeLinks(item.links),
@@ -1816,6 +1816,35 @@ function normalizeDates(
 
   if (missingTime) warnings.push(`No time given for ${title}`);
   return dates;
+}
+
+/**
+ * Gives a timed `start` with no stated `end` the default duration, so the
+ * assumed length is stored once at parse time rather than re-derived by every
+ * reader. Only a `start` qualifies — see `effectiveEndTimestamp` for why a
+ * `single`, a `deadline`, or an untimed start is left as it came.
+ *
+ * Recurring items are left alone: `classifyDraftStaleness` reads a missing
+ * `end` as "the email never said when the series stops" and sends such a
+ * draft to review rather than filing it as passed. A stored end we invented
+ * would answer that question with something the email never said. Their cards
+ * still show a one-hour range, since `effectiveEndTimestamp` fills it in at
+ * read time.
+ */
+function withDefaultEnd(
+  dates: ParsedItem["dates"],
+  isRecurring: boolean,
+): ParsedItem["dates"] {
+  if (isRecurring) return dates;
+  if (dates.some((date) => date.type === "end" || date.type === "deadline")) {
+    return dates;
+  }
+  const start = dates.find((date) => date.type === "start");
+  if (!start || !hasStatedClockTime(start.timestamp)) return dates;
+  return [
+    ...dates,
+    { timestamp: start.timestamp + DEFAULT_EVENT_DURATION_MS, type: "end" },
+  ];
 }
 
 function normalizeDateType(

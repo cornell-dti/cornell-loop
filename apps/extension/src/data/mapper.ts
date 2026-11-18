@@ -5,6 +5,7 @@
  * work with EventItem exclusively.
  */
 
+import { effectiveEndTimestamp } from "@app/convex/lib/eventDates";
 import type { PublicEvent } from "@app/convex/events";
 import type { PublicOrg } from "@app/convex/orgs";
 import type { EventItem } from "./types";
@@ -57,7 +58,9 @@ export function mapHydratedEventToEventItem(
   const startDate = event.dates.find(
     (d) => d.type === "start" || d.type === "single",
   );
-  const endDate = event.dates.find((d) => d.type === "end");
+  // A timed start with no stated end counts as an hour long, so both the
+  // subtitle and the calendar entry show a range instead of an instant.
+  const endTimestamp = effectiveEndTimestamp(event.dates);
   const deadlineDate = event.dates.find((d) => d.type === "deadline");
   const displayDate = startDate ?? deadlineDate;
 
@@ -85,9 +88,9 @@ export function mapHydratedEventToEventItem(
     (event.eventType === "event" || event.eventType === "hackathon")
   ) {
     const parts: string[] = [];
-    if (endDate !== undefined) {
+    if (endTimestamp !== undefined) {
       parts.push(
-        `${formatTime(startDate.timestamp)}–${formatTime(endDate.timestamp)}`,
+        `${formatTime(startDate.timestamp)}–${formatTime(endTimestamp)}`,
       );
     } else {
       parts.push(formatTime(startDate.timestamp));
@@ -110,8 +113,8 @@ export function mapHydratedEventToEventItem(
       title: event.title,
       startISO: new Date(startDate.timestamp).toISOString(),
       endISO:
-        endDate !== undefined
-          ? new Date(endDate.timestamp).toISOString()
+        endTimestamp !== undefined
+          ? new Date(endTimestamp).toISOString()
           : undefined,
       location: event.location?.displayText,
     };

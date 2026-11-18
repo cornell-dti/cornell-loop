@@ -10,7 +10,7 @@
 //
 // Pure module: no `convex/server`, no `_generated/*`, no Node APIs.
 
-import { epochMsToLocalParts } from "./eventDates";
+import { hasStatedClockTime } from "./eventDates";
 
 /**
  * The scored fields. Deliberately structural rather than tied to
@@ -185,19 +185,9 @@ export function normalizeModelConfidence(value: number): number {
   return clamp(value <= 1 ? value * 100 : value, 0, 100);
 }
 
-/**
- * True when at least one date carries a time the email actually stated.
- *
- * The parser defaults a date with no time to local noon, so noon-on-the-dot is
- * read as "no time given". A real event that starts at exactly 12:00 is scored
- * slightly low as a result, which is the cheaper error: the alternative is
- * storing a separate flag on every date for the sake of one edge case.
- */
+/** True when at least one date carries a time the email actually stated. */
 function hasStatedTime(dates: ReadonlyArray<{ timestamp: number }>): boolean {
-  return dates.some((date) => {
-    const parts = epochMsToLocalParts(date.timestamp);
-    return parts.hour !== 12 || parts.minute !== 0;
-  });
+  return dates.some((date) => hasStatedClockTime(date.timestamp));
 }
 
 function clamp(value: number, min: number, max: number) {

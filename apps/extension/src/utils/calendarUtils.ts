@@ -1,3 +1,4 @@
+import { DEFAULT_EVENT_DURATION_MS } from "@app/convex/lib/eventDates";
 import type { CalendarEvent } from "../data/types";
 
 /**
@@ -18,7 +19,15 @@ export function buildGCalUrl(event: CalendarEvent): string {
       .replace(/\.\d{3}/, "");
 
   const start = fmt(event.startISO);
-  const end = event.endISO ? fmt(event.endISO) : start;
+  // Events whose email gave no usable end time already arrive with one filled
+  // in; the rest get the same default length here rather than a zero-duration
+  // entry, which GCal would file as a point in time with no slot on the grid.
+  const end = fmt(
+    event.endISO ??
+      new Date(
+        new Date(event.startISO).getTime() + DEFAULT_EVENT_DURATION_MS,
+      ).toISOString(),
+  );
 
   const params = new URLSearchParams({
     action: "TEMPLATE",
