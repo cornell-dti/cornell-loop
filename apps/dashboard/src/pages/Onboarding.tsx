@@ -51,6 +51,7 @@ import {
 import { useCurrentProfile } from "../lib/useCurrentProfile";
 import loopLogo from "../../../../shared/ui/src/assets/loop_logo.svg";
 import { consumeFirstAction, track } from "../lib/analytics";
+import { PRIVACY_POLICY_URL } from "../lib/links";
 
 type OnboardingStep = 1 | 2 | 3;
 
@@ -219,7 +220,24 @@ function StepProfile({ initialValue, userName, onContinue }: StepProfileProps) {
         </p>
       )}
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <a
+          href={PRIVACY_POLICY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={
+            "font-[family-name:var(--font-body)] font-normal " +
+            "text-[length:var(--font-size-body2)] leading-[var(--line-height-body2)] " +
+            "tracking-[var(--letter-spacing-body2)] " +
+            "text-[color:var(--color-neutral-700)] underline-offset-2 " +
+            "transition-colors hover:text-[color:var(--color-neutral-900)] hover:underline " +
+            "focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 " +
+            "focus-visible:outline-[var(--color-primary-700)]"
+          }
+          style={{ fontVariationSettings: "'opsz' 14" }}
+        >
+          Privacy Policy
+        </a>
         <Button
           variant="primary"
           size="md"
