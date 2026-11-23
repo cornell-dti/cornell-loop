@@ -26,6 +26,7 @@ Visit [onboarding docs](https://github.com/cornell-dti/cornell-loop/blob/main/do
 - Nikhill Andrew - Developer
 - Nadia Choophungart - Developer
 - Labi Neha - Developer
+- Aditya Kejriwal - Developer
 
 ### SP26:
 
